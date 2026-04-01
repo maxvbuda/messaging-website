@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SlackFlow — Team Messaging</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700;900&display=swap" rel="stylesheet">
+</head>
+<body>
+
+  <!-- ============ LOGIN / REGISTER SCREEN ============ -->
+  <div class="auth-screen" id="authScreen">
+    <div class="auth-card">
+      <div class="auth-logo">SF</div>
+      <h1 class="auth-title">Sign in to <strong>SlackFlow</strong></h1>
+      <p class="auth-subtitle" id="authSubtitle">Enter your credentials to get started.</p>
+
+      <div class="auth-error" id="authError"></div>
+
+      <form id="authForm" autocomplete="off">
+        <div class="auth-field" id="authNameField" style="display:none">
+          <label for="authName">Display Name</label>
+          <input type="text" id="authName" placeholder="e.g. Jane Doe" autocomplete="off">
+        </div>
+        <div class="auth-field">
+          <label for="authUsername">Username</label>
+          <input type="text" id="authUsername" placeholder="e.g. jane" autocomplete="off">
+        </div>
+        <div class="auth-field">
+          <label for="authPassword">Password</label>
+          <input type="password" id="authPassword" placeholder="Your password" autocomplete="off">
+        </div>
+        <button type="submit" class="auth-btn" id="authSubmitBtn">Sign In</button>
+      </form>
+
+      <p class="auth-toggle">
+        <span id="authToggleText">Don't have an account?</span>
+        <a href="#" id="authToggleLink">Create one</a>
+      </p>
+    </div>
+  </div>
+
+  <!-- ============ MAIN APP (hidden until login) ============ -->
+  <div class="app-wrapper" id="appWrapper" style="display:none">
+
+    <!-- Workspace Sidebar (left icon rail) -->
+    <aside class="workspace-rail">
+      <div class="workspace-icon active" title="SlackFlow HQ">SF</div>
+      <div class="workspace-icon" title="Add Workspace">+</div>
+      <div class="rail-spacer"></div>
+      <div class="rail-avatar" id="railAvatar" title="Profile"></div>
+    </aside>
+
+    <!-- Channel Sidebar -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <h1 class="sidebar-title">SlackFlow HQ</h1>
+        <button class="btn-icon" id="logoutBtn" title="Sign Out">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        </button>
+      </div>
+
+      <!-- Search -->
+      <div class="sidebar-search">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+        <input type="text" id="searchInput" placeholder="Search channels & messages">
+      </div>
+
+      <!-- Channels -->
+      <div class="sidebar-section">
+        <div class="section-header" id="channelsToggle">
+          <svg class="chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          <span>Channels</span>
+          <button class="btn-icon btn-tiny" id="addChannelBtn" title="Add Channel">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          </button>
+        </div>
+        <ul class="channel-list" id="channelList"></ul>
+      </div>
+
+      <!-- Online Users -->
+      <div class="sidebar-section">
+        <div class="section-header" id="usersToggle">
+          <svg class="chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          <span>Direct Messages</span>
+        </div>
+        <ul class="dm-list" id="dmList"></ul>
+      </div>
+    </aside>
+
+    <!-- Main Chat Area -->
+    <main class="chat-area" id="chatArea">
+      <header class="chat-header" id="chatHeader">
+        <div class="chat-header-left">
+          <button class="btn-icon mobile-menu-btn" id="mobileMenuBtn">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+          </button>
+          <span class="header-hash">#</span>
+          <h2 class="header-channel-name" id="headerChannelName">general</h2>
+          <span class="header-topic" id="headerTopic"></span>
+        </div>
+        <div class="chat-header-right">
+          <button class="btn-icon" id="memberListBtn" title="Members">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4-4v2"/><circle cx="9" cy="7" r="4"/></svg>
+            <span class="member-count" id="memberCount">0</span>
+          </button>
+        </div>
+      </header>
+
+      <div class="messages-container" id="messagesContainer">
+        <div class="messages-list" id="messagesList"></div>
+      </div>
+
+      <!-- Typing Indicator -->
+      <div class="typing-indicator" id="typingIndicator">
+        <div class="typing-dots"><span></span><span></span><span></span></div>
+        <span class="typing-text" id="typingText"></span>
+      </div>
+
+      <div class="message-input-area" id="messageInputArea">
+        <div class="input-wrapper">
+          <textarea id="messageInput" placeholder="Message #general" rows="1"></textarea>
+          <div class="input-actions">
+            <button class="btn-icon" id="emojiBtn" title="Emoji">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
+            </button>
+            <button class="btn-send" id="sendBtn" title="Send">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Thread Panel -->
+    <aside class="thread-panel" id="threadPanel">
+      <div class="thread-header">
+        <h3>Thread</h3>
+        <span class="thread-channel" id="threadChannel">#general</span>
+        <button class="btn-icon thread-close" id="threadClose">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="thread-messages" id="threadMessages"></div>
+      <div class="thread-input-area">
+        <textarea id="threadInput" placeholder="Reply..." rows="1"></textarea>
+        <button class="btn-send" id="threadSendBtn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+        </button>
+      </div>
+    </aside>
+
+    <!-- Member Panel -->
+    <aside class="member-panel" id="memberPanel">
+      <div class="member-panel-header">
+        <h3>Members</h3>
+        <button class="btn-icon" id="memberPanelClose">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="member-list" id="memberList"></div>
+    </aside>
+
+    <!-- Emoji Picker -->
+    <div class="emoji-picker" id="emojiPicker">
+      <div class="emoji-picker-header">
+        <input type="text" id="emojiSearch" placeholder="Search emoji">
+      </div>
+      <div class="emoji-grid" id="emojiGrid"></div>
+    </div>
+
+    <!-- Add Channel Modal -->
+    <div class="modal-overlay" id="addChannelModal">
+      <div class="modal">
+        <div class="modal-header">
+          <h3>Create a channel</h3>
+          <button class="btn-icon modal-close" data-modal="addChannelModal">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <label class="form-label">Channel name</label>
+          <input type="text" id="newChannelName" class="form-input" placeholder="e.g. marketing">
+          <label class="form-label">Description <span class="optional">(optional)</span></label>
+          <input type="text" id="newChannelDesc" class="form-input" placeholder="What's this channel about?">
+        </div>
+        <div class="modal-footer">
+          <button class="btn-secondary" data-modal="addChannelModal">Cancel</button>
+          <button class="btn-primary" id="createChannelBtn">Create</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Profile Modal -->
+    <div class="modal-overlay" id="profileModal">
+      <div class="modal modal-sm">
+        <div class="modal-header">
+          <h3>Your Profile</h3>
+          <button class="btn-icon modal-close" data-modal="profileModal">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="modal-body profile-body">
+          <div class="profile-avatar-lg" id="profileAvatarLg"></div>
+          <label class="form-label">Display Name</label>
+          <input type="text" id="profileName" class="form-input" placeholder="Your name">
+          <label class="form-label">Status</label>
+          <input type="text" id="profileStatus" class="form-input" placeholder="What's your status?">
+        </div>
+        <div class="modal-footer">
+          <button class="btn-primary" id="saveProfileBtn">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Search Results Overlay -->
+    <div class="search-results" id="searchResults">
+      <div class="search-results-inner" id="searchResultsInner"></div>
+    </div>
+
+    <!-- Mobile sidebar overlay -->
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+  </div><!-- /app-wrapper -->
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+{
+  "name": "slackflow",
+  "version": "1.0.0",
+  "description": "Slack-like team messaging app with Node.js backend",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1",
+    "uuid": "^11.1.0"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "users": [
+    {
+      "id": "u_b9541ae7",
+      "username": "max",
+      "passwordHash": "$2a$10$n3gSEBsxUponT3Y8ywgOy.iaYb/O32Y8tITv4z2iwTQ7aHno4Y2vu",
+      "name": "Max",
+      "status": "offline",
+      "role": "Member",
+      "createdAt": 1775071877394
+    }
+  ],
+  "channels": [
+    {
+      "id": "c_general",
+      "name": "general",
+      "topic": "Company-wide announcements and work-based matters",
+      "createdBy": "system"
+    },
+    {
+      "id": "c_random",
+      "name": "random",
+      "topic": "Non-work banter and water cooler conversation",
+      "createdBy": "system"
+    }
+  ],
+  "messages": {}
+}
