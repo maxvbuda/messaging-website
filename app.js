@@ -12,7 +12,7 @@
   // │  e.g. 'https://slackflow.onrender.com'       │
   // │  Leave empty '' to use localStorage fallback  │
   // └─────────────────────────────────────────────┘
-  const BACKEND_URL = '';
+  const BACKEND_URL = 'https://messaging-website-6qqt.onrender.com';
 
   const useServer = !!BACKEND_URL;
 

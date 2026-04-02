@@ -11,6 +11,7 @@ const server = http.createServer(app);
 
 const ALLOWED_ORIGINS = [
   'https://maxvbuda.github.io',
+  'https://messaging-website-6qqt.onrender.com',
   'http://localhost:3000',
   'http://127.0.0.1:3000',
 ];
