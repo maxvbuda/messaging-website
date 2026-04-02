@@ -1,18 +1,22 @@
 /* ========================================
-   SlackFlow — Standalone Client (GitHub Pages)
-   localStorage persistence + BroadcastChannel cross-tab sync
+   SlackFlow — Client
+   Connects to remote backend via Socket.IO.
+   Set BACKEND_URL below after deploying the server.
    ======================================== */
 
 (function () {
   'use strict';
 
-  const STORAGE = {
-    USERS: 'sf_users',
-    CHANNELS: 'sf_channels',
-    MESSAGES: 'sf_messages',
-    SESSION: 'sf_session',
-  };
+  // ┌─────────────────────────────────────────────┐
+  // │  SET THIS to your deployed server URL        │
+  // │  e.g. 'https://slackflow.onrender.com'       │
+  // │  Leave empty '' to use localStorage fallback  │
+  // └─────────────────────────────────────────────┘
+  const BACKEND_URL = '';
 
+  const useServer = !!BACKEND_URL;
+
+  // ── Helpers ──
   const COLORS = [
     '#6c5ce7','#00b894','#e17055','#0984e3','#d63031',
     '#e84393','#fdcb6e','#00cec9','#6ab04c','#eb4d4b',
@@ -41,59 +45,42 @@
     '📝','💻','🐛','⚡','🔧','🎨','📊','📈','🛡️','🧪',
   ];
 
-  // ── Storage ──
-  function load(key, fallback) {
-    try { return JSON.parse(localStorage.getItem(key)) || fallback; }
-    catch { return fallback; }
+  // ── In-memory data ──
+  let currentUser = null;
+  let authToken = sessionStorage.getItem('sf_token') || null;
+  let users = [];
+  let channels = [];
+  let messages = {};
+  let activeChannelId = 'c_general';
+  let activeThreadMsgId = null;
+  let socket = null;
+
+  // ── localStorage fallback (when no server) ──
+  function lsLoad(key, fb) { try { return JSON.parse(localStorage.getItem(key)) || fb; } catch { return fb; } }
+  function lsSave(key, d) { localStorage.setItem(key, JSON.stringify(d)); }
+
+  let bc;
+  try { bc = new BroadcastChannel('slackflow_sync'); } catch { bc = null; }
+  function broadcast(type, payload) {
+    if (bc && !useServer) bc.postMessage({ type, payload, senderId: currentUser ? currentUser.id : null });
   }
-  function save(key, data) { localStorage.setItem(key, JSON.stringify(data)); }
 
-  function getUsers() { return load(STORAGE.USERS, []); }
-  function saveUsers(arr) { save(STORAGE.USERS, arr); }
-
-  function getChannels() {
-    return load(STORAGE.CHANNELS, [
+  function lsGetUsers() { return lsLoad('sf_users', []); }
+  function lsSaveUsers(a) { lsSave('sf_users', a); }
+  function lsGetChannels() {
+    return lsLoad('sf_channels', [
       { id: 'c_general', name: 'general', topic: 'Company-wide announcements and work-based matters', createdBy: 'system' },
       { id: 'c_random', name: 'random', topic: 'Non-work banter and water cooler conversation', createdBy: 'system' },
     ]);
   }
-  function saveChannels(arr) { save(STORAGE.CHANNELS, arr); }
+  function lsSaveChannels(a) { lsSave('sf_channels', a); }
+  function lsGetAllMessages() { return lsLoad('sf_messages', {}); }
+  function lsSaveAllMessages(o) { lsSave('sf_messages', o); }
+  function lsGetChannelMessages(chId) { return lsGetAllMessages()[chId] || []; }
+  function lsAppendMessage(chId, msg) { const a = lsGetAllMessages(); if (!a[chId]) a[chId] = []; a[chId].push(msg); lsSaveAllMessages(a); }
+  function lsUpdateMessages(chId, msgs) { const a = lsGetAllMessages(); a[chId] = msgs; lsSaveAllMessages(a); }
 
-  function getAllMessages() { return load(STORAGE.MESSAGES, {}); }
-  function saveAllMessages(obj) { save(STORAGE.MESSAGES, obj); }
-  function getChannelMessages(chId) { return getAllMessages()[chId] || []; }
-
-  function appendMessage(chId, msg) {
-    const all = getAllMessages();
-    if (!all[chId]) all[chId] = [];
-    all[chId].push(msg);
-    saveAllMessages(all);
-  }
-  function updateMessages(chId, msgs) {
-    const all = getAllMessages();
-    all[chId] = msgs;
-    saveAllMessages(all);
-  }
-
-  // ── BroadcastChannel ──
-  let bc;
-  try { bc = new BroadcastChannel('slackflow_sync'); } catch { bc = null; }
-  function broadcast(type, payload) {
-    if (bc) bc.postMessage({ type, payload, senderId: currentUser ? currentUser.id : null });
-  }
-
-  // ── Auth state ──
-  let currentUser = null;
-
-  function getSession() {
-    const uid = load(STORAGE.SESSION, null);
-    if (!uid) return null;
-    return getUsers().find(u => u.id === uid) || null;
-  }
-  function setSession(uid) { save(STORAGE.SESSION, uid); }
-  function clearSession() { localStorage.removeItem(STORAGE.SESSION); }
-
-  // ── DOM ──
+  // ── DOM refs ──
   const $ = s => document.querySelector(s);
   const $$ = s => document.querySelectorAll(s);
 
@@ -120,136 +107,254 @@
   const typingIndicator = $('#typingIndicator');
   const typingText = $('#typingText');
   const threadPanel = $('#threadPanel');
-  const threadMessages = $('#threadMessages');
+  const threadMessagesEl = $('#threadMessages');
   const threadInput = $('#threadInput');
   const threadChannel = $('#threadChannel');
   const memberPanel = $('#memberPanel');
-  const memberList = $('#memberList');
+  const memberListEl = $('#memberList');
   const emojiPicker = $('#emojiPicker');
   const emojiGrid = $('#emojiGrid');
   const emojiSearchEl = $('#emojiSearch');
   const searchInput = $('#searchInput');
   const searchResults = $('#searchResults');
   const searchResultsInner = $('#searchResultsInner');
-  const sidebar = $('#sidebar');
+  const sidebarEl = $('#sidebar');
   const sidebarOverlay = $('#sidebarOverlay');
 
-  let activeChannelId = 'c_general';
-  let activeThreadMsgId = null;
   let isRegisterMode = false;
 
-  // ── Auth UI ──
+  // ==============================
+  //  AUTH
+  // ==============================
+
   function showAuthError(msg) { authError.textContent = msg; authError.classList.add('visible'); }
   function hideAuthError() { authError.classList.remove('visible'); }
 
   function toggleAuthMode() {
     isRegisterMode = !isRegisterMode;
     hideAuthError();
-    if (isRegisterMode) {
-      authNameField.style.display = '';
-      authSubmitBtn.textContent = 'Create Account';
-      authToggleText.textContent = 'Already have an account?';
-      authToggleLink.textContent = 'Sign in';
-      authSubtitle.textContent = 'Create your account to start messaging.';
-    } else {
-      authNameField.style.display = 'none';
-      authSubmitBtn.textContent = 'Sign In';
-      authToggleText.textContent = "Don't have an account?";
-      authToggleLink.textContent = 'Create one';
-      authSubtitle.textContent = 'Enter your credentials to get started.';
-    }
+    authNameField.style.display = isRegisterMode ? '' : 'none';
+    authSubmitBtn.textContent = isRegisterMode ? 'Create Account' : 'Sign In';
+    authToggleText.textContent = isRegisterMode ? 'Already have an account?' : "Don't have an account?";
+    authToggleLink.textContent = isRegisterMode ? 'Sign in' : 'Create one';
+    authSubtitle.textContent = isRegisterMode ? 'Create your account to start messaging.' : 'Enter your credentials to get started.';
   }
 
-  function handleAuth(e) {
+  async function handleAuth(e) {
     e.preventDefault();
     hideAuthError();
+
     const username = authUsername.value.trim().toLowerCase();
     const password = authPassword.value;
     const displayName = authName.value.trim();
 
     if (!username || !password) { showAuthError('Please fill in all fields.'); return; }
     if (username.length < 2) { showAuthError('Username must be at least 2 characters.'); return; }
+    if (isRegisterMode && !displayName) { showAuthError('Please enter a display name.'); return; }
+    if (isRegisterMode && password.length < 3) { showAuthError('Password must be at least 3 characters.'); return; }
 
-    const users = getUsers();
-
-    if (isRegisterMode) {
-      if (!displayName) { showAuthError('Please enter a display name.'); return; }
-      if (password.length < 3) { showAuthError('Password must be at least 3 characters.'); return; }
-      if (users.find(u => u.username === username)) { showAuthError('That username is already taken.'); return; }
-
-      const newUser = {
-        id: 'u_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
-        username, password, name: displayName, status: 'online', role: 'Member', createdAt: Date.now(),
-      };
-      users.push(newUser);
-      saveUsers(users);
-      setSession(newUser.id);
-      currentUser = newUser;
-      broadcast('user_joined', { userId: newUser.id });
-      enterApp();
+    if (useServer) {
+      const endpoint = isRegisterMode ? '/api/register' : '/api/login';
+      const body = isRegisterMode ? { username, password, name: displayName } : { username, password };
+      try {
+        const res = await fetch(BACKEND_URL + endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const d = await res.json();
+        if (!res.ok) { showAuthError(d.error || 'Something went wrong.'); return; }
+        authToken = d.token;
+        currentUser = d.user;
+        sessionStorage.setItem('sf_token', authToken);
+        enterApp();
+      } catch { showAuthError('Could not reach the server.'); }
     } else {
-      const user = users.find(u => u.username === username);
-      if (!user || user.password !== password) { showAuthError('Invalid username or password.'); return; }
-      user.status = 'online';
-      saveUsers(users);
-      setSession(user.id);
-      currentUser = user;
-      broadcast('user_online', { userId: user.id });
-      enterApp();
+      const allUsers = lsGetUsers();
+      if (isRegisterMode) {
+        if (allUsers.find(u => u.username === username)) { showAuthError('That username is already taken.'); return; }
+        const nu = { id: 'u_' + Date.now() + '_' + Math.random().toString(36).slice(2,7), username, password, name: displayName, status: 'online', role: 'Member', createdAt: Date.now() };
+        allUsers.push(nu); lsSaveUsers(allUsers);
+        lsSave('sf_session', nu.id);
+        currentUser = nu;
+        broadcast('user_joined', { userId: nu.id });
+        enterApp();
+      } else {
+        const user = allUsers.find(u => u.username === username);
+        if (!user || user.password !== password) { showAuthError('Invalid username or password.'); return; }
+        user.status = 'online'; lsSaveUsers(allUsers);
+        lsSave('sf_session', user.id);
+        currentUser = user;
+        broadcast('user_online', { userId: user.id });
+        enterApp();
+      }
     }
   }
 
   function logout() {
-    if (currentUser) {
-      const users = getUsers();
-      const u = users.find(x => x.id === currentUser.id);
-      if (u) { u.status = 'offline'; saveUsers(users); }
-      broadcast('user_offline', { userId: currentUser.id });
+    if (useServer) {
+      if (socket) socket.disconnect();
+      socket = null;
+      sessionStorage.removeItem('sf_token');
+    } else {
+      if (currentUser) {
+        const u2 = lsGetUsers(), u = u2.find(x => x.id === currentUser.id);
+        if (u) { u.status = 'offline'; lsSaveUsers(u2); }
+        broadcast('user_offline', { userId: currentUser.id });
+      }
+      localStorage.removeItem('sf_session');
     }
-    currentUser = null;
-    clearSession();
-    appWrapper.style.display = 'none';
-    authScreen.style.display = '';
+    currentUser = null; authToken = null;
+    users = []; channels = []; messages = {};
+    appWrapper.style.display = 'none'; authScreen.style.display = '';
     authUsername.value = ''; authPassword.value = ''; authName.value = '';
     hideAuthError();
   }
 
-  // ── App entry ──
-  function enterApp() {
+  // ==============================
+  //  APP ENTRY
+  // ==============================
+
+  async function enterApp() {
+    if (useServer) {
+      try {
+        const res = await fetch(BACKEND_URL + '/api/data', {
+          headers: { 'Authorization': 'Bearer ' + authToken },
+        });
+        if (!res.ok) { logout(); showAuthError('Session expired. Please sign in again.'); return; }
+        const d = await res.json();
+        users = d.users; channels = d.channels; messages = d.messages;
+      } catch { logout(); showAuthError('Could not reach the server.'); return; }
+      connectSocket();
+    } else {
+      users = lsGetUsers();
+      channels = lsGetChannels();
+      messages = lsGetAllMessages();
+      const u = users.find(x => x.id === currentUser.id);
+      if (u) { u.status = 'online'; u.lastSeen = Date.now(); lsSaveUsers(users); }
+      startLocalHeartbeat();
+      startLocalPolling();
+    }
+
     authScreen.style.display = 'none';
     appWrapper.style.display = 'flex';
-    const users = getUsers();
-    const u = users.find(x => x.id === currentUser.id);
-    if (u) { u.status = 'online'; u.lastSeen = Date.now(); saveUsers(users); }
     renderAll();
     messageInput.focus();
-    startHeartbeat();
   }
 
-  let heartbeatInterval;
-  function startHeartbeat() {
-    clearInterval(heartbeatInterval);
-    heartbeatInterval = setInterval(() => {
+  // ── Local-only heartbeat & polling ──
+  let hbInterval, pollInterval;
+  function startLocalHeartbeat() {
+    clearInterval(hbInterval);
+    hbInterval = setInterval(() => {
       if (!currentUser) return;
-      const users = getUsers();
-      const u = users.find(x => x.id === currentUser.id);
-      if (u) { u.status = 'online'; u.lastSeen = Date.now(); saveUsers(users); }
+      const u2 = lsGetUsers(), u = u2.find(x => x.id === currentUser.id);
+      if (u) { u.status = 'online'; u.lastSeen = Date.now(); }
       const now = Date.now();
-      let changed = false;
-      users.forEach(x => {
-        if (x.id !== currentUser.id && x.status === 'online' && x.lastSeen && now - x.lastSeen > 15000) {
-          x.status = 'offline'; changed = true;
-        }
-      });
-      if (changed) saveUsers(users);
+      u2.forEach(x => { if (x.id !== currentUser.id && x.status === 'online' && x.lastSeen && now - x.lastSeen > 15000) x.status = 'offline'; });
+      lsSaveUsers(u2);
     }, 5000);
   }
+  let lastSnap = '';
+  function startLocalPolling() {
+    lastSnap = JSON.stringify(lsGetAllMessages());
+    clearInterval(pollInterval);
+    pollInterval = setInterval(() => {
+      if (!currentUser) return;
+      const cur = JSON.stringify(lsGetAllMessages());
+      if (cur !== lastSnap) { lastSnap = cur; messages = lsGetAllMessages(); renderMessages(); if (activeThreadMsgId) renderThread(activeThreadMsgId); }
+      users = lsGetUsers(); renderDMList();
+    }, 2000);
+  }
 
-  // ── Render ──
+  // ── BroadcastChannel listener (local mode) ──
+  if (bc) {
+    bc.onmessage = (e) => {
+      if (useServer) return;
+      const { type, payload, senderId } = e.data;
+      if (senderId === (currentUser && currentUser.id)) return;
+      if (type === 'new_message' && payload.channelId === activeChannelId) { messages = lsGetAllMessages(); renderMessages(); }
+      if (type === 'thread_reply' && payload.channelId === activeChannelId) { messages = lsGetAllMessages(); renderMessages(); if (activeThreadMsgId === payload.parentMsgId) renderThread(payload.parentMsgId); }
+      if (type === 'message_deleted' && payload.channelId === activeChannelId) { messages = lsGetAllMessages(); renderMessages(); }
+      if (type === 'reaction' && payload.channelId === activeChannelId) { messages = lsGetAllMessages(); renderMessages(); }
+      if (type === 'new_channel') { channels = lsGetChannels(); renderChannelList(); }
+      if (['user_joined','user_online','user_offline'].includes(type)) { users = lsGetUsers(); renderDMList(); if (memberPanel.classList.contains('open')) renderMembers(); }
+      if (type === 'typing' && payload.channelId === activeChannelId && payload.userName) showTyping(payload.userName);
+    };
+  }
+
+  // ==============================
+  //  SOCKET.IO (server mode)
+  // ==============================
+
+  function connectSocket() {
+    if (!useServer) return;
+    if (socket) socket.disconnect();
+    socket = io(BACKEND_URL);
+
+    socket.on('connect', () => { socket.emit('authenticate', authToken); });
+    socket.on('authenticated', () => { socket.emit('join_channel', activeChannelId); });
+    socket.on('auth_error', () => { logout(); showAuthError('Session expired.'); });
+
+    socket.on('new_message', ({ channelId, message }) => {
+      if (!messages[channelId]) messages[channelId] = [];
+      if (!messages[channelId].find(m => m.id === message.id)) messages[channelId].push(message);
+      if (channelId === activeChannelId) renderMessages();
+    });
+    socket.on('thread_reply', ({ channelId, parentMsgId, reply }) => {
+      const msgs = messages[channelId]; if (!msgs) return;
+      const p = msgs.find(m => m.id === parentMsgId); if (!p) return;
+      if (!p.threadReplies) p.threadReplies = [];
+      if (!p.threadReplies.find(r => r.id === reply.id)) p.threadReplies.push(reply);
+      if (channelId === activeChannelId) { renderMessages(); if (activeThreadMsgId === parentMsgId) renderThread(parentMsgId); }
+    });
+    socket.on('reaction_updated', ({ channelId, msgId, reactions }) => {
+      const msgs = messages[channelId]; if (!msgs) return;
+      const msg = msgs.find(m => m.id === msgId); if (msg) msg.reactions = reactions;
+      if (channelId === activeChannelId) renderMessages();
+    });
+    socket.on('message_deleted', ({ channelId, msgId }) => {
+      if (messages[channelId]) messages[channelId] = messages[channelId].filter(m => m.id !== msgId);
+      if (channelId === activeChannelId) renderMessages();
+      if (activeThreadMsgId === msgId) { threadPanel.classList.remove('open'); activeThreadMsgId = null; }
+    });
+    socket.on('channel_created', ({ channel }) => {
+      if (!channels.find(c => c.id === channel.id)) channels.push(channel);
+      if (!messages[channel.id]) messages[channel.id] = [];
+      renderChannelList();
+    });
+    socket.on('dm_opened', ({ channelId }) => {
+      if (!messages[channelId]) messages[channelId] = [];
+      switchChannel(channelId);
+      socket.emit('join_channel', channelId);
+    });
+    socket.on('user_joined', ({ user }) => {
+      const ex = users.find(u => u.id === user.id);
+      if (ex) Object.assign(ex, user); else users.push(user);
+      renderDMList(); if (memberPanel.classList.contains('open')) renderMembers();
+    });
+    socket.on('user_status', ({ userId, status }) => {
+      const u = users.find(x => x.id === userId); if (u) u.status = status;
+      renderDMList(); if (memberPanel.classList.contains('open')) renderMembers();
+    });
+    socket.on('user_updated', ({ user }) => {
+      const ex = users.find(u => u.id === user.id);
+      if (ex) Object.assign(ex, user);
+      if (user.id === currentUser.id) currentUser = user;
+      renderAll();
+    });
+    socket.on('user_typing', ({ channelId, userName }) => {
+      if (channelId === activeChannelId) showTyping(userName);
+    });
+  }
+
+  // ==============================
+  //  RENDER (shared by both modes)
+  // ==============================
+
   function renderAll() { renderChannelList(); renderDMList(); renderMessages(); renderRailAvatar(); renderEmojis(); }
 
   function renderChannelList() {
-    const channels = getChannels();
     channelListEl.innerHTML = channels.filter(c => !c.id.startsWith('dm_')).map(ch => `
       <li class="${ch.id === activeChannelId ? 'active' : ''}" data-channel="${ch.id}">
         <span class="channel-hash">#</span><span>${escHtml(ch.name)}</span>
@@ -257,11 +362,8 @@
   }
 
   function renderDMList() {
-    const others = getUsers().filter(u => u.id !== currentUser.id);
-    if (others.length === 0) {
-      dmListEl.innerHTML = '<li style="color:var(--text-muted);font-size:12px;cursor:default;padding-left:26px">No other users yet</li>';
-      return;
-    }
+    const others = users.filter(u => u.id !== currentUser.id);
+    if (!others.length) { dmListEl.innerHTML = '<li style="color:var(--text-muted);font-size:12px;cursor:default;padding-left:26px">No other users yet</li>'; return; }
     dmListEl.innerHTML = others.map(u => `
       <li data-user="${u.id}">
         <span class="dm-avatar" style="background:${colorFor(u.name)}">${initials(u.name)}</span>
@@ -271,30 +373,23 @@
   }
 
   function formatTime(ts) { return new Date(ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }
-
   function formatDate(ts) {
-    const d = new Date(ts), today = new Date();
-    if (d.toDateString() === today.toDateString()) return 'Today';
-    const y = new Date(today); y.setDate(y.getDate() - 1);
+    const d = new Date(ts), t = new Date();
+    if (d.toDateString() === t.toDateString()) return 'Today';
+    const y = new Date(t); y.setDate(y.getDate() - 1);
     if (d.toDateString() === y.toDateString()) return 'Yesterday';
     return d.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
   }
-
   function formatText(text) {
-    return escHtml(text)
-      .replace(/`([^`]+)`/g, '<code>$1</code>')
+    return escHtml(text).replace(/`([^`]+)`/g, '<code>$1</code>')
       .replace(/(https?:\/\/[^\s]+)/g, '<a href="$1" target="_blank">$1</a>')
       .replace(/@(\w[\w\s]*\w)/g, '<span class="mention">@$1</span>');
   }
-
-  function resolveUser(uid) {
-    return getUsers().find(u => u.id === uid) || { id: uid, name: 'Deleted User', status: 'offline' };
-  }
+  function resolveUser(uid) { return users.find(u => u.id === uid) || { id: uid, name: 'Deleted User', status: 'offline' }; }
 
   function renderMessages() {
-    const channels = getChannels();
     const ch = channels.find(c => c.id === activeChannelId);
-    const msgs = getChannelMessages(activeChannelId);
+    const msgs = messages[activeChannelId] || [];
     const isDM = activeChannelId.startsWith('dm_');
 
     headerChannelName.textContent = ch ? ch.name : 'unknown';
@@ -340,7 +435,7 @@
       lastUserId = msg.userId; lastTs = msg.ts;
     });
 
-    if (msgs.length === 0 && ch) html += `<div style="text-align:center;padding:40px 20px;color:var(--text-muted)">No messages yet. Be the first to say something!</div>`;
+    if (!msgs.length && ch) html += `<div style="text-align:center;padding:40px 20px;color:var(--text-muted)">No messages yet. Be the first to say something!</div>`;
     messagesListEl.innerHTML = html;
     scrollToBottom();
   }
@@ -348,47 +443,40 @@
   function scrollToBottom() { requestAnimationFrame(() => { messagesContainer.scrollTop = messagesContainer.scrollHeight; }); }
 
   function renderThread(msgId) {
-    const msgs = getChannelMessages(activeChannelId);
-    const parentMsg = msgs.find(m => m.id === msgId);
-    if (!parentMsg) return;
+    const msgs = messages[activeChannelId] || [];
+    const pm = msgs.find(m => m.id === msgId);
+    if (!pm) return;
     activeThreadMsgId = msgId;
-    const ch = getChannels().find(c => c.id === activeChannelId);
+    const ch = channels.find(c => c.id === activeChannelId);
     threadChannel.textContent = ch ? `#${ch.name}` : '';
-    const pu = resolveUser(parentMsg.userId);
+    const pu = resolveUser(pm.userId);
     let html = `<div class="message"><div class="message-avatar" style="background:${colorFor(pu.name)}">${initials(pu.name)}</div>
-      <div class="message-body"><div class="message-meta"><span class="message-author">${escHtml(pu.name)}</span><span class="message-time">${formatTime(parentMsg.ts)}</span></div>
-      <div class="message-text">${formatText(parentMsg.text)}</div></div></div>
-      <div class="date-divider"><span>${(parentMsg.threadReplies||[]).length} ${(parentMsg.threadReplies||[]).length === 1 ? 'reply' : 'replies'}</span></div>`;
-    (parentMsg.threadReplies || []).forEach(reply => {
-      const u = resolveUser(reply.userId);
+      <div class="message-body"><div class="message-meta"><span class="message-author">${escHtml(pu.name)}</span><span class="message-time">${formatTime(pm.ts)}</span></div>
+      <div class="message-text">${formatText(pm.text)}</div></div></div>
+      <div class="date-divider"><span>${(pm.threadReplies||[]).length} ${(pm.threadReplies||[]).length===1?'reply':'replies'}</span></div>`;
+    (pm.threadReplies || []).forEach(r => {
+      const u = resolveUser(r.userId);
       html += `<div class="message"><div class="message-avatar" style="background:${colorFor(u.name)}">${initials(u.name)}</div>
-        <div class="message-body"><div class="message-meta"><span class="message-author">${escHtml(u.name)}</span><span class="message-time">${formatTime(reply.ts)}</span></div>
-        <div class="message-text">${formatText(reply.text)}</div></div></div>`;
+        <div class="message-body"><div class="message-meta"><span class="message-author">${escHtml(u.name)}</span><span class="message-time">${formatTime(r.ts)}</span></div>
+        <div class="message-text">${formatText(r.text)}</div></div></div>`;
     });
-    threadMessages.innerHTML = html;
-    threadPanel.classList.add('open');
-    memberPanel.classList.remove('open');
-    requestAnimationFrame(() => { threadMessages.scrollTop = threadMessages.scrollHeight; });
+    threadMessagesEl.innerHTML = html;
+    threadPanel.classList.add('open'); memberPanel.classList.remove('open');
+    requestAnimationFrame(() => { threadMessagesEl.scrollTop = threadMessagesEl.scrollHeight; });
   }
 
   function renderMembers() {
-    const allUsers = getUsers();
-    const online = allUsers.filter(u => u.status === 'online');
-    const offline = allUsers.filter(u => u.status !== 'online');
-    let html = `<div style="padding:6px 10px;font-size:12px;color:var(--text-muted);font-weight:700">Online — ${online.length}</div>`;
-    online.forEach(u => { html += memberItemHTML(u); });
-    if (offline.length) {
-      html += `<div style="padding:6px 10px;font-size:12px;color:var(--text-muted);font-weight:700;margin-top:8px">Offline — ${offline.length}</div>`;
-      offline.forEach(u => { html += memberItemHTML(u); });
-    }
-    memberList.innerHTML = html;
-    memberCount.textContent = allUsers.length;
+    const on = users.filter(u => u.status === 'online'), off = users.filter(u => u.status !== 'online');
+    let html = `<div style="padding:6px 10px;font-size:12px;color:var(--text-muted);font-weight:700">Online — ${on.length}</div>`;
+    on.forEach(u => { html += memberHTML(u); });
+    if (off.length) { html += `<div style="padding:6px 10px;font-size:12px;color:var(--text-muted);font-weight:700;margin-top:8px">Offline — ${off.length}</div>`; off.forEach(u => { html += memberHTML(u); }); }
+    memberListEl.innerHTML = html; memberCount.textContent = users.length;
   }
 
-  function memberItemHTML(u) {
+  function memberHTML(u) {
     const dot = u.status === 'online' ? 'var(--green)' : 'var(--text-muted)';
     return `<div class="member-item"><div class="member-avatar" style="background:${colorFor(u.name)}">${initials(u.name)}<span class="status-dot" style="background:${dot}"></span></div>
-      <div class="member-info"><div class="member-name">${escHtml(u.name)}${u.id === currentUser.id ? ' (you)' : ''}</div><div class="member-role">${escHtml(u.role || 'Member')}</div></div></div>`;
+      <div class="member-info"><div class="member-name">${escHtml(u.name)}${u.id===currentUser.id?' (you)':''}</div><div class="member-role">${escHtml(u.role||'Member')}</div></div></div>`;
   }
 
   function renderRailAvatar() {
@@ -400,64 +488,100 @@
   }
 
   function renderEmojis(filter = '') {
-    const filtered = filter ? EMOJIS.filter(e => e.includes(filter)) : EMOJIS;
-    emojiGrid.innerHTML = filtered.map(e => `<span>${e}</span>`).join('');
+    const f = filter ? EMOJIS.filter(e => e.includes(filter)) : EMOJIS;
+    emojiGrid.innerHTML = f.map(e => `<span>${e}</span>`).join('');
   }
 
-  // ── Actions ──
+  let typingTO;
+  function showTyping(name) {
+    typingText.textContent = `${name} is typing...`;
+    typingIndicator.classList.add('visible');
+    clearTimeout(typingTO);
+    typingTO = setTimeout(() => typingIndicator.classList.remove('visible'), 3000);
+  }
+
+  // ==============================
+  //  ACTIONS
+  // ==============================
+
   function sendMessage(text, isThread = false) {
     if (!text.trim() || !currentUser) return;
-    const msg = { id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2,6), userId: currentUser.id, text: text.trim(), ts: Date.now(), reactions: {}, threadReplies: [] };
-    if (isThread && activeThreadMsgId) {
-      const msgs = getChannelMessages(activeChannelId);
-      const parent = msgs.find(m => m.id === activeThreadMsgId);
-      if (parent) {
-        parent.threadReplies.push({ id: msg.id, userId: msg.userId, text: msg.text, ts: msg.ts });
-        updateMessages(activeChannelId, msgs);
-        broadcast('thread_reply', { channelId: activeChannelId, parentMsgId: activeThreadMsgId });
-        renderThread(activeThreadMsgId); renderMessages();
+
+    if (useServer && socket) {
+      if (isThread && activeThreadMsgId) {
+        socket.emit('thread_reply', { channelId: activeChannelId, parentMsgId: activeThreadMsgId, text: text.trim() });
+      } else {
+        socket.emit('send_message', { channelId: activeChannelId, text: text.trim() });
       }
     } else {
-      appendMessage(activeChannelId, msg);
-      broadcast('new_message', { channelId: activeChannelId, msgId: msg.id });
-      renderMessages();
+      const msg = { id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2,6), userId: currentUser.id, text: text.trim(), ts: Date.now(), reactions: {}, threadReplies: [] };
+      if (isThread && activeThreadMsgId) {
+        const allMsgs = lsGetAllMessages();
+        const chMsgs = allMsgs[activeChannelId] || [];
+        const parent = chMsgs.find(m => m.id === activeThreadMsgId);
+        if (parent) {
+          parent.threadReplies.push({ id: msg.id, userId: msg.userId, text: msg.text, ts: msg.ts });
+          allMsgs[activeChannelId] = chMsgs;
+          lsSaveAllMessages(allMsgs);
+          messages = allMsgs;
+          broadcast('thread_reply', { channelId: activeChannelId, parentMsgId: activeThreadMsgId });
+          renderThread(activeThreadMsgId); renderMessages();
+        }
+      } else {
+        lsAppendMessage(activeChannelId, msg);
+        messages = lsGetAllMessages();
+        broadcast('new_message', { channelId: activeChannelId, msgId: msg.id });
+        renderMessages();
+      }
     }
   }
 
   function deleteMessage(msgId) {
-    let msgs = getChannelMessages(activeChannelId);
-    msgs = msgs.filter(m => m.id !== msgId);
-    updateMessages(activeChannelId, msgs);
-    broadcast('message_deleted', { channelId: activeChannelId, msgId });
-    renderMessages();
-    if (activeThreadMsgId === msgId) { threadPanel.classList.remove('open'); activeThreadMsgId = null; }
+    if (useServer && socket) {
+      socket.emit('delete_message', { channelId: activeChannelId, msgId });
+    } else {
+      const allMsgs = lsGetAllMessages();
+      allMsgs[activeChannelId] = (allMsgs[activeChannelId] || []).filter(m => m.id !== msgId);
+      lsSaveAllMessages(allMsgs);
+      messages = allMsgs;
+      broadcast('message_deleted', { channelId: activeChannelId, msgId });
+      renderMessages();
+      if (activeThreadMsgId === msgId) { threadPanel.classList.remove('open'); activeThreadMsgId = null; }
+    }
   }
 
   function toggleReaction(msgId, emoji) {
-    const msgs = getChannelMessages(activeChannelId);
-    const msg = msgs.find(m => m.id === msgId);
-    if (!msg) return;
-    if (!msg.reactions) msg.reactions = {};
-    if (!msg.reactions[emoji]) msg.reactions[emoji] = [];
-    const idx = msg.reactions[emoji].indexOf(currentUser.id);
-    if (idx > -1) { msg.reactions[emoji].splice(idx, 1); if (!msg.reactions[emoji].length) delete msg.reactions[emoji]; }
-    else msg.reactions[emoji].push(currentUser.id);
-    updateMessages(activeChannelId, msgs);
-    broadcast('reaction', { channelId: activeChannelId, msgId });
-    renderMessages();
+    if (useServer && socket) {
+      socket.emit('reaction', { channelId: activeChannelId, msgId, emoji });
+    } else {
+      const allMsgs = lsGetAllMessages();
+      const msg = (allMsgs[activeChannelId] || []).find(m => m.id === msgId);
+      if (!msg) return;
+      if (!msg.reactions) msg.reactions = {};
+      if (!msg.reactions[emoji]) msg.reactions[emoji] = [];
+      const idx = msg.reactions[emoji].indexOf(currentUser.id);
+      if (idx > -1) { msg.reactions[emoji].splice(idx, 1); if (!msg.reactions[emoji].length) delete msg.reactions[emoji]; }
+      else msg.reactions[emoji].push(currentUser.id);
+      lsSaveAllMessages(allMsgs);
+      messages = allMsgs;
+      broadcast('reaction', { channelId: activeChannelId, msgId });
+      renderMessages();
+    }
   }
 
   function switchChannel(chId) {
+    if (useServer && socket) { socket.emit('leave_channel', activeChannelId); }
     activeChannelId = chId;
+    if (useServer && socket) { socket.emit('join_channel', chId); }
     threadPanel.classList.remove('open'); activeThreadMsgId = null;
     renderChannelList(); renderMessages(); closeMobileSidebar();
   }
 
   function performSearch(query) {
     if (!query.trim()) { searchResults.classList.remove('open'); return; }
-    const q = query.toLowerCase(), results = [], allMsgs = getAllMessages(), chs = getChannels();
-    Object.entries(allMsgs).forEach(([chId, msgs]) => {
-      const ch = chs.find(c => c.id === chId); if (!ch) return;
+    const q = query.toLowerCase(), results = [];
+    Object.entries(messages).forEach(([chId, msgs]) => {
+      const ch = channels.find(c => c.id === chId); if (!ch) return;
       msgs.forEach(msg => {
         if (msg.text.toLowerCase().includes(q)) results.push({ channel: ch.name, channelId: chId, msg });
         (msg.threadReplies||[]).forEach(r => { if (r.text.toLowerCase().includes(q)) results.push({ channel: ch.name+' (thread)', channelId: chId, msg: r }); });
@@ -465,28 +589,18 @@
     });
     if (!results.length) { searchResultsInner.innerHTML = `<div style="text-align:center;padding:40px;color:var(--text-muted)">No results for "${escHtml(query)}"</div>`; }
     else {
-      const safeQ = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const sq = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       searchResultsInner.innerHTML = results.map(r => {
-        const u = resolveUser(r.msg.userId);
-        const hl = escHtml(r.msg.text).replace(new RegExp(`(${safeQ})`,'gi'), '<mark>$1</mark>');
+        const u = resolveUser(r.msg.userId), hl = escHtml(r.msg.text).replace(new RegExp(`(${sq})`,'gi'), '<mark>$1</mark>');
         return `<div class="search-result-item" data-channel="${r.channelId}"><div class="search-result-channel">#${escHtml(r.channel)} · ${escHtml(u.name)} · ${formatTime(r.msg.ts)}</div><div class="search-result-text">${hl}</div></div>`;
       }).join('');
     }
     searchResults.classList.add('open');
   }
 
-  // ── Typing ──
-  let typingTimeout;
-  function showTyping(name) {
-    typingText.textContent = `${name} is typing...`;
-    typingIndicator.classList.add('visible');
-    clearTimeout(typingTimeout);
-    typingTimeout = setTimeout(() => typingIndicator.classList.remove('visible'), 3000);
-  }
-
   // ── UI helpers ──
-  function openMobileSidebar() { sidebar.classList.add('mobile-open'); sidebarOverlay.classList.add('visible'); }
-  function closeMobileSidebar() { sidebar.classList.remove('mobile-open'); sidebarOverlay.classList.remove('visible'); }
+  function openMobileSidebar() { sidebarEl.classList.add('mobile-open'); sidebarOverlay.classList.add('visible'); }
+  function closeMobileSidebar() { sidebarEl.classList.remove('mobile-open'); sidebarOverlay.classList.remove('visible'); }
   function openModal(id) { document.getElementById(id).classList.add('open'); }
   function closeModal(id) { document.getElementById(id).classList.remove('open'); }
 
@@ -495,41 +609,17 @@
     emojiInsertMode = mode; emojiTargetMsgId = msgId || null;
     renderEmojis(); emojiSearchEl.value = '';
     const r = anchor.getBoundingClientRect();
-    emojiPicker.style.bottom = (window.innerHeight - r.top + 8)+'px';
-    emojiPicker.style.left = Math.min(r.left, window.innerWidth - 340)+'px';
-    emojiPicker.style.top = 'auto';
-    emojiPicker.classList.add('open');
+    emojiPicker.style.bottom = (window.innerHeight - r.top + 8) + 'px';
+    emojiPicker.style.left = Math.min(r.left, window.innerWidth - 340) + 'px';
+    emojiPicker.style.top = 'auto'; emojiPicker.classList.add('open');
   }
   function closeEmojiPicker() { emojiPicker.classList.remove('open'); emojiTargetMsgId = null; }
-  function autoResize(el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 160)+'px'; }
+  function autoResize(el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 160) + 'px'; }
 
-  // ── BroadcastChannel listener ──
-  if (bc) {
-    bc.onmessage = (e) => {
-      const { type, payload, senderId } = e.data;
-      if (senderId === (currentUser && currentUser.id)) return;
-      switch (type) {
-        case 'new_message': if (payload.channelId === activeChannelId) renderMessages(); break;
-        case 'thread_reply': if (payload.channelId === activeChannelId) { renderMessages(); if (activeThreadMsgId === payload.parentMsgId) renderThread(payload.parentMsgId); } break;
-        case 'message_deleted': if (payload.channelId === activeChannelId) renderMessages(); break;
-        case 'reaction': if (payload.channelId === activeChannelId) renderMessages(); break;
-        case 'new_channel': renderChannelList(); break;
-        case 'user_joined': case 'user_online': case 'user_offline':
-          renderDMList(); if (memberPanel.classList.contains('open')) renderMembers(); break;
-        case 'typing': if (payload.channelId === activeChannelId && payload.userName) showTyping(payload.userName); break;
-      }
-    };
-  }
+  // ==============================
+  //  EVENT LISTENERS
+  // ==============================
 
-  let lastSnap = JSON.stringify(getAllMessages());
-  setInterval(() => {
-    if (!currentUser) return;
-    const cur = JSON.stringify(getAllMessages());
-    if (cur !== lastSnap) { lastSnap = cur; renderMessages(); if (activeThreadMsgId) renderThread(activeThreadMsgId); }
-    renderDMList();
-  }, 2000);
-
-  // ── Event listeners ──
   authToggleLink.addEventListener('click', (e) => { e.preventDefault(); toggleAuthMode(); });
   authForm.addEventListener('submit', handleAuth);
   $('#logoutBtn').addEventListener('click', logout);
@@ -538,17 +628,30 @@
 
   dmListEl.addEventListener('click', (e) => {
     const li = e.target.closest('li'); if (!li || !li.dataset.user) return;
-    const userId = li.dataset.user, user = resolveUser(userId);
-    const ids = [currentUser.id, userId].sort(), dmId = 'dm_' + ids.join('_');
-    const chs = getChannels();
-    if (!chs.find(c => c.id === dmId)) { chs.push({ id: dmId, name: user.name, topic: `Direct message with ${user.name}`, createdBy: currentUser.id }); saveChannels(chs); }
-    switchChannel(dmId);
+    const userId = li.dataset.user;
+    if (useServer && socket) {
+      socket.emit('open_dm', { targetUserId: userId });
+    } else {
+      const user = resolveUser(userId);
+      const ids = [currentUser.id, userId].sort(), dmId = 'dm_' + ids.join('_');
+      const chs = lsGetChannels();
+      if (!chs.find(c => c.id === dmId)) { chs.push({ id: dmId, name: user.name, topic: `Direct message with ${user.name}`, createdBy: currentUser.id }); lsSaveChannels(chs); channels = chs; }
+      switchChannel(dmId);
+    }
   });
 
   $('#sendBtn').addEventListener('click', () => { sendMessage(messageInput.value); messageInput.value = ''; autoResize(messageInput); });
   messageInput.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(messageInput.value); messageInput.value = ''; autoResize(messageInput); } });
-  let typingBC;
-  messageInput.addEventListener('input', () => { autoResize(messageInput); clearTimeout(typingBC); typingBC = setTimeout(() => { if (currentUser && messageInput.value.trim()) broadcast('typing', { channelId: activeChannelId, userName: currentUser.name }); }, 300); });
+  let typBcTO;
+  messageInput.addEventListener('input', () => {
+    autoResize(messageInput);
+    clearTimeout(typBcTO);
+    typBcTO = setTimeout(() => {
+      if (!currentUser || !messageInput.value.trim()) return;
+      if (useServer && socket) socket.emit('typing', { channelId: activeChannelId });
+      else broadcast('typing', { channelId: activeChannelId, userName: currentUser.name });
+    }, 300);
+  });
 
   $('#threadSendBtn').addEventListener('click', () => { sendMessage(threadInput.value, true); threadInput.value = ''; autoResize(threadInput); });
   threadInput.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(threadInput.value, true); threadInput.value = ''; autoResize(threadInput); } });
@@ -578,14 +681,22 @@
 
   $('#addChannelBtn').addEventListener('click', (e) => { e.stopPropagation(); openModal('addChannelModal'); });
   $('#createChannelBtn').addEventListener('click', () => {
-    const name = $('#newChannelName').value.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+    const name = $('#newChannelName').value.trim();
+    const desc = $('#newChannelDesc').value.trim();
     if (!name) return;
-    const desc = $('#newChannelDesc').value.trim(), id = 'c_' + Date.now(), chs = getChannels();
-    if (chs.find(c => c.name === name)) { alert('Channel already exists!'); return; }
-    chs.push({ id, name, topic: desc || '', createdBy: currentUser.id });
-    saveChannels(chs); broadcast('new_channel', { channelId: id });
-    renderChannelList(); switchChannel(id); closeModal('addChannelModal');
-    $('#newChannelName').value = ''; $('#newChannelDesc').value = '';
+    if (useServer && socket) { socket.emit('create_channel', { name, topic: desc }); }
+    else {
+      const slug = name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+      if (!slug) return;
+      const chs = lsGetChannels();
+      if (chs.find(c => c.name === slug)) { alert('Channel already exists!'); return; }
+      const id = 'c_' + Date.now();
+      chs.push({ id, name: slug, topic: desc || '', createdBy: currentUser.id });
+      lsSaveChannels(chs); channels = chs;
+      broadcast('new_channel', { channelId: id });
+      renderChannelList(); switchChannel(id);
+    }
+    closeModal('addChannelModal'); $('#newChannelName').value = ''; $('#newChannelDesc').value = '';
   });
 
   $('#channelsToggle').addEventListener('click', (e) => { if (e.target.closest('.btn-tiny')) return; e.currentTarget.classList.toggle('collapsed'); channelListEl.style.display = e.currentTarget.classList.contains('collapsed') ? 'none' : ''; });
@@ -601,10 +712,13 @@
   $('#saveProfileBtn').addEventListener('click', () => {
     const name = $('#profileName').value.trim();
     if (name && name !== currentUser.name) {
-      currentUser.name = name;
-      const users = getUsers(), u = users.find(x => x.id === currentUser.id);
-      if (u) { u.name = name; saveUsers(users); }
-      broadcast('user_joined', { userId: currentUser.id }); renderAll();
+      if (useServer && socket) { socket.emit('update_profile', { name }); }
+      else {
+        currentUser.name = name;
+        const u2 = lsGetUsers(), u = u2.find(x => x.id === currentUser.id);
+        if (u) { u.name = name; lsSaveUsers(u2); users = u2; }
+        broadcast('user_joined', { userId: currentUser.id }); renderAll();
+      }
     }
     closeModal('profileModal');
   });
@@ -617,10 +731,22 @@
   });
 
   window.addEventListener('beforeunload', () => {
-    if (currentUser) { const users = getUsers(), u = users.find(x => x.id === currentUser.id); if (u) { u.status = 'offline'; saveUsers(users); } broadcast('user_offline', { userId: currentUser.id }); }
+    if (!useServer && currentUser) {
+      const u2 = lsGetUsers(), u = u2.find(x => x.id === currentUser.id);
+      if (u) { u.status = 'offline'; lsSaveUsers(u2); }
+      broadcast('user_offline', { userId: currentUser.id });
+    }
   });
 
-  // ── Init ──
-  const existing = getSession();
-  if (existing) { currentUser = existing; enterApp(); }
+  // ==============================
+  //  INIT
+  // ==============================
+
+  if (useServer && authToken) {
+    enterApp();
+  } else if (!useServer) {
+    const uid = lsLoad('sf_session', null);
+    if (uid) { const u = lsGetUsers().find(x => x.id === uid); if (u) { currentUser = u; enterApp(); } }
+  }
+
 })();
