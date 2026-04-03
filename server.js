@@ -3,8 +3,8 @@ const http = require('http');
 const { Server } = require('socket.io');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
-const fs = require('fs');
 const path = require('path');
+const { MongoClient } = require('mongodb');
 
 const app = express();
 const server = http.createServer(app);
@@ -24,7 +24,7 @@ const io = new Server(server, {
 });
 
 const PORT = process.env.PORT || 3000;
-const DATA_FILE = path.join(__dirname, 'data.json');
+const MONGODB_URI = process.env.MONGODB_URI;
 
 // ── Middleware ──
 app.use(express.json());
@@ -42,62 +42,135 @@ app.use((req, res, next) => {
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ── Persistence ──
-const DEFAULT_DATA = {
+// ── MongoDB ──
+let db;
+let usersCol, channelsCol, messagesCol;
+
+const DEFAULT_CHANNELS = [
+  { id: 'c_general', name: 'general', topic: 'Company-wide announcements and work-based matters', createdBy: 'system' },
+  { id: 'c_random', name: 'random', topic: 'Non-work banter and water cooler conversation', createdBy: 'system' },
+];
+
+async function connectDB() {
+  if (!MONGODB_URI) {
+    console.warn('No MONGODB_URI set — data will not persist across restarts.');
+    return false;
+  }
+  const client = new MongoClient(MONGODB_URI);
+  await client.connect();
+  db = client.db('slackflow');
+  usersCol = db.collection('users');
+  channelsCol = db.collection('channels');
+  messagesCol = db.collection('messages');
+
+  // Seed default channels if none exist
+  const count = await channelsCol.countDocuments();
+  if (count === 0) {
+    await channelsCol.insertMany(DEFAULT_CHANNELS);
+  }
+
+  console.log('Connected to MongoDB');
+  return true;
+}
+
+// ── In-memory fallback (no MongoDB) ──
+let memData = {
   users: [],
-  channels: [
-    { id: 'c_general', name: 'general', topic: 'Company-wide announcements and work-based matters', createdBy: 'system' },
-    { id: 'c_random', name: 'random', topic: 'Non-work banter and water cooler conversation', createdBy: 'system' },
-  ],
+  channels: JSON.parse(JSON.stringify(DEFAULT_CHANNELS)),
   messages: {},
 };
 
-let data;
+// ── Data helpers (work with both Mongo and memory) ──
+async function getUsers() {
+  if (db) return usersCol.find().toArray();
+  return memData.users;
+}
 
-function loadData() {
-  try {
-    if (fs.existsSync(DATA_FILE)) {
-      data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-      if (!data.users) data.users = [];
-      if (!data.channels) data.channels = DEFAULT_DATA.channels;
-      if (!data.messages) data.messages = {};
-    } else {
-      data = JSON.parse(JSON.stringify(DEFAULT_DATA));
-    }
-  } catch {
-    data = JSON.parse(JSON.stringify(DEFAULT_DATA));
+async function findUser(query) {
+  if (db) return usersCol.findOne(query);
+  if (query.username) return memData.users.find(u => u.username === query.username) || null;
+  if (query.id) return memData.users.find(u => u.id === query.id) || null;
+  return null;
+}
+
+async function insertUser(user) {
+  if (db) { await usersCol.insertOne(user); return; }
+  memData.users.push(user);
+}
+
+async function updateUser(id, updates) {
+  if (db) { await usersCol.updateOne({ id }, { $set: updates }); return; }
+  const u = memData.users.find(x => x.id === id);
+  if (u) Object.assign(u, updates);
+}
+
+async function getChannels() {
+  if (db) return channelsCol.find().toArray();
+  return memData.channels;
+}
+
+async function findChannel(query) {
+  if (db) return channelsCol.findOne(query);
+  if (query.id) return memData.channels.find(c => c.id === query.id) || null;
+  if (query.name) return memData.channels.find(c => c.name === query.name) || null;
+  return null;
+}
+
+async function insertChannel(channel) {
+  if (db) { await channelsCol.insertOne(channel); return; }
+  memData.channels.push(channel);
+}
+
+async function getMessages(channelId) {
+  if (db) {
+    const doc = await messagesCol.findOne({ channelId });
+    return doc ? doc.messages : [];
   }
+  return memData.messages[channelId] || [];
 }
 
-let saveTimeout;
-function saveData() {
-  clearTimeout(saveTimeout);
-  saveTimeout = setTimeout(() => {
-    const toWrite = JSON.parse(JSON.stringify(data));
-    toWrite.users = toWrite.users.map(u => ({ ...u, status: 'offline' }));
-    fs.writeFileSync(DATA_FILE, JSON.stringify(toWrite, null, 2));
-  }, 500);
+async function getAllMessages() {
+  if (db) {
+    const docs = await messagesCol.find().toArray();
+    const result = {};
+    docs.forEach(d => { result[d.channelId] = d.messages; });
+    return result;
+  }
+  return memData.messages;
 }
 
-function saveDataSync() {
-  const toWrite = JSON.parse(JSON.stringify(data));
-  toWrite.users = toWrite.users.map(u => ({ ...u, status: 'offline' }));
-  fs.writeFileSync(DATA_FILE, JSON.stringify(toWrite, null, 2));
+async function appendMessage(channelId, msg) {
+  if (db) {
+    await messagesCol.updateOne(
+      { channelId },
+      { $push: { messages: msg } },
+      { upsert: true }
+    );
+    return;
+  }
+  if (!memData.messages[channelId]) memData.messages[channelId] = [];
+  memData.messages[channelId].push(msg);
 }
 
-loadData();
+async function updateMessagesForChannel(channelId, msgs) {
+  if (db) {
+    await messagesCol.updateOne({ channelId }, { $set: { messages: msgs } }, { upsert: true });
+    return;
+  }
+  memData.messages[channelId] = msgs;
+}
 
-// ── Token store: token → userId ──
+// ── Token store: token → userId (in-memory is fine, users just re-login after restart) ──
 const tokens = new Map();
 
 function generateToken() {
   return uuidv4() + '-' + Date.now().toString(36);
 }
 
-function getUserByToken(token) {
+async function getUserByToken(token) {
   const userId = tokens.get(token);
   if (!userId) return null;
-  return data.users.find(u => u.id === userId) || null;
+  return findUser({ id: userId });
 }
 
 function publicUser(u) {
@@ -110,20 +183,12 @@ function publicUser(u) {
 app.post('/api/register', async (req, res) => {
   const { username, password, name } = req.body;
 
-  if (!username || !password || !name) {
-    return res.status(400).json({ error: 'All fields are required.' });
-  }
-  if (username.length < 2) {
-    return res.status(400).json({ error: 'Username must be at least 2 characters.' });
-  }
-  if (password.length < 3) {
-    return res.status(400).json({ error: 'Password must be at least 3 characters.' });
-  }
+  if (!username || !password || !name) return res.status(400).json({ error: 'All fields are required.' });
+  if (username.length < 2) return res.status(400).json({ error: 'Username must be at least 2 characters.' });
+  if (password.length < 3) return res.status(400).json({ error: 'Password must be at least 3 characters.' });
 
   const uname = username.trim().toLowerCase();
-  if (data.users.find(u => u.username === uname)) {
-    return res.status(409).json({ error: 'That username is already taken.' });
-  }
+  if (await findUser({ username: uname })) return res.status(409).json({ error: 'That username is already taken.' });
 
   const hash = await bcrypt.hash(password, 10);
   const user = {
@@ -136,57 +201,49 @@ app.post('/api/register', async (req, res) => {
     createdAt: Date.now(),
   };
 
-  data.users.push(user);
-  saveData();
+  await insertUser(user);
 
   const token = generateToken();
   tokens.set(token, user.id);
 
   io.emit('user_joined', { user: publicUser(user) });
-
   res.json({ token, user: publicUser(user) });
 });
 
 app.post('/api/login', async (req, res) => {
   const { username, password } = req.body;
 
-  if (!username || !password) {
-    return res.status(400).json({ error: 'Please fill in all fields.' });
-  }
+  if (!username || !password) return res.status(400).json({ error: 'Please fill in all fields.' });
 
   const uname = username.trim().toLowerCase();
-  const user = data.users.find(u => u.username === uname);
-  if (!user) {
-    return res.status(401).json({ error: 'Invalid username or password.' });
-  }
+  const user = await findUser({ username: uname });
+  if (!user) return res.status(401).json({ error: 'Invalid username or password.' });
 
   const match = await bcrypt.compare(password, user.passwordHash);
-  if (!match) {
-    return res.status(401).json({ error: 'Invalid username or password.' });
-  }
+  if (!match) return res.status(401).json({ error: 'Invalid username or password.' });
 
-  user.status = 'online';
-  saveData();
+  await updateUser(user.id, { status: 'online' });
 
   const token = generateToken();
   tokens.set(token, user.id);
 
   io.emit('user_status', { userId: user.id, status: 'online' });
-
-  res.json({ token, user: publicUser(user) });
+  res.json({ token, user: publicUser({ ...user, status: 'online' }) });
 });
 
-// ── REST: Data bootstrap (after login, client fetches everything) ──
+// ── REST: Data bootstrap ──
 
-app.get('/api/data', (req, res) => {
+app.get('/api/data', async (req, res) => {
   const token = req.headers.authorization?.replace('Bearer ', '');
-  const user = getUserByToken(token);
+  const user = await getUserByToken(token);
   if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
+  const [users, channels, messages] = await Promise.all([getUsers(), getChannels(), getAllMessages()]);
+
   res.json({
-    users: data.users.map(publicUser),
-    channels: data.channels,
-    messages: data.messages,
+    users: users.map(publicUser),
+    channels,
+    messages,
   });
 });
 
@@ -195,34 +252,21 @@ app.get('/api/data', (req, res) => {
 io.on('connection', (socket) => {
   let currentUser = null;
 
-  socket.on('authenticate', (token) => {
-    currentUser = getUserByToken(token);
-    if (!currentUser) {
-      socket.emit('auth_error', 'Invalid token');
-      return;
-    }
+  socket.on('authenticate', async (token) => {
+    currentUser = await getUserByToken(token);
+    if (!currentUser) { socket.emit('auth_error', 'Invalid token'); return; }
 
+    await updateUser(currentUser.id, { status: 'online' });
     currentUser.status = 'online';
-    saveData();
 
     socket.emit('authenticated', { user: publicUser(currentUser) });
     socket.broadcast.emit('user_status', { userId: currentUser.id, status: 'online' });
   });
 
-  // ── Join / leave channel rooms ──
+  socket.on('join_channel', (channelId) => { if (currentUser) socket.join(channelId); });
+  socket.on('leave_channel', (channelId) => { socket.leave(channelId); });
 
-  socket.on('join_channel', (channelId) => {
-    if (!currentUser) return;
-    socket.join(channelId);
-  });
-
-  socket.on('leave_channel', (channelId) => {
-    socket.leave(channelId);
-  });
-
-  // ── Send message ──
-
-  socket.on('send_message', ({ channelId, text }) => {
+  socket.on('send_message', async ({ channelId, text }) => {
     if (!currentUser || !text?.trim()) return;
 
     const msg = {
@@ -234,20 +278,14 @@ io.on('connection', (socket) => {
       threadReplies: [],
     };
 
-    if (!data.messages[channelId]) data.messages[channelId] = [];
-    data.messages[channelId].push(msg);
-    saveData();
-
+    await appendMessage(channelId, msg);
     io.to(channelId).emit('new_message', { channelId, message: msg });
   });
 
-  // ── Thread reply ──
-
-  socket.on('thread_reply', ({ channelId, parentMsgId, text }) => {
+  socket.on('thread_reply', async ({ channelId, parentMsgId, text }) => {
     if (!currentUser || !text?.trim()) return;
 
-    const msgs = data.messages[channelId];
-    if (!msgs) return;
+    const msgs = await getMessages(channelId);
     const parent = msgs.find(m => m.id === parentMsgId);
     if (!parent) return;
 
@@ -260,18 +298,15 @@ io.on('connection', (socket) => {
 
     if (!parent.threadReplies) parent.threadReplies = [];
     parent.threadReplies.push(reply);
-    saveData();
+    await updateMessagesForChannel(channelId, msgs);
 
     io.to(channelId).emit('thread_reply', { channelId, parentMsgId, reply });
   });
 
-  // ── Reaction ──
-
-  socket.on('reaction', ({ channelId, msgId, emoji }) => {
+  socket.on('reaction', async ({ channelId, msgId, emoji }) => {
     if (!currentUser) return;
 
-    const msgs = data.messages[channelId];
-    if (!msgs) return;
+    const msgs = await getMessages(channelId);
     const msg = msgs.find(m => m.id === msgId);
     if (!msg) return;
 
@@ -281,42 +316,33 @@ io.on('connection', (socket) => {
     const idx = msg.reactions[emoji].indexOf(currentUser.id);
     if (idx > -1) {
       msg.reactions[emoji].splice(idx, 1);
-      if (msg.reactions[emoji].length === 0) delete msg.reactions[emoji];
+      if (!msg.reactions[emoji].length) delete msg.reactions[emoji];
     } else {
       msg.reactions[emoji].push(currentUser.id);
     }
-    saveData();
 
+    await updateMessagesForChannel(channelId, msgs);
     io.to(channelId).emit('reaction_updated', { channelId, msgId, reactions: msg.reactions });
   });
 
-  // ── Delete message ──
-
-  socket.on('delete_message', ({ channelId, msgId }) => {
+  socket.on('delete_message', async ({ channelId, msgId }) => {
     if (!currentUser) return;
 
-    const msgs = data.messages[channelId];
-    if (!msgs) return;
+    const msgs = await getMessages(channelId);
     const idx = msgs.findIndex(m => m.id === msgId && m.userId === currentUser.id);
     if (idx === -1) return;
 
     msgs.splice(idx, 1);
-    saveData();
-
+    await updateMessagesForChannel(channelId, msgs);
     io.to(channelId).emit('message_deleted', { channelId, msgId });
   });
 
-  // ── Create channel ──
-
-  socket.on('create_channel', ({ name, topic }) => {
+  socket.on('create_channel', async ({ name, topic }) => {
     if (!currentUser || !name?.trim()) return;
 
     const slug = name.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
     if (!slug) return;
-    if (data.channels.find(c => c.name === slug)) {
-      socket.emit('error_msg', 'Channel already exists');
-      return;
-    }
+    if (await findChannel({ name: slug })) { socket.emit('error_msg', 'Channel already exists'); return; }
 
     const channel = {
       id: 'c_' + uuidv4().slice(0, 8),
@@ -325,25 +351,20 @@ io.on('connection', (socket) => {
       createdBy: currentUser.id,
     };
 
-    data.channels.push(channel);
-    data.messages[channel.id] = [];
-    saveData();
-
+    await insertChannel(channel);
     io.emit('channel_created', { channel });
   });
 
-  // ── Open DM ──
-
-  socket.on('open_dm', ({ targetUserId }) => {
+  socket.on('open_dm', async ({ targetUserId }) => {
     if (!currentUser) return;
 
-    const target = data.users.find(u => u.id === targetUserId);
+    const target = await findUser({ id: targetUserId });
     if (!target) return;
 
     const ids = [currentUser.id, targetUserId].sort();
     const dmChannelId = 'dm_' + ids.join('_');
 
-    if (!data.channels.find(c => c.id === dmChannelId)) {
+    if (!(await findChannel({ id: dmChannelId }))) {
       const channel = {
         id: dmChannelId,
         name: target.name,
@@ -352,55 +373,42 @@ io.on('connection', (socket) => {
         isDM: true,
         participants: ids,
       };
-      data.channels.push(channel);
-      data.messages[dmChannelId] = [];
-      saveData();
+      await insertChannel(channel);
     }
 
     socket.emit('dm_opened', { channelId: dmChannelId });
     socket.join(dmChannelId);
   });
 
-  // ── Typing ──
-
   socket.on('typing', ({ channelId }) => {
     if (!currentUser) return;
     socket.to(channelId).emit('user_typing', { channelId, userId: currentUser.id, userName: currentUser.name });
   });
 
-  // ── Profile update ──
-
-  socket.on('update_profile', ({ name }) => {
+  socket.on('update_profile', async ({ name }) => {
     if (!currentUser || !name?.trim()) return;
+    await updateUser(currentUser.id, { name: name.trim() });
     currentUser.name = name.trim();
-    saveData();
     io.emit('user_updated', { user: publicUser(currentUser) });
   });
 
-  // ── Disconnect ──
-
-  socket.on('disconnect', () => {
+  socket.on('disconnect', async () => {
     if (currentUser) {
-      currentUser.status = 'offline';
-      saveData();
+      await updateUser(currentUser.id, { status: 'offline' });
       io.emit('user_status', { userId: currentUser.id, status: 'offline' });
     }
   });
 });
 
-// ── Graceful shutdown ──
-process.on('SIGINT', () => {
-  console.log('\nShutting down...');
-  saveDataSync();
-  process.exit(0);
-});
-
-process.on('SIGTERM', () => {
-  saveDataSync();
-  process.exit(0);
-});
-
 // ── Start ──
-server.listen(PORT, () => {
-  console.log(`SlackFlow server running on http://localhost:${PORT}`);
+connectDB().then(() => {
+  server.listen(PORT, () => {
+    console.log(`SlackFlow server running on http://localhost:${PORT}`);
+  });
+}).catch(err => {
+  console.error('Failed to connect to MongoDB:', err.message);
+  // Start anyway with in-memory fallback
+  server.listen(PORT, () => {
+    console.log(`SlackFlow server running on http://localhost:${PORT} (in-memory mode)`);
+  });
 });
