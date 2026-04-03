@@ -241,6 +241,7 @@ app.get('/api/data', async (req, res) => {
   const [users, channels, messages] = await Promise.all([getUsers(), getChannels(), getAllMessages()]);
 
   res.json({
+    currentUser: publicUser(user),
     users: users.map(publicUser),
     channels,
     messages,

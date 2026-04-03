@@ -223,6 +223,7 @@
         });
         if (!res.ok) { logout(); showAuthError('Session expired. Please sign in again.'); return; }
         const d = await res.json();
+        currentUser = d.currentUser || currentUser;
         users = d.users; channels = d.channels; messages = d.messages;
       } catch { logout(); showAuthError('Could not reach the server.'); return; }
       connectSocket();
