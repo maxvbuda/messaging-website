@@ -259,6 +259,12 @@ io.on('connection', (socket) => {
     await updateUser(currentUser.id, { status: 'online' });
     currentUser.status = 'online';
 
+    // Auto-join all non-DM channels so messages are always received
+    try {
+      const allChannels = await getChannels();
+      allChannels.forEach(ch => { if (!ch.isDM) socket.join(ch.id); });
+    } catch (e) { /* non-fatal */ }
+
     socket.emit('authenticated', { user: publicUser(currentUser) });
     socket.broadcast.emit('user_status', { userId: currentUser.id, status: 'online' });
   });
@@ -278,106 +284,116 @@ io.on('connection', (socket) => {
       threadReplies: [],
     };
 
-    await appendMessage(channelId, msg);
+    // Emit immediately so real-time always works, then persist
     io.to(channelId).emit('new_message', { channelId, message: msg });
+    try { await appendMessage(channelId, msg); } catch (e) { console.error('DB write error (send_message):', e.message); }
   });
 
   socket.on('thread_reply', async ({ channelId, parentMsgId, text }) => {
     if (!currentUser || !text?.trim()) return;
 
-    const msgs = await getMessages(channelId);
-    const parent = msgs.find(m => m.id === parentMsgId);
-    if (!parent) return;
+    try {
+      const msgs = await getMessages(channelId);
+      const parent = msgs.find(m => m.id === parentMsgId);
+      if (!parent) return;
 
-    const reply = {
-      id: 'reply_' + uuidv4().slice(0, 12),
-      userId: currentUser.id,
-      text: text.trim(),
-      ts: Date.now(),
-    };
+      const reply = {
+        id: 'reply_' + uuidv4().slice(0, 12),
+        userId: currentUser.id,
+        text: text.trim(),
+        ts: Date.now(),
+      };
 
-    if (!parent.threadReplies) parent.threadReplies = [];
-    parent.threadReplies.push(reply);
-    await updateMessagesForChannel(channelId, msgs);
-
-    io.to(channelId).emit('thread_reply', { channelId, parentMsgId, reply });
+      if (!parent.threadReplies) parent.threadReplies = [];
+      parent.threadReplies.push(reply);
+      await updateMessagesForChannel(channelId, msgs);
+      io.to(channelId).emit('thread_reply', { channelId, parentMsgId, reply });
+    } catch (e) { console.error('DB error (thread_reply):', e.message); }
   });
 
   socket.on('reaction', async ({ channelId, msgId, emoji }) => {
     if (!currentUser) return;
 
-    const msgs = await getMessages(channelId);
-    const msg = msgs.find(m => m.id === msgId);
-    if (!msg) return;
+    try {
+      const msgs = await getMessages(channelId);
+      const msg = msgs.find(m => m.id === msgId);
+      if (!msg) return;
 
-    if (!msg.reactions) msg.reactions = {};
-    if (!msg.reactions[emoji]) msg.reactions[emoji] = [];
+      if (!msg.reactions) msg.reactions = {};
+      if (!msg.reactions[emoji]) msg.reactions[emoji] = [];
 
-    const idx = msg.reactions[emoji].indexOf(currentUser.id);
-    if (idx > -1) {
-      msg.reactions[emoji].splice(idx, 1);
-      if (!msg.reactions[emoji].length) delete msg.reactions[emoji];
-    } else {
-      msg.reactions[emoji].push(currentUser.id);
-    }
+      const idx = msg.reactions[emoji].indexOf(currentUser.id);
+      if (idx > -1) {
+        msg.reactions[emoji].splice(idx, 1);
+        if (!msg.reactions[emoji].length) delete msg.reactions[emoji];
+      } else {
+        msg.reactions[emoji].push(currentUser.id);
+      }
 
-    await updateMessagesForChannel(channelId, msgs);
-    io.to(channelId).emit('reaction_updated', { channelId, msgId, reactions: msg.reactions });
+      await updateMessagesForChannel(channelId, msgs);
+      io.to(channelId).emit('reaction_updated', { channelId, msgId, reactions: msg.reactions });
+    } catch (e) { console.error('DB error (reaction):', e.message); }
   });
 
   socket.on('delete_message', async ({ channelId, msgId }) => {
     if (!currentUser) return;
 
-    const msgs = await getMessages(channelId);
-    const idx = msgs.findIndex(m => m.id === msgId && m.userId === currentUser.id);
-    if (idx === -1) return;
+    try {
+      const msgs = await getMessages(channelId);
+      const idx = msgs.findIndex(m => m.id === msgId && m.userId === currentUser.id);
+      if (idx === -1) return;
 
-    msgs.splice(idx, 1);
-    await updateMessagesForChannel(channelId, msgs);
-    io.to(channelId).emit('message_deleted', { channelId, msgId });
+      msgs.splice(idx, 1);
+      await updateMessagesForChannel(channelId, msgs);
+      io.to(channelId).emit('message_deleted', { channelId, msgId });
+    } catch (e) { console.error('DB error (delete_message):', e.message); }
   });
 
   socket.on('create_channel', async ({ name, topic }) => {
     if (!currentUser || !name?.trim()) return;
 
-    const slug = name.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-    if (!slug) return;
-    if (await findChannel({ name: slug })) { socket.emit('error_msg', 'Channel already exists'); return; }
+    try {
+      const slug = name.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+      if (!slug) return;
+      if (await findChannel({ name: slug })) { socket.emit('error_msg', 'Channel already exists'); return; }
 
-    const channel = {
-      id: 'c_' + uuidv4().slice(0, 8),
-      name: slug,
-      topic: (topic || '').trim(),
-      createdBy: currentUser.id,
-    };
+      const channel = {
+        id: 'c_' + uuidv4().slice(0, 8),
+        name: slug,
+        topic: (topic || '').trim(),
+        createdBy: currentUser.id,
+      };
 
-    await insertChannel(channel);
-    io.emit('channel_created', { channel });
+      await insertChannel(channel);
+      io.emit('channel_created', { channel });
+    } catch (e) { console.error('DB error (create_channel):', e.message); }
   });
 
   socket.on('open_dm', async ({ targetUserId }) => {
     if (!currentUser) return;
 
-    const target = await findUser({ id: targetUserId });
-    if (!target) return;
+    try {
+      const target = await findUser({ id: targetUserId });
+      if (!target) return;
 
-    const ids = [currentUser.id, targetUserId].sort();
-    const dmChannelId = 'dm_' + ids.join('_');
+      const ids = [currentUser.id, targetUserId].sort();
+      const dmChannelId = 'dm_' + ids.join('_');
 
-    if (!(await findChannel({ id: dmChannelId }))) {
-      const channel = {
-        id: dmChannelId,
-        name: target.name,
-        topic: `Direct message with ${target.name}`,
-        createdBy: currentUser.id,
-        isDM: true,
-        participants: ids,
-      };
-      await insertChannel(channel);
-    }
+      if (!(await findChannel({ id: dmChannelId }))) {
+        const channel = {
+          id: dmChannelId,
+          name: target.name,
+          topic: `Direct message with ${target.name}`,
+          createdBy: currentUser.id,
+          isDM: true,
+          participants: ids,
+        };
+        await insertChannel(channel);
+      }
 
-    socket.emit('dm_opened', { channelId: dmChannelId });
-    socket.join(dmChannelId);
+      socket.emit('dm_opened', { channelId: dmChannelId });
+      socket.join(dmChannelId);
+    } catch (e) { console.error('DB error (open_dm):', e.message); }
   });
 
   socket.on('typing', ({ channelId }) => {
@@ -387,14 +403,18 @@ io.on('connection', (socket) => {
 
   socket.on('update_profile', async ({ name }) => {
     if (!currentUser || !name?.trim()) return;
-    await updateUser(currentUser.id, { name: name.trim() });
-    currentUser.name = name.trim();
-    io.emit('user_updated', { user: publicUser(currentUser) });
+    try {
+      await updateUser(currentUser.id, { name: name.trim() });
+      currentUser.name = name.trim();
+      io.emit('user_updated', { user: publicUser(currentUser) });
+    } catch (e) { console.error('DB error (update_profile):', e.message); }
   });
 
   socket.on('disconnect', async () => {
     if (currentUser) {
-      await updateUser(currentUser.id, { status: 'offline' });
+      try {
+        await updateUser(currentUser.id, { status: 'offline' });
+      } catch (e) { console.error('DB error (disconnect):', e.message); }
       io.emit('user_status', { userId: currentUser.id, status: 'offline' });
     }
   });
