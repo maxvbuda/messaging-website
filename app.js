@@ -223,17 +223,22 @@
     authSubtitle.textContent = isRegisterMode ? 'Create your account to start messaging.' : 'Enter your credentials to get started.';
   }
 
-  // Auto-fill invite code from URL param and switch to register mode
-  const urlInvite = new URLSearchParams(window.location.search).get('invite');
+  // Auto-fill invite code, name, username from URL params and switch to register mode
+  const urlParams = new URLSearchParams(window.location.search);
+  const urlInvite = urlParams.get('invite');
   if (urlInvite) {
     isRegisterMode = true;
     authNameField.style.display = '';
     authInviteField.style.display = '';
     authInvite.value = urlInvite.toUpperCase();
+    if (urlParams.get('name')) authName.value = urlParams.get('name');
+    if (urlParams.get('username')) authUsername.value = urlParams.get('username');
     authSubmitBtn.textContent = 'Create Account';
     authToggleText.textContent = 'Already have an account?';
     authToggleLink.textContent = 'Sign in';
     authSubtitle.textContent = 'Create your account to start messaging.';
+    // Clean URL without reloading
+    window.history.replaceState({}, '', window.location.pathname);
   }
 
   async function handleAuth(e) {

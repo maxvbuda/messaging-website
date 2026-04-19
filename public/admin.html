@@ -241,8 +241,8 @@
         ${r.status === 'approved' && r.inviteCode ? `
           <div style="padding:0 16px 14px">
             <div class="invite-box">
-              <div style="font-weight:700;margin-bottom:4px">Invite Link</div>
-              <div class="invite-link" id="ilink-${r.id}">${getInviteLink(r.inviteCode)}</div>
+              <div style="font-weight:700;margin-bottom:4px">Invite Link — send this to ${esc(r.name)}</div>
+              <div class="invite-link" id="ilink-${r.id}">${getInviteLink(r.inviteCode, r.name, r.username)}</div>
               <button class="copy-btn" onclick="copyLink('ilink-${r.id}')">Copy Link</button>
             </div>
           </div>
@@ -251,8 +251,11 @@
     `).join('');
   }
 
-  function getInviteLink(code) {
-    return 'https://maxvbuda.github.io/messaging-website/?invite=' + code;
+  function getInviteLink(code, name, username) {
+    let url = 'https://maxvbuda.github.io/messaging-website/?invite=' + encodeURIComponent(code);
+    if (name) url += '&name=' + encodeURIComponent(name);
+    if (username) url += '&username=' + encodeURIComponent(username);
+    return url;
   }
 
   async function approveRequest(id) {
@@ -300,6 +303,9 @@
       loadInvites();
     }
   });
+
+  // Copy generated invite
+  document.getElementById('genInviteResult').addEventListener('click', function() { this.select(); });
 
   // ── Users ──
   async function loadUsers() {
