@@ -47,10 +47,12 @@
 
 html, body {
   height: 100%;
+  height: 100dvh;
   font-family: var(--font);
   background: var(--bg-darkest);
   color: var(--text-primary);
   overflow: hidden;
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
@@ -61,6 +63,7 @@ body {
   display: flex;
   width: 100%;
   height: 100%;
+  height: 100dvh;
 }
 
 /* ========================================
@@ -502,6 +505,7 @@ body {
   flex: 1;
   overflow-y: auto;
   padding: 0;
+  -webkit-overflow-scrolling: touch;
 }
 
 .messages-list {
@@ -1193,31 +1197,120 @@ body {
 }
 
 /* ========================================
-   Responsive
+   Responsive / Mobile
    ======================================== */
 @media (max-width: 768px) {
+  /* Hide rail, slide sidebar in as drawer */
   .workspace-rail { display: none; }
+
   .sidebar {
     position: fixed;
     left: 0;
     top: 0;
     bottom: 0;
     z-index: 60;
+    width: min(300px, 85vw);
     transform: translateX(-100%);
-    transition: transform 0.25s ease;
+    transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+    padding-bottom: env(safe-area-inset-bottom);
   }
-  .sidebar.mobile-open {
-    transform: translateX(0);
-  }
+  .sidebar.mobile-open { transform: translateX(0); }
   .sidebar-overlay.visible { display: block; }
+
+  /* Show hamburger, hide topic (saves space) */
   .mobile-menu-btn { display: flex; }
   .header-topic { display: none; }
-  .thread-panel.open { width: 100%; position: fixed; inset: 0; z-index: 70; }
-  .member-panel.open { width: 100%; position: fixed; inset: 0; z-index: 70; }
+
+  /* Thread & member panels go full-screen */
+  .thread-panel.open {
+    width: 100%;
+    position: fixed;
+    inset: 0;
+    z-index: 70;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .member-panel.open {
+    width: 100%;
+    position: fixed;
+    inset: 0;
+    z-index: 70;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
   .search-results { left: 0; }
+
+  /* Make message actions always visible on touch (no hover) */
+  .message-actions {
+    display: flex;
+    position: static;
+    top: unset;
+    right: unset;
+    background: none;
+    border: none;
+    box-shadow: none;
+    padding: 2px 0 0;
+    opacity: 0.6;
+  }
+  .message-actions .btn-icon {
+    width: 36px;
+    height: 36px;
+  }
+  .message { flex-wrap: wrap; }
+  .message-body { width: 100%; }
+
+  /* Emoji picker: bottom sheet on mobile */
+  .emoji-picker {
+    position: fixed;
+    bottom: 0 !important;
+    left: 0 !important;
+    top: auto !important;
+    width: 100% !important;
+    max-height: 50vh;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    border-bottom: none;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .emoji-grid { grid-template-columns: repeat(8, 1fr); }
+
+  /* Larger touch targets */
+  .btn-icon { width: 44px; height: 44px; }
+  .channel-list li, .dm-list li { padding: 10px 12px 10px 26px; min-height: 44px; }
+  .nav-item { min-height: 44px; }
+
+  /* Chat header */
+  .chat-header { padding: 0 8px 0 4px; }
+  .chat-header-left { gap: 4px; }
+
+  /* Input area with safe area inset for iOS home bar */
+  .message-input-area {
+    padding: 0 12px calc(12px + env(safe-area-inset-bottom));
+  }
+
+  /* Modals go full-width on small screens */
+  .modal { max-width: 94vw; }
 }
 
-@media (max-width: 600px) {
-  .messages-list { padding: 12px; }
-  .message-input-area { padding: 0 12px 12px; }
+@media (max-width: 480px) {
+  /* Prevent iOS zoom on input focus (requires font-size >= 16px) */
+  .auth-field input,
+  .form-input,
+  .input-wrapper textarea,
+  .thread-input-area textarea,
+  .sidebar-search input { font-size: 16px; }
+
+  .messages-list { padding: 10px; }
+  .auth-card { padding: 28px 20px 24px; }
+  .auth-title { font-size: 19px; }
+
+  /* Compact message layout */
+  .message { padding: 5px 4px; }
+  .message.compact { padding-left: 46px; }
+  .message-avatar { width: 32px; height: 32px; font-size: 12px; }
+  .message-text { font-size: 14px; }
+
+  /* Send button easier to tap */
+  .btn-send { width: 40px; height: 40px; }
+
+  /* Bigger emoji grid items */
+  .emoji-grid span { font-size: 26px; padding: 6px; }
 }
