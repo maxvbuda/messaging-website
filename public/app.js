@@ -744,6 +744,26 @@
     if (file.size > 10 * 1024 * 1024) { alert('File too large. Maximum size is 10MB.'); return; }
     setPendingFile(file);
   });
+
+  // ── Drag and drop ──
+  const chatArea = $('#chatArea');
+
+  chatArea.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    chatArea.classList.add('drag-over');
+  });
+  chatArea.addEventListener('dragleave', (e) => {
+    if (!chatArea.contains(e.relatedTarget)) chatArea.classList.remove('drag-over');
+  });
+  chatArea.addEventListener('drop', (e) => {
+    e.preventDefault();
+    chatArea.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) { alert('File too large. Maximum size is 10MB.'); return; }
+    setPendingFile(file);
+    messageInput.focus();
+  });
   let typBcTO;
   messageInput.addEventListener('input', () => {
     autoResize(messageInput);

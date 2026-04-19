@@ -1356,6 +1356,25 @@ body {
   padding: 0 2px;
 }
 
+/* Drag and drop */
+.chat-area.drag-over::after {
+  content: 'Drop file to attach';
+  position: absolute;
+  inset: 0;
+  background: rgba(108, 92, 231, 0.12);
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--accent);
+  pointer-events: none;
+  z-index: 50;
+}
+.chat-area { position: relative; }
+
 /* Mobile Menu */
 .mobile-menu-btn { display: none; }
 .sidebar-overlay {
