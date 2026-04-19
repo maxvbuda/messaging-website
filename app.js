@@ -800,7 +800,6 @@
     }
 
     async function skipToSubmit() {
-      // Called when step=2 and user hits send with empty input
       jrMessage = '';
       input.disabled = true;
       addBubble('Sending your request…', 'bot-bubble');
