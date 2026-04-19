@@ -209,6 +209,23 @@ function publicUser(u) {
 // Names/usernames blocked from registering or logging in
 const BLOCKED_NAMES = ['aaryan'];
 
+// Blocked IPs (populated at runtime from banned users' last known IPs)
+const BLOCKED_IPS = new Set();
+
+function getClientIp(req) {
+  const forwarded = req.headers['x-forwarded-for'];
+  return (forwarded ? forwarded.split(',')[0] : req.socket.remoteAddress || '').trim();
+}
+
+// IP block middleware
+app.use((req, res, next) => {
+  const ip = getClientIp(req);
+  if (ip && BLOCKED_IPS.has(ip)) {
+    return res.status(403).json({ error: 'Access denied.' });
+  }
+  next();
+});
+
 function isBlockedName(username, displayName) {
   const check = (s) => BLOCKED_NAMES.some(b => s.toLowerCase().includes(b));
   return check(username || '') || check(displayName || '');
@@ -223,7 +240,11 @@ app.post('/api/register', async (req, res) => {
 
   const uname = username.trim().toLowerCase();
 
-  if (isBlockedName(uname, name)) return res.status(403).json({ error: 'This account cannot be created.' });
+  if (isBlockedName(uname, name)) {
+    const ip = getClientIp(req);
+    if (ip) BLOCKED_IPS.add(ip);
+    return res.status(403).json({ error: 'This account cannot be created.' });
+  }
   if (await findUser({ username: uname })) return res.status(409).json({ error: 'That username is already taken.' });
 
   const hash = await bcrypt.hash(password, 10);
@@ -259,9 +280,16 @@ app.post('/api/login', async (req, res) => {
   const match = await bcrypt.compare(password, user.passwordHash);
   if (!match) return res.status(401).json({ error: 'Invalid username or password.' });
 
+  const ip = getClientIp(req);
+
   if (user.banned || isBlockedName(user.username, user.name)) {
+    if (ip) BLOCKED_IPS.add(ip);
+    await updateUser(user.id, { banned: true, lastIp: ip });
     return res.status(403).json({ error: 'This account has been banned.' });
   }
+
+  // Log the IP for future reference
+  if (ip) await updateUser(user.id, { lastIp: ip });
 
   await updateUser(user.id, { status: 'online' });
 
@@ -521,6 +549,20 @@ io.on('connection', (socket) => {
 });
 
 // ── Cleanup orphaned messages (from deleted users) ──
+async function loadBlockedIps() {
+  if (!db) return;
+  const banned = await usersCol.find({ banned: true }).toArray();
+  banned.forEach(u => { if (u.lastIp) BLOCKED_IPS.add(u.lastIp); });
+
+  // Also block IPs of name-blocked users who have logged in before
+  const nameBlocked = await usersCol.find().toArray();
+  nameBlocked.filter(u => isBlockedName(u.username, u.name)).forEach(u => {
+    if (u.lastIp) BLOCKED_IPS.add(u.lastIp);
+  });
+
+  if (BLOCKED_IPS.size) console.log(`Loaded ${BLOCKED_IPS.size} blocked IP(s).`);
+}
+
 async function cleanupOrphanedMessages() {
   if (!db) return 0;
   const allUsers = await getUsers();
@@ -558,6 +600,7 @@ app.post('/api/admin/cleanup', async (req, res) => {
 
 // ── Start ──
 connectDB().then(async () => {
+  await loadBlockedIps();
   await cleanupOrphanedMessages();
   server.listen(PORT, () => {
     console.log(`SlackFlow server running on http://localhost:${PORT}`);
