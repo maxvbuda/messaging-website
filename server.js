@@ -57,7 +57,7 @@ const upload = multer({
 });
 
 let db;
-let usersCol, channelsCol, messagesCol, sessionsCol, filesCol;
+let usersCol, channelsCol, messagesCol, sessionsCol, filesCol, invitesCol;
 
 const DEFAULT_CHANNELS = [
   { id: 'c_general', name: 'general', topic: 'Company-wide announcements and work-based matters', createdBy: 'system' },
@@ -77,6 +77,7 @@ async function connectDB() {
   messagesCol = db.collection('messages');
   sessionsCol = db.collection('sessions');
   filesCol = db.collection('files');
+  invitesCol = db.collection('invites');
   // Auto-expire sessions after 30 days
   await sessionsCol.createIndex({ createdAt: 1 }, { expireAfterSeconds: 60 * 60 * 24 * 30 });
 
@@ -204,6 +205,62 @@ function publicUser(u) {
   return { id: u.id, name: u.name, username: u.username, status: u.status, statusMsg: u.statusMsg || '', role: u.role, createdAt: u.createdAt };
 }
 
+// ── Invite helpers ──
+
+function generateInviteCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code = '';
+  for (let i = 0; i < 8; i++) {
+    if (i === 4) code += '-';
+    code += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return code;
+}
+
+async function findInvite(code) {
+  const upper = code.trim().toUpperCase();
+  if (db) return invitesCol.findOne({ code: upper, used: false });
+  return (memData.invites || []).find(i => i.code === upper && !i.used) || null;
+}
+
+async function markInviteUsed(code, userId) {
+  const upper = code.trim().toUpperCase();
+  if (db) {
+    await invitesCol.updateOne({ code: upper }, { $set: { used: true, usedBy: userId, usedAt: Date.now() } });
+    return;
+  }
+  const inv = (memData.invites || []).find(i => i.code === upper);
+  if (inv) { inv.used = true; inv.usedBy = userId; }
+}
+
+async function createInvite(createdBy) {
+  const code = generateInviteCode();
+  const inv = { code, createdBy, createdAt: Date.now(), used: false };
+  if (db) await invitesCol.insertOne(inv);
+  else { if (!memData.invites) memData.invites = []; memData.invites.push(inv); }
+  return code;
+}
+
+// ── REST: Invite generate ──
+app.post('/api/invite/generate', async (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  const user = await getUserByToken(token);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+  const code = await createInvite(user.id);
+  res.json({ code });
+});
+
+// ── REST: Invite list (own invites) ──
+app.get('/api/invite/list', async (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  const user = await getUserByToken(token);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+  let invites;
+  if (db) invites = await invitesCol.find({ createdBy: user.id }).sort({ createdAt: -1 }).toArray();
+  else invites = (memData.invites || []).filter(i => i.createdBy === user.id);
+  res.json({ invites: invites.map(i => ({ code: i.code, used: i.used, createdAt: i.createdAt })) });
+});
+
 // ── REST: Auth ──
 
 // Names/usernames blocked from registering or logging in
@@ -232,11 +289,19 @@ function isBlockedName(username, displayName) {
 }
 
 app.post('/api/register', async (req, res) => {
-  const { username, password, name } = req.body;
+  const { username, password, name, inviteCode } = req.body;
 
   if (!username || !password || !name) return res.status(400).json({ error: 'All fields are required.' });
   if (username.length < 2) return res.status(400).json({ error: 'Username must be at least 2 characters.' });
   if (password.length < 3) return res.status(400).json({ error: 'Password must be at least 3 characters.' });
+
+  // Require invite code (skip only if no users exist yet — first account bootstraps)
+  const existingUsers = await getUsers();
+  if (existingUsers.length > 0) {
+    if (!inviteCode) return res.status(403).json({ error: 'An invite code is required to register.' });
+    const invite = await findInvite(inviteCode);
+    if (!invite) return res.status(403).json({ error: 'Invalid or already-used invite code.' });
+  }
 
   const uname = username.trim().toLowerCase();
 
@@ -259,6 +324,7 @@ app.post('/api/register', async (req, res) => {
   };
 
   await insertUser(user);
+  if (inviteCode) await markInviteUsed(inviteCode, user.id);
 
   const token = generateToken();
   tokens.set(token, user.id);
