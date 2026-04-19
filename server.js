@@ -449,6 +449,12 @@ app.get('/api/admin/requests', requireAdmin, async (req, res) => {
   res.json({ requests });
 });
 
+app.delete('/api/admin/requests', requireAdmin, async (req, res) => {
+  if (db) await joinRequestsCol.deleteMany({});
+  else memData.joinRequests = [];
+  res.json({ ok: true });
+});
+
 app.post('/api/admin/requests/:id/approve', requireAdmin, async (req, res) => {
   const { id } = req.params;
   let jr;
