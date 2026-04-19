@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SlackFlow Admin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700;900&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0f0f13; --bg2: #1a1a24; --bg3: #22222e; --bg4: #2c2c3a;
+      --border: #2e2e40; --text: #e2e2ef; --muted: #6b6b82; --secondary: #9a9ab0;
+      --accent: #6c5ce7; --green: #2ecc71; --red: #e74c3c; --yellow: #f1c40f;
+      --font: 'Lato', sans-serif;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: var(--font); background: var(--bg); color: var(--text); min-height: 100vh; }
+
+    /* Login */
+    .login-wrap { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+    .login-card { width: 360px; background: var(--bg2); border: 1px solid var(--border); border-radius: 14px; padding: 36px 32px; text-align: center; }
+    .login-logo { width: 56px; height: 56px; background: var(--accent); border-radius: 14px; display: flex; align-items: center; justify-content: center; font-size: 22px; font-weight: 900; color: #fff; margin: 0 auto 18px; }
+    .login-card h1 { font-size: 20px; margin-bottom: 6px; }
+    .login-card p { font-size: 13px; color: var(--muted); margin-bottom: 24px; }
+    .field { margin-bottom: 14px; text-align: left; }
+    .field label { display: block; font-size: 12px; font-weight: 700; color: var(--secondary); margin-bottom: 5px; }
+    .field input { width: 100%; padding: 9px 12px; background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 14px; font-family: var(--font); outline: none; }
+    .field input:focus { border-color: var(--accent); }
+    .btn-full { width: 100%; padding: 10px; background: var(--accent); color: #fff; border: none; border-radius: 6px; font-size: 14px; font-weight: 700; font-family: var(--font); cursor: pointer; }
+    .btn-full:hover { background: #7e70f0; }
+    .err { color: var(--red); font-size: 13px; margin-top: 10px; display: none; }
+    .err.show { display: block; }
+
+    /* Admin layout */
+    #adminApp { display: none; }
+    .admin-header { background: var(--bg2); border-bottom: 1px solid var(--border); padding: 14px 24px; display: flex; align-items: center; justify-content: space-between; }
+    .admin-header h1 { font-size: 17px; font-weight: 900; }
+    .admin-header span { font-size: 12px; color: var(--muted); }
+    .btn-sm { padding: 6px 14px; background: var(--bg4); border: 1px solid var(--border); border-radius: 6px; color: var(--secondary); font-size: 12px; font-weight: 700; font-family: var(--font); cursor: pointer; }
+    .btn-sm:hover { color: var(--text); background: #33334a; }
+
+    .admin-body { max-width: 960px; margin: 0 auto; padding: 28px 20px; }
+
+    .tabs { display: flex; gap: 4px; margin-bottom: 24px; border-bottom: 1px solid var(--border); }
+    .tab { padding: 10px 18px; font-size: 13.5px; font-weight: 700; color: var(--secondary); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; transition: color 0.15s, border-color 0.15s; }
+    .tab:hover { color: var(--text); }
+    .tab.active { color: var(--text); border-bottom-color: var(--accent); }
+
+    .tab-pane { display: none; }
+    .tab-pane.active { display: block; }
+
+    /* Cards */
+    .card { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 16px; }
+    .card-header { padding: 12px 16px; border-bottom: 1px solid var(--border); font-size: 13px; font-weight: 700; color: var(--secondary); display: flex; justify-content: space-between; align-items: center; }
+    .card-row { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+    .card-row:last-child { border-bottom: none; }
+    .avatar { width: 36px; height: 36px; border-radius: 8px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; color: #fff; }
+    .row-info { flex: 1; min-width: 0; }
+    .row-name { font-size: 14px; font-weight: 700; }
+    .row-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    .row-actions { display: flex; gap: 6px; flex-shrink: 0; }
+
+    .badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; }
+    .badge-pending { background: rgba(241,196,15,0.15); color: var(--yellow); }
+    .badge-approved { background: rgba(46,204,113,0.15); color: var(--green); }
+    .badge-denied { background: rgba(231,76,60,0.12); color: var(--red); }
+    .badge-online { background: rgba(46,204,113,0.15); color: var(--green); }
+    .badge-offline { background: rgba(107,107,130,0.2); color: var(--muted); }
+    .badge-banned { background: rgba(231,76,60,0.12); color: var(--red); }
+
+    .btn-approve { padding: 5px 12px; background: rgba(46,204,113,0.15); border: 1px solid rgba(46,204,113,0.3); border-radius: 6px; color: var(--green); font-size: 12px; font-weight: 700; font-family: var(--font); cursor: pointer; }
+    .btn-approve:hover { background: rgba(46,204,113,0.25); }
+    .btn-deny { padding: 5px 12px; background: rgba(231,76,60,0.1); border: 1px solid rgba(231,76,60,0.25); border-radius: 6px; color: var(--red); font-size: 12px; font-weight: 700; font-family: var(--font); cursor: pointer; }
+    .btn-deny:hover { background: rgba(231,76,60,0.2); }
+
+    .invite-box { background: var(--bg3); border: 1px solid var(--accent); border-radius: 6px; padding: 10px 14px; margin-top: 8px; font-size: 12px; }
+    .invite-link { word-break: break-all; color: #7cacf8; }
+    .copy-btn { margin-top: 6px; padding: 4px 10px; background: var(--accent); color: #fff; border: none; border-radius: 4px; font-size: 11px; font-weight: 700; cursor: pointer; }
+
+    .empty { padding: 40px; text-align: center; color: var(--muted); font-size: 14px; }
+
+    .gen-invite-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 16px; }
+    .gen-invite-bar input { flex: 1; padding: 8px 12px; background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 13px; font-family: var(--font); outline: none; }
+    .btn-accent { padding: 8px 16px; background: var(--accent); color: #fff; border: none; border-radius: 6px; font-size: 13px; font-weight: 700; font-family: var(--font); cursor: pointer; }
+    .btn-accent:hover { background: #7e70f0; }
+  </style>
+</head>
+<body>
+
+<!-- Login -->
+<div class="login-wrap" id="loginWrap">
+  <div class="login-card">
+    <div class="login-logo">⚙️</div>
+    <h1>Admin Panel</h1>
+    <p>SlackFlow administration</p>
+    <div class="field">
+      <label>Admin Password</label>
+      <input type="password" id="adminPw" placeholder="Enter admin password">
+    </div>
+    <button class="btn-full" id="adminLoginBtn">Sign In</button>
+    <div class="err" id="loginErr"></div>
+  </div>
+</div>
+
+<!-- Admin App -->
+<div id="adminApp">
+  <div class="admin-header">
+    <h1>⚙️ SlackFlow Admin</h1>
+    <div style="display:flex;align-items:center;gap:12px">
+      <span id="adminBadge"></span>
+      <button class="btn-sm" id="adminLogoutBtn">Sign Out</button>
+    </div>
+  </div>
+
+  <div class="admin-body">
+    <div class="tabs">
+      <div class="tab active" data-tab="requests">Join Requests <span id="pendingBadge"></span></div>
+      <div class="tab" data-tab="invites">Invite Codes</div>
+      <div class="tab" data-tab="users">Users</div>
+    </div>
+
+    <!-- Join Requests -->
+    <div class="tab-pane active" id="tab-requests">
+      <div id="requestsList"></div>
+    </div>
+
+    <!-- Invite Codes -->
+    <div class="tab-pane" id="tab-invites">
+      <div class="gen-invite-bar">
+        <input type="text" id="genInviteResult" placeholder="Click Generate to create a new invite link" readonly>
+        <button class="btn-accent" id="genInviteBtn">Generate Invite</button>
+      </div>
+      <div id="invitesList"></div>
+    </div>
+
+    <!-- Users -->
+    <div class="tab-pane" id="tab-users">
+      <div id="usersList"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const BACKEND = 'https://messaging-website-6qqt.onrender.com';
+  let adminToken = sessionStorage.getItem('sf_admin_token') || null;
+
+  const COLORS = ['#6c5ce7','#00b894','#e17055','#0984e3','#d63031','#e84393','#fdcb6e','#00cec9'];
+  function colorFor(name) {
+    let h = 0;
+    for (let i = 0; i < name.length; i++) h = name.charCodeAt(i) + ((h << 5) - h);
+    return COLORS[Math.abs(h) % COLORS.length];
+  }
+  function initials(name) {
+    return name.split(' ').filter(Boolean).map(w => w[0]).join('').toUpperCase().slice(0, 2) || '?';
+  }
+  function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function timeAgo(ts) {
+    const s = Math.floor((Date.now() - ts) / 1000);
+    if (s < 60) return 'just now';
+    if (s < 3600) return Math.floor(s/60) + 'm ago';
+    if (s < 86400) return Math.floor(s/3600) + 'h ago';
+    return Math.floor(s/86400) + 'd ago';
+  }
+
+  async function api(method, path, body) {
+    const res = await fetch(BACKEND + path, {
+      method,
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + adminToken },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    return res.json();
+  }
+
+  // ── Login ──
+  document.getElementById('adminLoginBtn').addEventListener('click', async () => {
+    const pw = document.getElementById('adminPw').value;
+    const err = document.getElementById('loginErr');
+    err.classList.remove('show');
+    try {
+      const res = await fetch(BACKEND + '/api/admin/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: pw }),
+      });
+      const d = await res.json();
+      if (!res.ok) { err.textContent = d.error; err.classList.add('show'); return; }
+      adminToken = d.token;
+      sessionStorage.setItem('sf_admin_token', adminToken);
+      showApp();
+    } catch { err.textContent = 'Could not reach server.'; err.classList.add('show'); }
+  });
+  document.getElementById('adminPw').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('adminLoginBtn').click(); });
+
+  document.getElementById('adminLogoutBtn').addEventListener('click', () => {
+    sessionStorage.removeItem('sf_admin_token');
+    adminToken = null;
+    document.getElementById('adminApp').style.display = 'none';
+    document.getElementById('loginWrap').style.display = 'flex';
+  });
+
+  // ── Tabs ──
+  document.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+      tab.classList.add('active');
+      document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+      if (tab.dataset.tab === 'requests') loadRequests();
+      if (tab.dataset.tab === 'invites') loadInvites();
+      if (tab.dataset.tab === 'users') loadUsers();
+    });
+  });
+
+  // ── Join Requests ──
+  async function loadRequests() {
+    const el = document.getElementById('requestsList');
+    el.innerHTML = '<div class="empty">Loading…</div>';
+    const d = await api('GET', '/api/admin/requests');
+    const requests = d.requests || [];
+    const pending = requests.filter(r => r.status === 'pending').length;
+    document.getElementById('pendingBadge').textContent = pending ? `(${pending})` : '';
+
+    if (!requests.length) { el.innerHTML = '<div class="empty">No join requests yet.</div>'; return; }
+
+    el.innerHTML = requests.map(r => `
+      <div class="card" id="req-${r.id}">
+        <div class="card-row">
+          <div class="avatar" style="background:${colorFor(r.name)}">${initials(r.name)}</div>
+          <div class="row-info">
+            <div class="row-name">${esc(r.name)} <span style="color:var(--muted);font-weight:400">@${esc(r.username)}</span></div>
+            <div class="row-sub">${r.message ? esc(r.message) + ' · ' : ''}${timeAgo(r.createdAt)}</div>
+          </div>
+          <div class="row-actions">
+            <span class="badge badge-${r.status}">${r.status}</span>
+            ${r.status === 'pending' ? `
+              <button class="btn-approve" onclick="approveRequest('${r.id}')">Approve</button>
+              <button class="btn-deny" onclick="denyRequest('${r.id}')">Deny</button>
+            ` : ''}
+          </div>
+        </div>
+        ${r.status === 'approved' && r.inviteCode ? `
+          <div style="padding:0 16px 14px">
+            <div class="invite-box">
+              <div style="font-weight:700;margin-bottom:4px">Invite Link</div>
+              <div class="invite-link" id="ilink-${r.id}">${getInviteLink(r.inviteCode)}</div>
+              <button class="copy-btn" onclick="copyLink('ilink-${r.id}')">Copy Link</button>
+            </div>
+          </div>
+        ` : ''}
+      </div>
+    `).join('');
+  }
+
+  function getInviteLink(code) {
+    return 'https://maxvbuda.github.io/messaging-website/?invite=' + code;
+  }
+
+  async function approveRequest(id) {
+    const d = await api('POST', `/api/admin/requests/${id}/approve`);
+    if (d.code) loadRequests();
+    else alert(d.error || 'Failed');
+  }
+
+  async function denyRequest(id) {
+    await api('POST', `/api/admin/requests/${id}/deny`);
+    loadRequests();
+  }
+
+  function copyLink(elId) {
+    const text = document.getElementById(elId).textContent;
+    navigator.clipboard.writeText(text).then(() => {
+      event.target.textContent = 'Copied!';
+      setTimeout(() => { event.target.textContent = 'Copy Link'; }, 2000);
+    });
+  }
+
+  // ── Invites ──
+  async function loadInvites() {
+    const el = document.getElementById('invitesList');
+    el.innerHTML = '<div class="empty">Loading…</div>';
+    const d = await api('GET', '/api/admin/invites');
+    const invites = d.invites || [];
+    if (!invites.length) { el.innerHTML = '<div class="empty">No invite codes yet.</div>'; return; }
+    el.innerHTML = `<div class="card">${invites.map(i => `
+      <div class="card-row">
+        <div class="row-info">
+          <div class="row-name" style="font-family:monospace;letter-spacing:0.05em">${i.code}</div>
+          <div class="row-sub">${timeAgo(i.createdAt)}</div>
+        </div>
+        <span class="badge ${i.used ? 'badge-denied' : 'badge-approved'}">${i.used ? 'Used' : 'Available'}</span>
+      </div>
+    `).join('')}</div>`;
+  }
+
+  document.getElementById('genInviteBtn').addEventListener('click', async () => {
+    const d = await api('POST', '/api/invite/generate');
+    if (d.code) {
+      const link = getInviteLink(d.code);
+      document.getElementById('genInviteResult').value = link;
+      loadInvites();
+    }
+  });
+
+  // ── Users ──
+  async function loadUsers() {
+    const el = document.getElementById('usersList');
+    el.innerHTML = '<div class="empty">Loading…</div>';
+    const d = await api('GET', '/api/admin/users');
+    const users = d.users || [];
+    if (!users.length) { el.innerHTML = '<div class="empty">No users yet.</div>'; return; }
+    el.innerHTML = `<div class="card">${users.map(u => `
+      <div class="card-row">
+        <div class="avatar" style="background:${colorFor(u.name)}">${initials(u.name)}</div>
+        <div class="row-info">
+          <div class="row-name">${esc(u.name)} <span style="color:var(--muted);font-weight:400">@${esc(u.username)}</span></div>
+          <div class="row-sub">${u.role || 'Member'} · Joined ${timeAgo(u.createdAt)}</div>
+        </div>
+        <div class="row-actions">
+          <span class="badge ${u.banned ? 'badge-banned' : u.status === 'online' ? 'badge-online' : 'badge-offline'}">${u.banned ? 'Banned' : u.status}</span>
+          ${u.banned
+            ? `<button class="btn-approve" onclick="unbanUser('${u.id}')">Unban</button>`
+            : `<button class="btn-deny" onclick="banUser('${u.id}')">Ban</button>`
+          }
+        </div>
+      </div>
+    `).join('')}</div>`;
+  }
+
+  async function banUser(id) {
+    await api('POST', `/api/admin/users/${id}/ban`);
+    loadUsers();
+  }
+  async function unbanUser(id) {
+    await api('POST', `/api/admin/users/${id}/unban`);
+    loadUsers();
+  }
+
+  // ── Init ──
+  function showApp() {
+    document.getElementById('loginWrap').style.display = 'none';
+    document.getElementById('adminApp').style.display = 'block';
+    document.getElementById('adminBadge').textContent = 'Admin';
+    loadRequests();
+  }
+
+  if (adminToken) {
+    api('GET', '/api/admin/requests').then(d => {
+      if (d.error) { sessionStorage.removeItem('sf_admin_token'); adminToken = null; }
+      else showApp();
+    }).catch(() => {});
+  }
+</script>
+</body>
+</html>
