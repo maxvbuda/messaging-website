@@ -16,6 +16,20 @@
 
   const useServer = !!BACKEND_URL;
 
+  // ── Theme ──
+  const THEMES = ['dark', 'midnight', 'forest', 'sunset', 'rose', 'light'];
+
+  function applyTheme(theme) {
+    if (!THEMES.includes(theme)) theme = 'dark';
+    document.documentElement.setAttribute('data-theme', theme === 'dark' ? '' : theme);
+    localStorage.setItem('sf_theme', theme);
+    document.querySelectorAll('.theme-swatch').forEach(s => {
+      s.classList.toggle('active', s.dataset.theme === theme);
+    });
+  }
+
+  applyTheme(localStorage.getItem('sf_theme') || 'dark');
+
   // ── Helpers ──
   const COLORS = [
     '#6c5ce7','#00b894','#e17055','#0984e3','#d63031',
@@ -708,7 +722,14 @@
 
   $('#railAvatar').addEventListener('click', () => {
     const a = $('#profileAvatarLg'); a.style.background = colorFor(currentUser.name); a.textContent = initials(currentUser.name);
-    $('#profileName').value = currentUser.name; $('#profileStatus').value = ''; openModal('profileModal');
+    $('#profileName').value = currentUser.name; $('#profileStatus').value = '';
+    applyTheme(localStorage.getItem('sf_theme') || 'dark');
+    openModal('profileModal');
+  });
+
+  document.getElementById('themePicker').addEventListener('click', (e) => {
+    const swatch = e.target.closest('.theme-swatch');
+    if (swatch) applyTheme(swatch.dataset.theme);
   });
   $('#saveProfileBtn').addEventListener('click', () => {
     const name = $('#profileName').value.trim();

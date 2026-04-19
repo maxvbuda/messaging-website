@@ -42,6 +42,124 @@
   --font: 'Lato', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
+/* ========================================
+   Themes (override :root variables)
+   ======================================== */
+
+[data-theme="midnight"] {
+  --bg-darkest: #060d1a;
+  --bg-dark: #0d1b2e;
+  --bg-medium: #112236;
+  --bg-light: #1a3050;
+  --bg-hover: #1f3a60;
+  --bg-active: #254770;
+  --accent: #0984e3;
+  --accent-hover: #1a9bf0;
+  --accent-muted: rgba(9, 132, 227, 0.15);
+  --border: #1e3450;
+  --border-light: #264060;
+}
+
+[data-theme="forest"] {
+  --bg-darkest: #060f06;
+  --bg-dark: #0e1e0e;
+  --bg-medium: #152515;
+  --bg-light: #1e321e;
+  --bg-hover: #253e25;
+  --bg-active: #2e4c2e;
+  --accent: #27ae60;
+  --accent-hover: #2ecc71;
+  --accent-muted: rgba(39, 174, 96, 0.15);
+  --border: #1a301a;
+  --border-light: #224022;
+}
+
+[data-theme="sunset"] {
+  --bg-darkest: #140a06;
+  --bg-dark: #211210;
+  --bg-medium: #2c1a17;
+  --bg-light: #3a2320;
+  --bg-hover: #462b27;
+  --bg-active: #54342e;
+  --accent: #e17055;
+  --accent-hover: #e88a72;
+  --accent-muted: rgba(225, 112, 85, 0.15);
+  --border: #3a2010;
+  --border-light: #4a2c1a;
+}
+
+[data-theme="rose"] {
+  --bg-darkest: #120810;
+  --bg-dark: #1e101c;
+  --bg-medium: #281628;
+  --bg-light: #341e32;
+  --bg-hover: #3e2540;
+  --bg-active: #4a2c4e;
+  --accent: #e84393;
+  --accent-hover: #f05aa8;
+  --accent-muted: rgba(232, 67, 147, 0.15);
+  --border: #341830;
+  --border-light: #42204e;
+}
+
+[data-theme="light"] {
+  --bg-darkest: #eeeef8;
+  --bg-dark: #ffffff;
+  --bg-medium: #f5f5fc;
+  --bg-light: #eaeaf5;
+  --bg-hover: #e0e0f0;
+  --bg-active: #d5d5eb;
+  --text-primary: #18182e;
+  --text-secondary: #48486a;
+  --text-muted: #8888aa;
+  --text-link: #4a80e0;
+  --accent: #6c5ce7;
+  --accent-hover: #7e70f0;
+  --accent-muted: rgba(108, 92, 231, 0.12);
+  --border: #d8d8ec;
+  --border-light: #c8c8e0;
+  --shadow: 0 4px 24px rgba(0,0,0,0.10);
+  --shadow-sm: 0 2px 8px rgba(0,0,0,0.08);
+}
+
+/* ========================================
+   Theme Picker
+   ======================================== */
+.theme-picker {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+.theme-swatch {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 3px solid transparent;
+  cursor: pointer;
+  transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
+  outline: none;
+  position: relative;
+}
+.theme-swatch:hover { transform: scale(1.18); }
+.theme-swatch.active {
+  border-color: var(--text-primary);
+  box-shadow: 0 0 0 2px var(--bg-dark);
+  transform: scale(1.1);
+}
+.theme-swatch .swatch-check {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.5);
+}
+.theme-swatch.active .swatch-check { display: flex; }
+
 /* Reset */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
