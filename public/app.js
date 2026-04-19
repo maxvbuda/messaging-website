@@ -490,8 +490,9 @@
 
   function memberHTML(u) {
     const dot = u.status === 'online' ? 'var(--green)' : 'var(--text-muted)';
+    const sub = u.statusMsg ? escHtml(u.statusMsg) : escHtml(u.role || 'Member');
     return `<div class="member-item"><div class="member-avatar" style="background:${colorFor(u.name)}">${initials(u.name)}<span class="status-dot" style="background:${dot}"></span></div>
-      <div class="member-info"><div class="member-name">${escHtml(u.name)}${u.id===currentUser.id?' (you)':''}</div><div class="member-role">${escHtml(u.role||'Member')}</div></div></div>`;
+      <div class="member-info"><div class="member-name">${escHtml(u.name)}${u.id===currentUser.id?' (you)':''}</div><div class="member-role">${sub}</div></div></div>`;
   }
 
   function renderRailAvatar() {
@@ -722,7 +723,8 @@
 
   $('#railAvatar').addEventListener('click', () => {
     const a = $('#profileAvatarLg'); a.style.background = colorFor(currentUser.name); a.textContent = initials(currentUser.name);
-    $('#profileName').value = currentUser.name; $('#profileStatus').value = '';
+    $('#profileName').value = currentUser.name;
+    $('#profileStatus').value = currentUser.statusMsg || '';
     applyTheme(localStorage.getItem('sf_theme') || 'dark');
     openModal('profileModal');
   });
@@ -733,14 +735,15 @@
   });
   $('#saveProfileBtn').addEventListener('click', () => {
     const name = $('#profileName').value.trim();
-    if (name && name !== currentUser.name) {
-      if (useServer && socket) { socket.emit('update_profile', { name }); }
-      else {
-        currentUser.name = name;
-        const u2 = lsGetUsers(), u = u2.find(x => x.id === currentUser.id);
-        if (u) { u.name = name; lsSaveUsers(u2); users = u2; }
-        broadcast('user_joined', { userId: currentUser.id }); renderAll();
-      }
+    const statusMsg = $('#profileStatus').value.trim();
+    if (useServer && socket) {
+      socket.emit('update_profile', { name: name || currentUser.name, statusMsg });
+    } else {
+      if (name) currentUser.name = name;
+      currentUser.statusMsg = statusMsg;
+      const u2 = lsGetUsers(), u = u2.find(x => x.id === currentUser.id);
+      if (u) { u.name = currentUser.name; u.statusMsg = statusMsg; lsSaveUsers(u2); users = u2; }
+      broadcast('user_joined', { userId: currentUser.id }); renderAll();
     }
     closeModal('profileModal');
   });

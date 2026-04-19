@@ -194,7 +194,7 @@ async function getUserByToken(token) {
 
 function publicUser(u) {
   if (!u) return null;
-  return { id: u.id, name: u.name, username: u.username, status: u.status, role: u.role, createdAt: u.createdAt };
+  return { id: u.id, name: u.name, username: u.username, status: u.status, statusMsg: u.statusMsg || '', role: u.role, createdAt: u.createdAt };
 }
 
 // ── REST: Auth ──
@@ -423,11 +423,14 @@ io.on('connection', (socket) => {
     socket.to(channelId).emit('user_typing', { channelId, userId: currentUser.id, userName: currentUser.name });
   });
 
-  socket.on('update_profile', async ({ name }) => {
-    if (!currentUser || !name?.trim()) return;
+  socket.on('update_profile', async ({ name, statusMsg }) => {
+    if (!currentUser) return;
     try {
-      await updateUser(currentUser.id, { name: name.trim() });
-      currentUser.name = name.trim();
+      const updates = {};
+      if (name?.trim()) updates.name = name.trim();
+      updates.statusMsg = (statusMsg || '').trim();
+      await updateUser(currentUser.id, updates);
+      Object.assign(currentUser, updates);
       io.emit('user_updated', { user: publicUser(currentUser) });
     } catch (e) { console.error('DB error (update_profile):', e.message); }
   });
