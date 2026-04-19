@@ -473,6 +473,18 @@ app.post('/api/admin/users/:id/unban', requireAdmin, async (req, res) => {
   res.json({ ok: true });
 });
 
+app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  if (db) {
+    await usersCol.deleteOne({ id });
+    await sessionsCol.deleteMany({ userId: id });
+  } else {
+    memData.users = memData.users.filter(u => u.id !== id);
+  }
+  io.emit('user_status', { userId: id, status: 'offline' });
+  res.json({ ok: true });
+});
+
 app.get('/api/admin/invites', requireAdmin, async (req, res) => {
   let invites;
   if (db) invites = await invitesCol.find().sort({ createdAt: -1 }).toArray();

@@ -141,7 +141,7 @@
 </div>
 
 <script>
-  const BACKEND = '';  // empty = same origin (works for both localhost and Render)
+  const BACKEND = 'https://messaging-website-6qqt.onrender.com';
   let adminToken = sessionStorage.getItem('sf_admin_token') || null;
 
   const COLORS = ['#6c5ce7','#00b894','#e17055','#0984e3','#d63031','#e84393','#fdcb6e','#00cec9'];
@@ -252,8 +252,7 @@
   }
 
   function getInviteLink(code) {
-    const base = window.location.origin + window.location.pathname.replace('/admin', '') || '/';
-    return base.replace(/\/?$/, '') + '/?invite=' + code;
+    return 'https://maxvbuda.github.io/messaging-website/?invite=' + code;
   }
 
   async function approveRequest(id) {
@@ -322,6 +321,7 @@
             ? `<button class="btn-approve" onclick="unbanUser('${u.id}')">Unban</button>`
             : `<button class="btn-deny" onclick="banUser('${u.id}')">Ban</button>`
           }
+          <button class="btn-deny" onclick="deleteUser('${u.id}', '${esc(u.name)}')">Delete</button>
         </div>
       </div>
     `).join('')}</div>`;
@@ -333,6 +333,11 @@
   }
   async function unbanUser(id) {
     await api('POST', `/api/admin/users/${id}/unban`);
+    loadUsers();
+  }
+  async function deleteUser(id, name) {
+    if (!confirm(`Permanently delete "${name}"? This cannot be undone.`)) return;
+    await api('DELETE', `/api/admin/users/${id}`);
     loadUsers();
   }
 
