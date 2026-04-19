@@ -270,6 +270,55 @@ const BLOCKED_NAMES = ['aaryan'];
 // Blocked IPs (populated at runtime from banned users' last known IPs)
 const BLOCKED_IPS = new Set();
 
+// ── Brute-force protection ──
+// Map: ip -> { count, windowStart, lockedUntil }
+const loginAttempts = new Map();
+const MAX_ATTEMPTS = 5;
+const WINDOW_MS = 10 * 60 * 1000;   // 10-minute sliding window
+const LOCKOUT_MS = 15 * 60 * 1000;  // 15-minute lockout
+
+function checkBruteForce(ip) {
+  if (!ip) return null;
+  const now = Date.now();
+  const rec = loginAttempts.get(ip) || { count: 0, windowStart: now, lockedUntil: 0 };
+
+  if (rec.lockedUntil > now) {
+    const secs = Math.ceil((rec.lockedUntil - now) / 1000);
+    return `Too many failed attempts. Try again in ${secs} seconds.`;
+  }
+
+  // Reset window if it has expired
+  if (now - rec.windowStart > WINDOW_MS) {
+    rec.count = 0;
+    rec.windowStart = now;
+  }
+
+  loginAttempts.set(ip, rec);
+  return null; // allowed
+}
+
+function recordFailedAttempt(ip) {
+  if (!ip) return;
+  const now = Date.now();
+  const rec = loginAttempts.get(ip) || { count: 0, windowStart: now, lockedUntil: 0 };
+
+  if (now - rec.windowStart > WINDOW_MS) {
+    rec.count = 0;
+    rec.windowStart = now;
+  }
+
+  rec.count += 1;
+  if (rec.count >= MAX_ATTEMPTS) {
+    rec.lockedUntil = now + LOCKOUT_MS;
+    console.log(`[brute-force] IP ${ip} locked out for 15 min after ${rec.count} failed attempts`);
+  }
+  loginAttempts.set(ip, rec);
+}
+
+function clearAttempts(ip) {
+  if (ip) loginAttempts.delete(ip);
+}
+
 function getClientIp(req) {
   const forwarded = req.headers['x-forwarded-for'];
   return (forwarded ? forwarded.split(',')[0] : req.socket.remoteAddress || '').trim();
@@ -337,26 +386,29 @@ app.post('/api/register', async (req, res) => {
 
 app.post('/api/login', async (req, res) => {
   const { username, password } = req.body;
+  const ip = getClientIp(req);
+
+  const lockMsg = checkBruteForce(ip);
+  if (lockMsg) return res.status(429).json({ error: lockMsg });
 
   if (!username || !password) return res.status(400).json({ error: 'Please fill in all fields.' });
 
   const uname = username.trim().toLowerCase();
   const user = await findUser({ username: uname });
-  if (!user) return res.status(401).json({ error: 'Invalid username or password.' });
+  if (!user) { recordFailedAttempt(ip); return res.status(401).json({ error: 'Invalid username or password.' }); }
 
   const match = await bcrypt.compare(password, user.passwordHash);
-  if (!match) return res.status(401).json({ error: 'Invalid username or password.' });
-
-  const ip = getClientIp(req);
+  if (!match) { recordFailedAttempt(ip); return res.status(401).json({ error: 'Invalid username or password.' }); }
 
   if (user.banned || isBlockedName(user.username, user.name)) {
-    if (ip) BLOCKED_IPS.add(ip);
+    BLOCKED_IPS.add(ip);
     await updateUser(user.id, { banned: true, lastIp: ip });
     return res.status(403).json({ error: 'This account has been banned.' });
   }
 
   // Log the IP for future reference
   if (ip) await updateUser(user.id, { lastIp: ip });
+  clearAttempts(ip); // successful login — reset brute-force counter
 
   await updateUser(user.id, { status: 'online' });
 
@@ -390,8 +442,16 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'slackflow-admin';
 const adminTokens = new Set();
 
 app.post('/api/admin/login', (req, res) => {
+  const ip = getClientIp(req);
+  const lockMsg = checkBruteForce(ip);
+  if (lockMsg) return res.status(429).json({ error: lockMsg });
+
   const { password } = req.body;
-  if (password !== ADMIN_PASSWORD) return res.status(401).json({ error: 'Invalid admin password.' });
+  if (password !== ADMIN_PASSWORD) {
+    recordFailedAttempt(ip);
+    return res.status(401).json({ error: 'Invalid admin password.' });
+  }
+  clearAttempts(ip);
   const token = uuidv4();
   adminTokens.add(token);
   res.json({ token });
@@ -405,7 +465,19 @@ function requireAdmin(req, res, next) {
 
 // ── REST: Join requests ──
 
+// Simple rate limit for join requests: max 3 per IP per hour
+const joinRequestAttempts = new Map();
 app.post('/api/join-request', async (req, res) => {
+  const ip = getClientIp(req);
+  if (ip) {
+    const now = Date.now();
+    const jr = joinRequestAttempts.get(ip) || { count: 0, windowStart: now };
+    if (now - jr.windowStart > 60 * 60 * 1000) { jr.count = 0; jr.windowStart = now; }
+    if (jr.count >= 3) return res.status(429).json({ error: 'Too many requests. Try again later.' });
+    jr.count++;
+    joinRequestAttempts.set(ip, jr);
+  }
+
   const { name, username, message } = req.body;
   if (!name?.trim() || !username?.trim()) return res.status(400).json({ error: 'Name and username are required.' });
 
