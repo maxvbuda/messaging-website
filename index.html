@@ -52,32 +52,35 @@
     </div>
   </div>
 
-  <!-- ============ JOIN REQUEST (shown by default) ============ -->
-  <div class="auth-screen" id="joinRequestScreen" style="z-index:600">
-    <div class="auth-card">
-      <div class="auth-logo">✉️</div>
-      <h1 class="auth-title">Request to <strong>Join</strong></h1>
-      <p class="auth-subtitle">Submit a request and an admin will review it.</p>
-      <div class="auth-error" id="joinRequestError"></div>
-      <div id="joinRequestSuccess" style="display:none;padding:12px;background:rgba(46,204,113,0.12);border:1px solid rgba(46,204,113,0.3);border-radius:6px;color:#2ecc71;font-size:13px;margin-bottom:16px;text-align:left">
-        ✅ Request submitted! An admin will send you an invite link.
+  <!-- ============ JOIN REQUEST CHAT (shown by default) ============ -->
+  <div class="chat-landing-screen" id="joinRequestScreen" style="z-index:600">
+    <div class="chat-landing-wrap">
+      <div class="chat-landing-header">
+        <div class="chat-landing-logo">SF</div>
+        <div class="chat-landing-info">
+          <div class="chat-landing-name">SlackFlow HQ</div>
+          <div class="chat-landing-sub">Send a message to request access</div>
+        </div>
+        <a href="#" id="backToLoginLink" class="chat-landing-signin">Sign in</a>
       </div>
-      <form id="joinRequestForm" autocomplete="off">
-        <div class="auth-field">
-          <label>Display Name</label>
-          <input type="text" id="jrName" placeholder="e.g. Jane Doe" autocomplete="off">
+
+      <div class="chat-landing-body" id="chatLandingBody">
+        <div class="chat-bubble bot-bubble">
+          👋 Hey! Want to join? Just tell us your name to get started.
         </div>
-        <div class="auth-field">
-          <label>Username</label>
-          <input type="text" id="jrUsername" placeholder="e.g. jane" autocomplete="off">
-        </div>
-        <div class="auth-field">
-          <label>Message <span style="font-weight:400;color:var(--text-muted)">(optional)</span></label>
-          <input type="text" id="jrMessage" placeholder="Why do you want to join?" autocomplete="off">
-        </div>
-        <button type="submit" class="auth-btn">Send Request</button>
-      </form>
-      <p class="auth-toggle" style="margin-top:16px">Already have an account? <a href="#" id="backToLoginLink">Sign in</a></p>
+      </div>
+
+      <div class="chat-landing-input-row" id="chatLandingInputRow">
+        <input type="text" class="chat-landing-input" id="chatLandingInput" placeholder="Type here…" autocomplete="off" autocorrect="off" spellcheck="false">
+        <button class="chat-landing-btn" id="chatLandingBtn">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+        </button>
+      </div>
+
+      <!-- Hidden inputs to carry values -->
+      <input type="hidden" id="jrName">
+      <input type="hidden" id="jrUsername">
+      <input type="hidden" id="jrMessage">
     </div>
   </div>
 

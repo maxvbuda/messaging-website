@@ -745,38 +745,120 @@
   authForm.addEventListener('submit', handleAuth);
   $('#logoutBtn').addEventListener('click', logout);
 
-  // Toggle between join request and login
-  $('#backToLoginLink').addEventListener('click', (e) => {
-    e.preventDefault();
-    $('#joinRequestScreen').style.display = 'none';
-    $('#authScreen').style.display = '';
-  });
-  $('#goToJoinLink').addEventListener('click', (e) => {
-    e.preventDefault();
-    $('#authScreen').style.display = 'none';
-    $('#joinRequestScreen').style.display = '';
-  });
-  $('#joinRequestForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const name = $('#jrName').value.trim();
-    const username = $('#jrUsername').value.trim();
-    const message = $('#jrMessage').value.trim();
-    const errEl = $('#joinRequestError');
-    const successEl = $('#joinRequestSuccess');
-    errEl.classList.remove('visible'); successEl.style.display = 'none';
-    if (!name || !username) { errEl.textContent = 'Name and username are required.'; errEl.classList.add('visible'); return; }
-    try {
-      const res = await fetch(BACKEND_URL + '/api/join-request', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, username, message }),
-      });
-      const d = await res.json();
-      if (!res.ok) { errEl.textContent = d.error || 'Something went wrong.'; errEl.classList.add('visible'); return; }
-      successEl.style.display = '';
-      $('#joinRequestForm').style.display = 'none';
-    } catch { errEl.textContent = 'Could not reach the server.'; errEl.classList.add('visible'); }
-  });
+  // ---- Chat landing widget (join request) ----
+  (function initChatLanding() {
+    const body = $('#chatLandingBody');
+    const input = $('#chatLandingInput');
+    const btn = $('#chatLandingBtn');
+    let step = 0; // 0=name, 1=username, 2=message
+    let jrName = '', jrUsername = '', jrMessage = '';
+
+    function addBubble(text, type) {
+      const el = document.createElement('div');
+      el.className = 'chat-bubble ' + type;
+      el.textContent = text;
+      body.appendChild(el);
+      body.scrollTop = body.scrollHeight;
+      return el;
+    }
+
+    async function handleSend() {
+      const val = input.value.trim();
+      if (!val) return;
+      input.value = '';
+      btn.disabled = true;
+
+      if (step === 0) {
+        jrName = val;
+        addBubble(val, 'user-bubble');
+        setTimeout(() => {
+          addBubble('Nice to meet you, ' + val + '! 🙌 What username would you like?', 'bot-bubble');
+          input.placeholder = 'Pick a username (no spaces)…';
+          step = 1;
+          btn.disabled = false;
+          input.focus();
+        }, 400);
+
+      } else if (step === 1) {
+        jrUsername = val.replace(/\s+/g, '').toLowerCase();
+        addBubble(val, 'user-bubble');
+        setTimeout(() => {
+          addBubble('Got it! Anything you want to say to the admin? (or just hit send to skip)', 'bot-bubble');
+          input.placeholder = 'Optional message…';
+          step = 2;
+          btn.disabled = false;
+          input.focus();
+        }, 400);
+
+      } else if (step === 2) {
+        jrMessage = val;
+        addBubble(val, 'user-bubble');
+        input.disabled = true;
+        addBubble('Sending your request…', 'bot-bubble');
+        await submitRequest();
+      }
+    }
+
+    async function skipToSubmit() {
+      // Called when step=2 and user hits send with empty input
+      jrMessage = '';
+      input.disabled = true;
+      addBubble('Sending your request…', 'bot-bubble');
+      await submitRequest();
+    }
+
+    async function submitRequest() {
+      try {
+        const res = await fetch(BACKEND_URL + '/api/join-request', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: jrName, username: jrUsername, message: jrMessage }),
+        });
+        const d = await res.json();
+        // Remove "Sending…" bubble
+        const last = body.querySelector('.bot-bubble:last-child');
+        if (last && last.textContent === 'Sending your request…') last.remove();
+        if (!res.ok) {
+          addBubble('❌ ' + (d.error || 'Something went wrong. Try again.'), 'error-notice');
+          input.disabled = false; btn.disabled = false;
+          step = 0; jrName = ''; jrUsername = '';
+          input.placeholder = 'Your name…';
+        } else {
+          addBubble('✅ Request sent! An admin will review it and send you an invite link.', 'sent-notice');
+          input.style.display = 'none'; btn.style.display = 'none';
+        }
+      } catch {
+        const last = body.querySelector('.bot-bubble:last-child');
+        if (last && last.textContent === 'Sending your request…') last.remove();
+        addBubble('❌ Could not reach the server. Check your connection and try again.', 'error-notice');
+        input.disabled = false; btn.disabled = false;
+      }
+    }
+
+    btn.addEventListener('click', () => {
+      if (step === 2 && !input.value.trim()) { skipToSubmit(); return; }
+      handleSend();
+    });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (step === 2 && !input.value.trim()) { skipToSubmit(); return; }
+        handleSend();
+      }
+    });
+
+    // Back to login / go to join
+    $('#backToLoginLink').addEventListener('click', (e) => {
+      e.preventDefault();
+      $('#joinRequestScreen').style.display = 'none';
+      $('#authScreen').style.display = '';
+    });
+    $('#goToJoinLink').addEventListener('click', (e) => {
+      e.preventDefault();
+      $('#authScreen').style.display = 'none';
+      $('#joinRequestScreen').style.display = '';
+    });
+  }());
 
   channelListEl.addEventListener('click', (e) => { const li = e.target.closest('li'); if (li && li.dataset.channel) switchChannel(li.dataset.channel); });
 
