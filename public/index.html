@@ -46,6 +46,38 @@
         <span id="authToggleText">Don't have an account?</span>
         <a href="#" id="authToggleLink">Create one</a>
       </p>
+      <p class="auth-toggle" style="margin-top:10px">
+        No invite? <a href="#" id="requestJoinLink">Request to join</a>
+      </p>
+    </div>
+  </div>
+
+  <!-- Request to Join overlay -->
+  <div class="auth-screen" id="joinRequestScreen" style="display:none;z-index:600">
+    <div class="auth-card">
+      <div class="auth-logo">✉️</div>
+      <h1 class="auth-title">Request to <strong>Join</strong></h1>
+      <p class="auth-subtitle">Submit a request and an admin will review it.</p>
+      <div class="auth-error" id="joinRequestError"></div>
+      <div id="joinRequestSuccess" style="display:none;padding:12px;background:rgba(46,204,113,0.12);border:1px solid rgba(46,204,113,0.3);border-radius:6px;color:#2ecc71;font-size:13px;margin-bottom:16px;text-align:left">
+        ✅ Request submitted! An admin will send you an invite link.
+      </div>
+      <form id="joinRequestForm" autocomplete="off">
+        <div class="auth-field">
+          <label>Display Name</label>
+          <input type="text" id="jrName" placeholder="e.g. Jane Doe" autocomplete="off">
+        </div>
+        <div class="auth-field">
+          <label>Username</label>
+          <input type="text" id="jrUsername" placeholder="e.g. jane" autocomplete="off">
+        </div>
+        <div class="auth-field">
+          <label>Message <span style="font-weight:400;color:var(--text-muted)">(optional)</span></label>
+          <input type="text" id="jrMessage" placeholder="Why do you want to join?" autocomplete="off">
+        </div>
+        <button type="submit" class="auth-btn">Send Request</button>
+      </form>
+      <p class="auth-toggle"><a href="#" id="backToLoginLink">← Back to sign in</a></p>
     </div>
   </div>
 

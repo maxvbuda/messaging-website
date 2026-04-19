@@ -736,6 +736,39 @@
   authForm.addEventListener('submit', handleAuth);
   $('#logoutBtn').addEventListener('click', logout);
 
+  // Request to join flow
+  $('#requestJoinLink').addEventListener('click', (e) => {
+    e.preventDefault();
+    $('#authScreen').style.display = 'none';
+    $('#joinRequestScreen').style.display = '';
+  });
+  $('#backToLoginLink').addEventListener('click', (e) => {
+    e.preventDefault();
+    $('#joinRequestScreen').style.display = 'none';
+    $('#authScreen').style.display = '';
+  });
+  $('#joinRequestForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const name = $('#jrName').value.trim();
+    const username = $('#jrUsername').value.trim();
+    const message = $('#jrMessage').value.trim();
+    const errEl = $('#joinRequestError');
+    const successEl = $('#joinRequestSuccess');
+    errEl.classList.remove('visible'); successEl.style.display = 'none';
+    if (!name || !username) { errEl.textContent = 'Name and username are required.'; errEl.classList.add('visible'); return; }
+    try {
+      const res = await fetch(BACKEND_URL + '/api/join-request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, username, message }),
+      });
+      const d = await res.json();
+      if (!res.ok) { errEl.textContent = d.error || 'Something went wrong.'; errEl.classList.add('visible'); return; }
+      successEl.style.display = '';
+      $('#joinRequestForm').style.display = 'none';
+    } catch { errEl.textContent = 'Could not reach the server.'; errEl.classList.add('visible'); }
+  });
+
   channelListEl.addEventListener('click', (e) => { const li = e.target.closest('li'); if (li && li.dataset.channel) switchChannel(li.dataset.channel); });
 
   dmListEl.addEventListener('click', (e) => {

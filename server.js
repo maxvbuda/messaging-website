@@ -57,7 +57,7 @@ const upload = multer({
 });
 
 let db;
-let usersCol, channelsCol, messagesCol, sessionsCol, filesCol, invitesCol;
+let usersCol, channelsCol, messagesCol, sessionsCol, filesCol, invitesCol, joinRequestsCol;
 
 const DEFAULT_CHANNELS = [
   { id: 'c_general', name: 'general', topic: 'Company-wide announcements and work-based matters', createdBy: 'system' },
@@ -78,6 +78,7 @@ async function connectDB() {
   sessionsCol = db.collection('sessions');
   filesCol = db.collection('files');
   invitesCol = db.collection('invites');
+  joinRequestsCol = db.collection('joinRequests');
   // Auto-expire sessions after 30 days
   await sessionsCol.createIndex({ createdAt: 1 }, { expireAfterSeconds: 60 * 60 * 24 * 30 });
 
@@ -382,6 +383,106 @@ app.get('/api/data', async (req, res) => {
     channels,
     messages,
   });
+});
+
+// ── Admin auth ──
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'slackflow-admin';
+const adminTokens = new Set();
+
+app.post('/api/admin/login', (req, res) => {
+  const { password } = req.body;
+  if (password !== ADMIN_PASSWORD) return res.status(401).json({ error: 'Invalid admin password.' });
+  const token = uuidv4();
+  adminTokens.add(token);
+  res.json({ token });
+});
+
+function requireAdmin(req, res, next) {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token || !adminTokens.has(token)) return res.status(401).json({ error: 'Unauthorized' });
+  next();
+}
+
+// ── REST: Join requests ──
+
+app.post('/api/join-request', async (req, res) => {
+  const { name, username, message } = req.body;
+  if (!name?.trim() || !username?.trim()) return res.status(400).json({ error: 'Name and username are required.' });
+
+  const uname = username.trim().toLowerCase();
+  if (isBlockedName(uname, name)) return res.status(403).json({ error: 'This request cannot be submitted.' });
+
+  const existing = await findUser({ username: uname });
+  if (existing) return res.status(409).json({ error: 'That username is already taken.' });
+
+  const req_ = {
+    id: 'jr_' + uuidv4().slice(0, 12),
+    name: name.trim(),
+    username: uname,
+    message: (message || '').trim(),
+    status: 'pending',
+    createdAt: Date.now(),
+  };
+
+  if (db) await joinRequestsCol.insertOne(req_);
+  else { if (!memData.joinRequests) memData.joinRequests = []; memData.joinRequests.push(req_); }
+
+  res.json({ ok: true });
+});
+
+app.get('/api/admin/requests', requireAdmin, async (req, res) => {
+  let requests;
+  if (db) requests = await joinRequestsCol.find().sort({ createdAt: -1 }).toArray();
+  else requests = (memData.joinRequests || []).slice().reverse();
+  res.json({ requests });
+});
+
+app.post('/api/admin/requests/:id/approve', requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  let jr;
+  if (db) jr = await joinRequestsCol.findOne({ id });
+  else jr = (memData.joinRequests || []).find(r => r.id === id);
+  if (!jr) return res.status(404).json({ error: 'Request not found.' });
+
+  const code = await createInvite('admin');
+  if (db) await joinRequestsCol.updateOne({ id }, { $set: { status: 'approved', inviteCode: code } });
+  else { jr.status = 'approved'; jr.inviteCode = code; }
+
+  res.json({ code });
+});
+
+app.post('/api/admin/requests/:id/deny', requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  if (db) await joinRequestsCol.updateOne({ id }, { $set: { status: 'denied' } });
+  else { const jr = (memData.joinRequests || []).find(r => r.id === id); if (jr) jr.status = 'denied'; }
+  res.json({ ok: true });
+});
+
+app.get('/api/admin/users', requireAdmin, async (req, res) => {
+  const users = await getUsers();
+  res.json({ users: users.map(publicUser) });
+});
+
+app.post('/api/admin/users/:id/ban', requireAdmin, async (req, res) => {
+  await updateUser(req.params.id, { banned: true });
+  res.json({ ok: true });
+});
+
+app.post('/api/admin/users/:id/unban', requireAdmin, async (req, res) => {
+  await updateUser(req.params.id, { banned: false });
+  res.json({ ok: true });
+});
+
+app.get('/api/admin/invites', requireAdmin, async (req, res) => {
+  let invites;
+  if (db) invites = await invitesCol.find().sort({ createdAt: -1 }).toArray();
+  else invites = (memData.invites || []).slice().reverse();
+  res.json({ invites: invites.map(i => ({ code: i.code, used: i.used, createdAt: i.createdAt })) });
+});
+
+// Serve admin panel
+app.get('/admin', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
 
 // ── REST: File upload ──
