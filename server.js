@@ -44,7 +44,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // ── MongoDB ──
 let db;
-let usersCol, channelsCol, messagesCol;
+let usersCol, channelsCol, messagesCol, sessionsCol;
 
 const DEFAULT_CHANNELS = [
   { id: 'c_general', name: 'general', topic: 'Company-wide announcements and work-based matters', createdBy: 'system' },
@@ -62,6 +62,9 @@ async function connectDB() {
   usersCol = db.collection('users');
   channelsCol = db.collection('channels');
   messagesCol = db.collection('messages');
+  sessionsCol = db.collection('sessions');
+  // Auto-expire sessions after 30 days
+  await sessionsCol.createIndex({ createdAt: 1 }, { expireAfterSeconds: 60 * 60 * 24 * 30 });
 
   // Seed default channels if none exist
   const count = await channelsCol.countDocuments();
@@ -168,7 +171,16 @@ function generateToken() {
 }
 
 async function getUserByToken(token) {
-  const userId = tokens.get(token);
+  // Check in-memory map first (fast path)
+  let userId = tokens.get(token);
+  if (!userId && db) {
+    // Fall back to MongoDB (covers server restarts)
+    const session = await sessionsCol.findOne({ token });
+    if (session) {
+      userId = session.userId;
+      tokens.set(token, userId); // restore to memory
+    }
+  }
   if (!userId) return null;
   return findUser({ id: userId });
 }
@@ -205,6 +217,7 @@ app.post('/api/register', async (req, res) => {
 
   const token = generateToken();
   tokens.set(token, user.id);
+  if (db) await sessionsCol.insertOne({ token, userId: user.id, createdAt: new Date() });
 
   io.emit('user_joined', { user: publicUser(user) });
   res.json({ token, user: publicUser(user) });
@@ -226,6 +239,7 @@ app.post('/api/login', async (req, res) => {
 
   const token = generateToken();
   tokens.set(token, user.id);
+  if (db) await sessionsCol.insertOne({ token, userId: user.id, createdAt: new Date() });
 
   io.emit('user_status', { userId: user.id, status: 'online' });
   res.json({ token, user: publicUser({ ...user, status: 'online' }) });

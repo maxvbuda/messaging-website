@@ -47,7 +47,7 @@
 
   // ── In-memory data ──
   let currentUser = null;
-  let authToken = sessionStorage.getItem('sf_token') || null;
+  let authToken = localStorage.getItem('sf_token') || null;
   let users = [];
   let channels = [];
   let messages = {};
@@ -166,7 +166,7 @@
         if (!res.ok) { showAuthError(d.error || 'Something went wrong.'); return; }
         authToken = d.token;
         currentUser = d.user;
-        sessionStorage.setItem('sf_token', authToken);
+        localStorage.setItem('sf_token', authToken);
         enterApp();
       } catch { showAuthError('Could not reach the server.'); }
     } else {
@@ -195,7 +195,7 @@
     if (useServer) {
       if (socket) socket.disconnect();
       socket = null;
-      sessionStorage.removeItem('sf_token');
+      localStorage.removeItem('sf_token');
     } else {
       if (currentUser) {
         const u2 = lsGetUsers(), u = u2.find(x => x.id === currentUser.id);
