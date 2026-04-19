@@ -465,7 +465,9 @@
       .replace(/(https?:\/\/[^\s]+)/g, '<a href="$1" target="_blank">$1</a>')
       .replace(/@(\w[\w\s]*\w)/g, '<span class="mention">@$1</span>');
   }
-  function resolveUser(uid) { return users.find(u => u.id === uid) || { id: uid, name: 'Deleted User', status: 'offline' }; }
+  function resolveUser(uid, snapshotName) {
+    return users.find(u => u.id === uid) || { id: uid, name: snapshotName || 'Deleted User', status: 'offline' };
+  }
 
   function renderMessages() {
     const ch = channels.find(c => c.id === activeChannelId);
@@ -486,7 +488,7 @@
 
     let lastDate = '', lastUserId = '', lastTs = 0;
     msgs.forEach(msg => {
-      const user = resolveUser(msg.userId);
+      const user = resolveUser(msg.userId, msg.userName);
       const date = formatDate(msg.ts);
       const isCompact = (msg.userId === lastUserId && msg.ts - lastTs < 300000 && date === lastDate);
       if (date !== lastDate) { html += `<div class="date-divider"><span>${date}</span></div>`; lastDate = date; }
@@ -529,13 +531,13 @@
     activeThreadMsgId = msgId;
     const ch = channels.find(c => c.id === activeChannelId);
     threadChannel.textContent = ch ? `#${ch.name}` : '';
-    const pu = resolveUser(pm.userId);
+    const pu = resolveUser(pm.userId, pm.userName);
     let html = `<div class="message"><div class="message-avatar" style="background:${colorFor(pu.name)}">${initials(pu.name)}</div>
       <div class="message-body"><div class="message-meta"><span class="message-author">${escHtml(pu.name)}</span><span class="message-time">${formatTime(pm.ts)}</span></div>
       <div class="message-text">${formatText(pm.text)}</div></div></div>
       <div class="date-divider"><span>${(pm.threadReplies||[]).length} ${(pm.threadReplies||[]).length===1?'reply':'replies'}</span></div>`;
     (pm.threadReplies || []).forEach(r => {
-      const u = resolveUser(r.userId);
+      const u = resolveUser(r.userId, r.userName);
       html += `<div class="message"><div class="message-avatar" style="background:${colorFor(u.name)}">${initials(u.name)}</div>
         <div class="message-body"><div class="message-meta"><span class="message-author">${escHtml(u.name)}</span><span class="message-time">${formatTime(r.ts)}</span></div>
         <div class="message-text">${formatText(r.text)}</div></div></div>`;

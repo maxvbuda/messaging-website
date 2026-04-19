@@ -354,6 +354,7 @@ io.on('connection', (socket) => {
     const msg = {
       id: 'msg_' + uuidv4().slice(0, 12),
       userId: currentUser.id,
+      userName: currentUser.name,
       text: (text || '').trim(),
       file: file || null,
       ts: Date.now(),
@@ -377,6 +378,7 @@ io.on('connection', (socket) => {
       const reply = {
         id: 'reply_' + uuidv4().slice(0, 12),
         userId: currentUser.id,
+        userName: currentUser.name,
         text: text.trim(),
         ts: Date.now(),
       };
@@ -500,14 +502,50 @@ io.on('connection', (socket) => {
   });
 });
 
+// ── Cleanup orphaned messages (from deleted users) ──
+async function cleanupOrphanedMessages() {
+  if (!db) return 0;
+  const allUsers = await getUsers();
+  const validIds = new Set(allUsers.map(u => u.id));
+
+  const msgDocs = await messagesCol.find().toArray();
+  let removed = 0;
+
+  for (const doc of msgDocs) {
+    const before = (doc.messages || []).length;
+    const cleaned = (doc.messages || [])
+      .filter(m => validIds.has(m.userId))
+      .map(m => ({
+        ...m,
+        threadReplies: (m.threadReplies || []).filter(r => validIds.has(r.userId)),
+      }));
+    if (cleaned.length !== before) {
+      removed += before - cleaned.length;
+      await messagesCol.updateOne({ channelId: doc.channelId }, { $set: { messages: cleaned } });
+    }
+  }
+
+  console.log(`Cleanup: removed ${removed} orphaned message(s).`);
+  return removed;
+}
+
+// Admin endpoint — POST /api/admin/cleanup
+app.post('/api/admin/cleanup', async (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  const user = await getUserByToken(token);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+  const removed = await cleanupOrphanedMessages();
+  res.json({ removed });
+});
+
 // ── Start ──
-connectDB().then(() => {
+connectDB().then(async () => {
+  await cleanupOrphanedMessages();
   server.listen(PORT, () => {
     console.log(`SlackFlow server running on http://localhost:${PORT}`);
   });
 }).catch(err => {
   console.error('Failed to connect to MongoDB:', err.message);
-  // Start anyway with in-memory fallback
   server.listen(PORT, () => {
     console.log(`SlackFlow server running on http://localhost:${PORT} (in-memory mode)`);
   });
