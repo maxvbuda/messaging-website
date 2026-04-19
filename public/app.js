@@ -237,7 +237,9 @@
     authToggleText.textContent = 'Already have an account?';
     authToggleLink.textContent = 'Sign in';
     authSubtitle.textContent = 'Create your account to start messaging.';
-    // Clean URL without reloading
+    // Show login/register screen instead of join request
+    $('#joinRequestScreen').style.display = 'none';
+    authScreen.style.display = '';
     window.history.replaceState({}, '', window.location.pathname);
   }
 
@@ -308,7 +310,9 @@
     }
     currentUser = null; authToken = null;
     users = []; channels = []; messages = {};
-    appWrapper.style.display = 'none'; authScreen.style.display = '';
+    appWrapper.style.display = 'none';
+    $('#joinRequestScreen').style.display = '';
+    $('#authScreen').style.display = 'none';
     authUsername.value = ''; authPassword.value = ''; authName.value = '';
     hideAuthError();
   }
@@ -741,16 +745,16 @@
   authForm.addEventListener('submit', handleAuth);
   $('#logoutBtn').addEventListener('click', logout);
 
-  // Request to join flow
-  $('#requestJoinLink').addEventListener('click', (e) => {
-    e.preventDefault();
-    $('#authScreen').style.display = 'none';
-    $('#joinRequestScreen').style.display = '';
-  });
+  // Toggle between join request and login
   $('#backToLoginLink').addEventListener('click', (e) => {
     e.preventDefault();
     $('#joinRequestScreen').style.display = 'none';
     $('#authScreen').style.display = '';
+  });
+  $('#goToJoinLink').addEventListener('click', (e) => {
+    e.preventDefault();
+    $('#authScreen').style.display = 'none';
+    $('#joinRequestScreen').style.display = '';
   });
   $('#joinRequestForm').addEventListener('submit', async (e) => {
     e.preventDefault();
