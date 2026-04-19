@@ -427,7 +427,19 @@ app.post('/api/join-request', async (req, res) => {
   if (db) await joinRequestsCol.insertOne(req_);
   else { if (!memData.joinRequests) memData.joinRequests = []; memData.joinRequests.push(req_); }
 
-  res.json({ ok: true });
+  res.json({ ok: true, id: req_.id });
+});
+
+// Public status-check so the chat widget can poll for approval
+app.get('/api/join-request/:id/status', async (req, res) => {
+  const { id } = req.params;
+  let jr;
+  if (db) jr = await joinRequestsCol.findOne({ id });
+  else jr = (memData.joinRequests || []).find(r => r.id === id);
+  if (!jr) return res.status(404).json({ error: 'Not found.' });
+  const payload = { status: jr.status };
+  if (jr.status === 'approved' && jr.inviteCode) payload.inviteCode = jr.inviteCode;
+  res.json(payload);
 });
 
 app.get('/api/admin/requests', requireAdmin, async (req, res) => {

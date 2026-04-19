@@ -815,7 +815,6 @@
           body: JSON.stringify({ name: jrName, username: jrUsername, message: jrMessage }),
         });
         const d = await res.json();
-        // Remove "Sending…" bubble
         const last = body.querySelector('.bot-bubble:last-child');
         if (last && last.textContent === 'Sending your request…') last.remove();
         if (!res.ok) {
@@ -824,8 +823,9 @@
           step = 0; jrName = ''; jrUsername = '';
           input.placeholder = 'Your name…';
         } else {
-          addBubble('✅ Request sent! An admin will review it and send you an invite link.', 'sent-notice');
+          addBubble('✅ Request sent! Keep this page open — your invite link will appear here once an admin approves you.', 'sent-notice');
           input.style.display = 'none'; btn.style.display = 'none';
+          if (d.id) startPolling(d.id);
         }
       } catch {
         const last = body.querySelector('.bot-bubble:last-child');
@@ -833,6 +833,39 @@
         addBubble('❌ Could not reach the server. Check your connection and try again.', 'error-notice');
         input.disabled = false; btn.disabled = false;
       }
+    }
+
+    function startPolling(requestId) {
+      const INTERVAL = 6000;
+      const poll = setInterval(async () => {
+        try {
+          const res = await fetch(BACKEND_URL + '/api/join-request/' + requestId + '/status');
+          if (!res.ok) return;
+          const d = await res.json();
+          if (d.status === 'approved' && d.inviteCode) {
+            clearInterval(poll);
+            const inviteUrl = (BACKEND_URL
+              ? 'https://maxvbuda.github.io/messaging-website/'
+              : window.location.origin + window.location.pathname)
+              + '?invite=' + encodeURIComponent(d.inviteCode)
+              + '&name=' + encodeURIComponent(jrName)
+              + '&username=' + encodeURIComponent(jrUsername);
+            const wrap = document.createElement('div');
+            wrap.className = 'chat-bubble bot-bubble';
+            wrap.innerHTML = '🎉 You\'ve been approved! Click your invite link to create your account:<br><br>'
+              + '<a href="' + inviteUrl + '" style="color:#7cacf8;word-break:break-all">' + inviteUrl + '</a>';
+            body.appendChild(wrap);
+            body.scrollTop = body.scrollHeight;
+          } else if (d.status === 'denied') {
+            clearInterval(poll);
+            addBubble('😔 Your request was not approved this time. Feel free to send a new one.', 'error-notice');
+            input.style.display = ''; btn.style.display = '';
+            input.disabled = false; btn.disabled = false;
+            step = 0; jrName = ''; jrUsername = ''; jrMessage = '';
+            input.placeholder = 'Your name…';
+          }
+        } catch { /* network blip, try again next interval */ }
+      }, INTERVAL);
     }
 
     btn.addEventListener('click', () => {
