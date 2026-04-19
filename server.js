@@ -206,6 +206,14 @@ function publicUser(u) {
 
 // ── REST: Auth ──
 
+// Names/usernames blocked from registering or logging in
+const BLOCKED_NAMES = ['aaryan'];
+
+function isBlockedName(username, displayName) {
+  const check = (s) => BLOCKED_NAMES.some(b => s.toLowerCase().includes(b));
+  return check(username || '') || check(displayName || '');
+}
+
 app.post('/api/register', async (req, res) => {
   const { username, password, name } = req.body;
 
@@ -214,6 +222,8 @@ app.post('/api/register', async (req, res) => {
   if (password.length < 3) return res.status(400).json({ error: 'Password must be at least 3 characters.' });
 
   const uname = username.trim().toLowerCase();
+
+  if (isBlockedName(uname, name)) return res.status(403).json({ error: 'This account cannot be created.' });
   if (await findUser({ username: uname })) return res.status(409).json({ error: 'That username is already taken.' });
 
   const hash = await bcrypt.hash(password, 10);
@@ -248,6 +258,10 @@ app.post('/api/login', async (req, res) => {
 
   const match = await bcrypt.compare(password, user.passwordHash);
   if (!match) return res.status(401).json({ error: 'Invalid username or password.' });
+
+  if (user.banned || isBlockedName(user.username, user.name)) {
+    return res.status(403).json({ error: 'This account has been banned.' });
+  }
 
   await updateUser(user.id, { status: 'online' });
 
@@ -331,6 +345,10 @@ io.on('connection', (socket) => {
   socket.on('authenticate', async (token) => {
     currentUser = await getUserByToken(token);
     if (!currentUser) { socket.emit('auth_error', 'Invalid token'); return; }
+    if (currentUser.banned || isBlockedName(currentUser.username, currentUser.name)) {
+      socket.emit('auth_error', 'This account has been banned.');
+      return;
+    }
 
     await updateUser(currentUser.id, { status: 'online' });
     currentUser.status = 'online';
