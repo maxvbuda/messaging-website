@@ -42,15 +42,135 @@
   --font: 'Lato', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
+/* ========================================
+   Themes (override :root variables)
+   ======================================== */
+
+[data-theme="midnight"] {
+  --bg-darkest: #060d1a;
+  --bg-dark: #0d1b2e;
+  --bg-medium: #112236;
+  --bg-light: #1a3050;
+  --bg-hover: #1f3a60;
+  --bg-active: #254770;
+  --accent: #0984e3;
+  --accent-hover: #1a9bf0;
+  --accent-muted: rgba(9, 132, 227, 0.15);
+  --border: #1e3450;
+  --border-light: #264060;
+}
+
+[data-theme="forest"] {
+  --bg-darkest: #060f06;
+  --bg-dark: #0e1e0e;
+  --bg-medium: #152515;
+  --bg-light: #1e321e;
+  --bg-hover: #253e25;
+  --bg-active: #2e4c2e;
+  --accent: #27ae60;
+  --accent-hover: #2ecc71;
+  --accent-muted: rgba(39, 174, 96, 0.15);
+  --border: #1a301a;
+  --border-light: #224022;
+}
+
+[data-theme="sunset"] {
+  --bg-darkest: #140a06;
+  --bg-dark: #211210;
+  --bg-medium: #2c1a17;
+  --bg-light: #3a2320;
+  --bg-hover: #462b27;
+  --bg-active: #54342e;
+  --accent: #e17055;
+  --accent-hover: #e88a72;
+  --accent-muted: rgba(225, 112, 85, 0.15);
+  --border: #3a2010;
+  --border-light: #4a2c1a;
+}
+
+[data-theme="rose"] {
+  --bg-darkest: #120810;
+  --bg-dark: #1e101c;
+  --bg-medium: #281628;
+  --bg-light: #341e32;
+  --bg-hover: #3e2540;
+  --bg-active: #4a2c4e;
+  --accent: #e84393;
+  --accent-hover: #f05aa8;
+  --accent-muted: rgba(232, 67, 147, 0.15);
+  --border: #341830;
+  --border-light: #42204e;
+}
+
+[data-theme="light"] {
+  --bg-darkest: #eeeef8;
+  --bg-dark: #ffffff;
+  --bg-medium: #f5f5fc;
+  --bg-light: #eaeaf5;
+  --bg-hover: #e0e0f0;
+  --bg-active: #d5d5eb;
+  --text-primary: #18182e;
+  --text-secondary: #48486a;
+  --text-muted: #8888aa;
+  --text-link: #4a80e0;
+  --accent: #6c5ce7;
+  --accent-hover: #7e70f0;
+  --accent-muted: rgba(108, 92, 231, 0.12);
+  --border: #d8d8ec;
+  --border-light: #c8c8e0;
+  --shadow: 0 4px 24px rgba(0,0,0,0.10);
+  --shadow-sm: 0 2px 8px rgba(0,0,0,0.08);
+}
+
+/* ========================================
+   Theme Picker
+   ======================================== */
+.theme-picker {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+.theme-swatch {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 3px solid transparent;
+  cursor: pointer;
+  transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
+  outline: none;
+  position: relative;
+}
+.theme-swatch:hover { transform: scale(1.18); }
+.theme-swatch.active {
+  border-color: var(--text-primary);
+  box-shadow: 0 0 0 2px var(--bg-dark);
+  transform: scale(1.1);
+}
+.theme-swatch .swatch-check {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.5);
+}
+.theme-swatch.active .swatch-check { display: flex; }
+
 /* Reset */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 html, body {
   height: 100%;
+  height: 100dvh;
   font-family: var(--font);
   background: var(--bg-darkest);
   color: var(--text-primary);
   overflow: hidden;
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
@@ -61,6 +181,7 @@ body {
   display: flex;
   width: 100%;
   height: 100%;
+  height: 100dvh;
 }
 
 /* ========================================
@@ -502,6 +623,7 @@ body {
   flex: 1;
   overflow-y: auto;
   padding: 0;
+  -webkit-overflow-scrolling: touch;
 }
 
 .messages-list {
@@ -1193,31 +1315,120 @@ body {
 }
 
 /* ========================================
-   Responsive
+   Responsive / Mobile
    ======================================== */
 @media (max-width: 768px) {
+  /* Hide rail, slide sidebar in as drawer */
   .workspace-rail { display: none; }
+
   .sidebar {
     position: fixed;
     left: 0;
     top: 0;
     bottom: 0;
     z-index: 60;
+    width: min(300px, 85vw);
     transform: translateX(-100%);
-    transition: transform 0.25s ease;
+    transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+    padding-bottom: env(safe-area-inset-bottom);
   }
-  .sidebar.mobile-open {
-    transform: translateX(0);
-  }
+  .sidebar.mobile-open { transform: translateX(0); }
   .sidebar-overlay.visible { display: block; }
+
+  /* Show hamburger, hide topic (saves space) */
   .mobile-menu-btn { display: flex; }
   .header-topic { display: none; }
-  .thread-panel.open { width: 100%; position: fixed; inset: 0; z-index: 70; }
-  .member-panel.open { width: 100%; position: fixed; inset: 0; z-index: 70; }
+
+  /* Thread & member panels go full-screen */
+  .thread-panel.open {
+    width: 100%;
+    position: fixed;
+    inset: 0;
+    z-index: 70;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .member-panel.open {
+    width: 100%;
+    position: fixed;
+    inset: 0;
+    z-index: 70;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
   .search-results { left: 0; }
+
+  /* Make message actions always visible on touch (no hover) */
+  .message-actions {
+    display: flex;
+    position: static;
+    top: unset;
+    right: unset;
+    background: none;
+    border: none;
+    box-shadow: none;
+    padding: 2px 0 0;
+    opacity: 0.6;
+  }
+  .message-actions .btn-icon {
+    width: 36px;
+    height: 36px;
+  }
+  .message { flex-wrap: wrap; }
+  .message-body { width: 100%; }
+
+  /* Emoji picker: bottom sheet on mobile */
+  .emoji-picker {
+    position: fixed;
+    bottom: 0 !important;
+    left: 0 !important;
+    top: auto !important;
+    width: 100% !important;
+    max-height: 50vh;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    border-bottom: none;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .emoji-grid { grid-template-columns: repeat(8, 1fr); }
+
+  /* Larger touch targets */
+  .btn-icon { width: 44px; height: 44px; }
+  .channel-list li, .dm-list li { padding: 10px 12px 10px 26px; min-height: 44px; }
+  .nav-item { min-height: 44px; }
+
+  /* Chat header */
+  .chat-header { padding: 0 8px 0 4px; }
+  .chat-header-left { gap: 4px; }
+
+  /* Input area with safe area inset for iOS home bar */
+  .message-input-area {
+    padding: 0 12px calc(12px + env(safe-area-inset-bottom));
+  }
+
+  /* Modals go full-width on small screens */
+  .modal { max-width: 94vw; }
 }
 
-@media (max-width: 600px) {
-  .messages-list { padding: 12px; }
-  .message-input-area { padding: 0 12px 12px; }
+@media (max-width: 480px) {
+  /* Prevent iOS zoom on input focus (requires font-size >= 16px) */
+  .auth-field input,
+  .form-input,
+  .input-wrapper textarea,
+  .thread-input-area textarea,
+  .sidebar-search input { font-size: 16px; }
+
+  .messages-list { padding: 10px; }
+  .auth-card { padding: 28px 20px 24px; }
+  .auth-title { font-size: 19px; }
+
+  /* Compact message layout */
+  .message { padding: 5px 4px; }
+  .message.compact { padding-left: 46px; }
+  .message-avatar { width: 32px; height: 32px; font-size: 12px; }
+  .message-text { font-size: 14px; }
+
+  /* Send button easier to tap */
+  .btn-send { width: 40px; height: 40px; }
+
+  /* Bigger emoji grid items */
+  .emoji-grid span { font-size: 26px; padding: 6px; }
 }
