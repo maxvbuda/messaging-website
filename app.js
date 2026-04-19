@@ -857,37 +857,6 @@
   searchResultsInner.addEventListener('click', (e) => { const it = e.target.closest('.search-result-item'); if (it) { switchChannel(it.dataset.channel); searchInput.value = ''; searchResults.classList.remove('open'); } });
   document.addEventListener('click', (e) => { if (searchResults.classList.contains('open') && !searchResults.contains(e.target) && !e.target.closest('.sidebar-search')) searchResults.classList.remove('open'); });
 
-  $('#inviteBtn').addEventListener('click', () => {
-    $('#inviteLinkBox').style.display = 'none';
-    openModal('inviteModal');
-  });
-
-  $('#generateInviteBtn').addEventListener('click', async () => {
-    if (!useServer) { alert('Invite links require the server.'); return; }
-    try {
-      const res = await fetch(BACKEND_URL + '/api/invite/generate', {
-        method: 'POST',
-        headers: { 'Authorization': 'Bearer ' + authToken },
-      });
-      const d = await res.json();
-      if (!res.ok) { alert(d.error); return; }
-      const base = window.location.href.split('?')[0];
-      const link = `${base}?invite=${d.code}`;
-      $('#inviteLinkInput').value = link;
-      $('#inviteCodeDisplay').textContent = d.code;
-      $('#inviteLinkBox').style.display = '';
-    } catch { alert('Could not generate invite.'); }
-  });
-
-  $('#copyInviteBtn').addEventListener('click', () => {
-    const input = $('#inviteLinkInput');
-    input.select();
-    navigator.clipboard.writeText(input.value).then(() => {
-      $('#copyInviteBtn').textContent = 'Copied!';
-      setTimeout(() => { $('#copyInviteBtn').textContent = 'Copy'; }, 2000);
-    });
-  });
-
   $('#addChannelBtn').addEventListener('click', (e) => { e.stopPropagation(); openModal('addChannelModal'); });
   $('#createChannelBtn').addEventListener('click', () => {
     const name = $('#newChannelName').value.trim();
