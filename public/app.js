@@ -136,6 +136,71 @@
   const sidebarOverlay = $('#sidebarOverlay');
 
   let isRegisterMode = false;
+  let pendingFile = null; // file waiting to be sent with next message
+
+  // ── File upload ──
+  function formatFileSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+
+  function isImage(type) { return type && type.startsWith('image/'); }
+  function isVideo(type) { return type && type.startsWith('video/'); }
+
+  function fileUrl(id) { return BACKEND_URL + '/api/files/' + id; }
+
+  function renderFileAttachment(file) {
+    if (!file) return '';
+    if (isImage(file.type)) {
+      return `<div class="file-attachment img-attachment">
+        <a href="${fileUrl(file.id)}" target="_blank">
+          <img src="${fileUrl(file.id)}" alt="${escHtml(file.name)}" class="inline-image" loading="lazy">
+        </a>
+      </div>`;
+    }
+    if (isVideo(file.type)) {
+      return `<div class="file-attachment">
+        <video src="${fileUrl(file.id)}" controls class="inline-video"></video>
+      </div>`;
+    }
+    const ext = file.name.split('.').pop().toUpperCase().slice(0, 4);
+    return `<div class="file-attachment">
+      <div class="file-icon"><span class="file-ext">${escHtml(ext)}</span></div>
+      <div class="file-info">
+        <a class="file-name" href="${fileUrl(file.id)}" target="_blank" download="${escHtml(file.name)}">${escHtml(file.name)}</a>
+        <div class="file-size">${formatFileSize(file.size)}</div>
+      </div>
+    </div>`;
+  }
+
+  function setPendingFile(file) {
+    pendingFile = file;
+    const preview = $('#filePreview');
+    if (file) {
+      preview.innerHTML = `<span class="file-pill">📎 ${escHtml(file.name)} <span class="file-pill-size">${formatFileSize(file.size)}</span><button class="file-pill-remove" id="filePillRemove">✕</button></span>`;
+      preview.style.display = '';
+      $('#filePillRemove').addEventListener('click', () => { pendingFile = null; preview.style.display = 'none'; preview.innerHTML = ''; $('#fileInput').value = ''; });
+    } else {
+      preview.style.display = 'none';
+      preview.innerHTML = '';
+    }
+  }
+
+  async function uploadFile(fileObj) {
+    if (!useServer) return null;
+    const form = new FormData();
+    form.append('file', fileObj);
+    try {
+      const res = await fetch(BACKEND_URL + '/api/upload', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + authToken },
+        body: form,
+      });
+      if (!res.ok) { alert('Upload failed: ' + (await res.json()).error); return null; }
+      return await res.json();
+    } catch { alert('Upload failed. Check your connection.'); return null; }
+  }
 
   // ==============================
   //  AUTH
@@ -440,7 +505,7 @@
         <div class="message-avatar" style="background:${colorFor(user.name)}">${initials(user.name)}</div>
         <div class="message-body">
           <div class="message-meta"><span class="message-author">${escHtml(user.name)}</span><span class="message-time">${formatTime(msg.ts)}</span></div>
-          <div class="message-text">${formatText(msg.text)}</div>${reactionsHtml}${threadHtml}
+          ${msg.text ? `<div class="message-text">${formatText(msg.text)}</div>` : ''}${renderFileAttachment(msg.file)}${reactionsHtml}${threadHtml}
         </div>
         <div class="message-actions">
           <button class="btn-icon" title="React" data-action="react" data-msg="${msg.id}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg></button>
@@ -520,14 +585,25 @@
   //  ACTIONS
   // ==============================
 
-  function sendMessage(text, isThread = false) {
-    if (!text.trim() || !currentUser) return;
+  async function sendMessage(text, isThread = false) {
+    if (!text.trim() && !pendingFile) return;
+    if (!currentUser) return;
+
+    let file = null;
+    if (pendingFile && useServer) {
+      const uploadingPill = $('#filePreview');
+      if (uploadingPill) uploadingPill.innerHTML = '<span class="file-pill">⏳ Uploading…</span>';
+      file = await uploadFile(pendingFile);
+      setPendingFile(null);
+      $('#fileInput').value = '';
+      if (!file && !text.trim()) return;
+    }
 
     if (useServer && socket) {
       if (isThread && activeThreadMsgId) {
         socket.emit('thread_reply', { channelId: activeChannelId, parentMsgId: activeThreadMsgId, text: text.trim() });
       } else {
-        socket.emit('send_message', { channelId: activeChannelId, text: text.trim() });
+        socket.emit('send_message', { channelId: activeChannelId, text: text.trim(), file });
       }
     } else {
       const msg = { id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2,6), userId: currentUser.id, text: text.trim(), ts: Date.now(), reactions: {}, threadReplies: [] };
@@ -658,6 +734,14 @@
 
   $('#sendBtn').addEventListener('click', () => { sendMessage(messageInput.value); messageInput.value = ''; autoResize(messageInput); });
   messageInput.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(messageInput.value); messageInput.value = ''; autoResize(messageInput); } });
+
+  $('#fileBtn').addEventListener('click', () => { $('#fileInput').click(); });
+  $('#fileInput').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) { alert('File too large. Maximum size is 10MB.'); return; }
+    setPendingFile(file);
+  });
   let typBcTO;
   messageInput.addEventListener('input', () => {
     autoResize(messageInput);

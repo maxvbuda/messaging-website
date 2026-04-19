@@ -6,6 +6,7 @@ const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
 const { MongoClient } = require('mongodb');
+const multer = require('multer');
 
 const app = express();
 const server = http.createServer(app);
@@ -50,8 +51,13 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ── MongoDB ──
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+});
+
 let db;
-let usersCol, channelsCol, messagesCol, sessionsCol;
+let usersCol, channelsCol, messagesCol, sessionsCol, filesCol;
 
 const DEFAULT_CHANNELS = [
   { id: 'c_general', name: 'general', topic: 'Company-wide announcements and work-based matters', createdBy: 'system' },
@@ -70,6 +76,7 @@ async function connectDB() {
   channelsCol = db.collection('channels');
   messagesCol = db.collection('messages');
   sessionsCol = db.collection('sessions');
+  filesCol = db.collection('files');
   // Auto-expire sessions after 30 days
   await sessionsCol.createIndex({ createdAt: 1 }, { expireAfterSeconds: 60 * 60 * 24 * 30 });
 
@@ -269,6 +276,53 @@ app.get('/api/data', async (req, res) => {
   });
 });
 
+// ── REST: File upload ──
+
+app.post('/api/upload', upload.single('file'), async (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  const user = await getUserByToken(token);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+  if (!req.file) return res.status(400).json({ error: 'No file provided' });
+
+  const fileId = 'file_' + uuidv4().slice(0, 16);
+  const fileDoc = {
+    id: fileId,
+    name: req.file.originalname,
+    type: req.file.mimetype,
+    size: req.file.size,
+    data: req.file.buffer,
+    uploadedBy: user.id,
+    uploadedAt: Date.now(),
+  };
+
+  if (db) {
+    await filesCol.insertOne(fileDoc);
+  } else {
+    if (!memData.files) memData.files = {};
+    memData.files[fileId] = fileDoc;
+  }
+
+  res.json({ id: fileId, name: fileDoc.name, type: fileDoc.type, size: fileDoc.size });
+});
+
+// ── REST: File serve ──
+
+app.get('/api/files/:id', async (req, res) => {
+  let fileDoc;
+  if (db) {
+    fileDoc = await filesCol.findOne({ id: req.params.id });
+  } else {
+    fileDoc = (memData.files || {})[req.params.id];
+  }
+  if (!fileDoc) return res.status(404).json({ error: 'File not found' });
+
+  const buf = Buffer.isBuffer(fileDoc.data) ? fileDoc.data : Buffer.from(fileDoc.data.buffer || fileDoc.data);
+  res.setHeader('Content-Type', fileDoc.type);
+  res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(fileDoc.name)}"`);
+  res.setHeader('Cache-Control', 'public, max-age=31536000');
+  res.send(buf);
+});
+
 // ── Socket.IO ──
 
 io.on('connection', (socket) => {
@@ -294,13 +348,14 @@ io.on('connection', (socket) => {
   socket.on('join_channel', (channelId) => { if (currentUser) socket.join(channelId); });
   socket.on('leave_channel', (channelId) => { socket.leave(channelId); });
 
-  socket.on('send_message', async ({ channelId, text }) => {
-    if (!currentUser || !text?.trim()) return;
+  socket.on('send_message', async ({ channelId, text, file }) => {
+    if (!currentUser || (!text?.trim() && !file)) return;
 
     const msg = {
       id: 'msg_' + uuidv4().slice(0, 12),
       userId: currentUser.id,
-      text: text.trim(),
+      text: (text || '').trim(),
+      file: file || null,
       ts: Date.now(),
       reactions: {},
       threadReplies: [],
