@@ -1,6 +1,6 @@
-# SlackFlow 2 — Team Messaging Website
+# SlackFlow — Team Messaging Website
 
-Server uses **MongoDB** by default on database `slackflow2`. Set `MONGODB_URI` on the host; override the database name with `MONGODB_DB` if needed (e.g. keep data in `slackflow`).
+Server uses **MongoDB** with database `slackflow` by default. Set `MONGODB_URI` on the host; override the database name with `MONGODB_DB` if you use a non-default database.
 
 A Slack-inspired messaging web app built with pure HTML, CSS, and JavaScript — no frameworks or dependencies.
 

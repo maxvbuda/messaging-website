@@ -1,5 +1,5 @@
 /* ========================================
-   SlackFlow 2 — Client
+   SlackFlow — Client
    Connects to remote backend via Socket.IO.
    Default server URL is set in DEFAULT_SERVER_URL (workspaces block).
    ======================================== */
@@ -89,7 +89,7 @@
 
   function channelDisplayName(channelId) {
     const ch = channels.find(c => c.id === channelId);
-    if (!ch) return 'SlackFlow 2';
+    if (!ch) return 'SlackFlow';
     return channelId.startsWith('dm_') ? ch.name : '#' + ch.name;
   }
 
@@ -217,7 +217,7 @@
   function lsSave(key, d) { localStorage.setItem(key, JSON.stringify(d)); }
 
   let bc;
-  try { bc = new BroadcastChannel('slackflow2_sync'); } catch { bc = null; }
+  try { bc = new BroadcastChannel('slackflow_sync'); } catch { bc = null; }
   function broadcast(type, payload) {
     if (bc && !inServerMode()) bc.postMessage({ type, payload, senderId: currentUser ? currentUser.id : null });
   }
@@ -255,6 +255,16 @@
             w.url = typeof w.url === 'string' ? normalizeServerUrl(w.url) : '';
             if (!('token' in w)) w.token = null;
           });
+          if (state.list.length === 1 && state.list[0].label === 'SlackFlow 2') {
+            state.list[0].label = 'SlackFlow HQ';
+            localStorage.setItem(WORKSPACES_LS, JSON.stringify(state));
+          } else {
+            let touched = false;
+            state.list.forEach(w => {
+              if (w.label === 'SlackFlow 2') { w.label = 'SlackFlow'; touched = true; }
+            });
+            if (touched) localStorage.setItem(WORKSPACES_LS, JSON.stringify(state));
+          }
           return state;
         }
       }
@@ -263,7 +273,7 @@
     const id = 'ws_default';
     const baseUrl = normalizeServerUrl(DEFAULT_SERVER_URL);
     const state = {
-      list: [{ id, label: 'SlackFlow 2', url: baseUrl, token: baseUrl ? (legacyTok || null) : null }],
+      list: [{ id, label: 'SlackFlow HQ', url: baseUrl, token: baseUrl ? (legacyTok || null) : null }],
       activeId: id,
     };
     localStorage.setItem(WORKSPACES_LS, JSON.stringify(state));
@@ -338,7 +348,7 @@
     const el = $('#sidebarWorkspaceTitle');
     if (!el) return;
     const w = activeWorkspace();
-    el.textContent = w ? w.label : 'SlackFlow 2';
+    el.textContent = w ? w.label : 'SlackFlow';
   }
 
   function switchWorkspace(wsId) {
@@ -380,7 +390,11 @@
     const lab = $('#newWorkspaceLabel');
     const u = $('#newWorkspaceUrl');
     const err = $('#addWorkspaceErr');
-    if (lab) lab.value = '';
+    const defUrl = normalizeServerUrl(sameServerDefaultUrl());
+    if (lab) {
+      const alreadyHasThisServer = wsState.list.some(w => normalizeServerUrl(w.url) === defUrl && defUrl);
+      lab.value = alreadyHasThisServer ? 'SlackFlow' : '';
+    }
     if (u) u.value = sameServerDefaultUrl();
     if (err) { err.textContent = ''; err.classList.remove('visible'); }
     openModal('addWorkspaceModal');
@@ -407,7 +421,8 @@
     }
     let base = normalizeServerUrl(parsed.origin + (parsed.pathname === '/' ? '' : parsed.pathname.replace(/\/$/, '')));
     if (!base) base = parsed.origin;
-    const label = labIn || parsed.hostname.replace(/^www\./, '') || 'Workspace';
+    const alreadySameServer = wsState.list.some(w => normalizeServerUrl(w.url) === base);
+    const label = labIn || (alreadySameServer ? 'SlackFlow' : (parsed.hostname.replace(/^www\./, '') || 'Workspace'));
     const id = 'ws_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
     wsState.list.push({ id, label, url: base, token: null });
     wsState.activeId = id;

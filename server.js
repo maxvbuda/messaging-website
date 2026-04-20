@@ -1,4 +1,4 @@
-// SlackFlow 2 Server — MongoDB persistence
+// SlackFlow Server — MongoDB persistence
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -33,8 +33,8 @@ const io = new Server(server, {
 
 const PORT = process.env.PORT || 3000;
 const MONGODB_URI = process.env.MONGODB_URI;
-/** Database name in the cluster (override with MONGODB_DB). Defaults to slackflow2. */
-const MONGODB_DB_NAME = process.env.MONGODB_DB || 'slackflow2';
+/** Database name in the cluster (override with MONGODB_DB). Defaults to slackflow. */
+const MONGODB_DB_NAME = process.env.MONGODB_DB || 'slackflow';
 const FRONTEND_URL = (process.env.FRONTEND_URL || 'https://maxvbuda.github.io/messaging-website/').replace(/\/?$/, '/');
 
 // ── Middleware ──
@@ -998,11 +998,11 @@ connectDB().then(async () => {
   await loadBlockedIps();
   await cleanupOrphanedMessages();
   server.listen(PORT, () => {
-    console.log(`SlackFlow 2 server running on http://localhost:${PORT}`);
+    console.log(`SlackFlow server running on http://localhost:${PORT}`);
   });
 }).catch(err => {
   console.error('Failed to connect to MongoDB:', err.message);
   server.listen(PORT, () => {
-    console.log(`SlackFlow 2 server running on http://localhost:${PORT} (in-memory mode)`);
+    console.log(`SlackFlow server running on http://localhost:${PORT} (in-memory mode)`);
   });
 });
