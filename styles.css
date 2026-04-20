@@ -1521,6 +1521,7 @@ body {
   transition: background 0.15s;
 }
 .chat-landing-signin:hover { background: rgba(var(--accent-rgb,88,101,242),0.12); }
+.chat-landing-header-actions { display: flex; align-items: center; flex-shrink: 0; }
 
 .chat-landing-body {
   flex: 1; overflow-y: auto;

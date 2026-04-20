@@ -745,141 +745,150 @@
   authForm.addEventListener('submit', handleAuth);
   $('#logoutBtn').addEventListener('click', logout);
 
-  // ---- Chat landing widget (join request) ----
+  // ---- Chat landing: real guest ↔ admin thread ----
   (function initChatLanding() {
     const body = $('#chatLandingBody');
     const input = $('#chatLandingInput');
     const btn = $('#chatLandingBtn');
-    let step = 0; // 0=name, 1=username, 2=message
-    let jrName = '', jrUsername = '', jrMessage = '';
+    const LS_ID = 'sf_join_thread_id';
+    const LS_TOK = 'sf_join_guest_token';
 
-    function addBubble(text, type) {
-      const el = document.createElement('div');
-      el.className = 'chat-bubble ' + type;
-      el.textContent = text;
-      body.appendChild(el);
+    let threadId = localStorage.getItem(LS_ID) || '';
+    let guestToken = localStorage.getItem(LS_TOK) || '';
+    let pollTimer = null;
+    let lastFp = '';
+
+    function esc(s) {
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+    function linkifyBr(t) {
+      let s = esc(t);
+      s = s.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener" style="color:#7cacf8;word-break:break-all">$1</a>');
+      return s.replace(/\n/g, '<br>');
+    }
+
+    function renderMessages(messages) {
+      body.querySelectorAll('.thread-msg').forEach((el) => el.remove());
+      (messages || []).forEach((m) => {
+        const div = document.createElement('div');
+        div.className = 'chat-bubble thread-msg ' + (m.from === 'admin' ? 'bot-bubble' : 'user-bubble');
+        if (m.from === 'admin') div.innerHTML = linkifyBr(m.text);
+        else div.textContent = m.text;
+        body.appendChild(div);
+      });
       body.scrollTop = body.scrollHeight;
-      return el;
+    }
+
+    function addNotice(text, cls) {
+      const div = document.createElement('div');
+      div.className = 'chat-bubble thread-msg ' + cls;
+      div.textContent = text;
+      body.appendChild(div);
+      body.scrollTop = body.scrollHeight;
+    }
+
+    async function pullMessages() {
+      if (!threadId || !guestToken || !BACKEND_URL) return;
+      try {
+        const res = await fetch(BACKEND_URL + '/api/join-thread/' + encodeURIComponent(threadId) + '/messages?guestToken=' + encodeURIComponent(guestToken));
+        if (!res.ok) return;
+        const d = await res.json();
+        const msgs = d.messages || [];
+        const fp = JSON.stringify(msgs);
+        if (fp !== lastFp) {
+          lastFp = fp;
+          renderMessages(msgs);
+        }
+        if (d.status !== 'pending') {
+          input.disabled = true;
+          btn.disabled = true;
+          if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+        }
+      } catch { /* ignore */ }
+    }
+
+    function startPolling() {
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = setInterval(pullMessages, 4000);
     }
 
     async function handleSend() {
       const val = input.value.trim();
       if (!val) return;
+      if (!BACKEND_URL) {
+        addNotice('Server is not configured for join chat.', 'error-notice');
+        return;
+      }
       input.value = '';
       btn.disabled = true;
 
-      if (step === 0) {
-        jrName = val;
-        addBubble(val, 'user-bubble');
-        setTimeout(() => {
-          addBubble('Nice to meet you, ' + val + '! 🙌 What username would you like?', 'bot-bubble');
-          input.placeholder = 'Pick a username (no spaces)…';
-          step = 1;
-          btn.disabled = false;
-          input.focus();
-        }, 400);
-
-      } else if (step === 1) {
-        jrUsername = val.replace(/\s+/g, '').toLowerCase();
-        addBubble(val, 'user-bubble');
-        setTimeout(() => {
-          addBubble('Got it! Anything you want to say to the admin? (or just hit send to skip)', 'bot-bubble');
-          input.placeholder = 'Optional message…';
-          step = 2;
-          btn.disabled = false;
-          input.focus();
-        }, 400);
-
-      } else if (step === 2) {
-        jrMessage = val;
-        addBubble(val, 'user-bubble');
-        input.disabled = true;
-        addBubble('Sending your request…', 'bot-bubble');
-        await submitRequest();
-      }
-    }
-
-    async function skipToSubmit() {
-      jrMessage = '';
-      input.disabled = true;
-      addBubble('Sending your request…', 'bot-bubble');
-      await submitRequest();
-    }
-
-    async function submitRequest() {
       try {
-        const res = await fetch(BACKEND_URL + '/api/join-request', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: jrName, username: jrUsername, message: jrMessage }),
-        });
-        const d = await res.json();
-        const last = body.querySelector('.bot-bubble:last-child');
-        if (last && last.textContent === 'Sending your request…') last.remove();
-        if (!res.ok) {
-          addBubble('❌ ' + (d.error || 'Something went wrong. Try again.'), 'error-notice');
-          input.disabled = false; btn.disabled = false;
-          step = 0; jrName = ''; jrUsername = '';
-          input.placeholder = 'Your name…';
+        if (!threadId) {
+          const res = await fetch(BACKEND_URL + '/api/join-thread/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: val }),
+          });
+          const d = await res.json();
+          if (!res.ok) {
+            addNotice('❌ ' + (d.error || 'Could not start chat.'), 'error-notice');
+            btn.disabled = false;
+            input.focus();
+            return;
+          }
+          threadId = d.id;
+          guestToken = d.guestToken;
+          localStorage.setItem(LS_ID, threadId);
+          localStorage.setItem(LS_TOK, guestToken);
+          lastFp = '';
+          await pullMessages();
+          addNotice('✅ Connected. Keep this page open — an admin will reply here.', 'sent-notice');
+          startPolling();
         } else {
-          addBubble('✅ Request sent! Keep this page open — your invite link will appear here once an admin approves you.', 'sent-notice');
-          input.style.display = 'none'; btn.style.display = 'none';
-          if (d.id) startPolling(d.id);
+          const res = await fetch(BACKEND_URL + '/api/join-thread/' + encodeURIComponent(threadId) + '/guest-message', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ guestToken, text: val }),
+          });
+          const d = await res.json();
+          if (!res.ok) {
+            addNotice('❌ ' + (d.error || 'Could not send.'), 'error-notice');
+          } else {
+            await pullMessages();
+          }
         }
       } catch {
-        const last = body.querySelector('.bot-bubble:last-child');
-        if (last && last.textContent === 'Sending your request…') last.remove();
-        addBubble('❌ Could not reach the server. Check your connection and try again.', 'error-notice');
-        input.disabled = false; btn.disabled = false;
+        addNotice('❌ Could not reach the server.', 'error-notice');
       }
+      btn.disabled = false;
+      input.focus();
     }
 
-    function startPolling(requestId) {
-      const INTERVAL = 6000;
-      const poll = setInterval(async () => {
-        try {
-          const res = await fetch(BACKEND_URL + '/api/join-request/' + requestId + '/status');
-          if (!res.ok) return;
-          const d = await res.json();
-          if (d.status === 'approved' && d.inviteCode) {
-            clearInterval(poll);
-            const inviteUrl = (BACKEND_URL
-              ? 'https://maxvbuda.github.io/messaging-website/'
-              : window.location.origin + window.location.pathname)
-              + '?invite=' + encodeURIComponent(d.inviteCode)
-              + '&name=' + encodeURIComponent(jrName)
-              + '&username=' + encodeURIComponent(jrUsername);
-            const wrap = document.createElement('div');
-            wrap.className = 'chat-bubble bot-bubble';
-            wrap.innerHTML = '🎉 You\'ve been approved! Click your invite link to create your account:<br><br>'
-              + '<a href="' + inviteUrl + '" style="color:#7cacf8;word-break:break-all">' + inviteUrl + '</a>';
-            body.appendChild(wrap);
-            body.scrollTop = body.scrollHeight;
-          } else if (d.status === 'denied') {
-            clearInterval(poll);
-            addBubble('😔 Your request was not approved this time. Feel free to send a new one.', 'error-notice');
-            input.style.display = ''; btn.style.display = '';
-            input.disabled = false; btn.disabled = false;
-            step = 0; jrName = ''; jrUsername = ''; jrMessage = '';
-            input.placeholder = 'Your name…';
-          }
-        } catch { /* network blip, try again next interval */ }
-      }, INTERVAL);
+    function resetThread() {
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = null;
+      threadId = '';
+      guestToken = '';
+      lastFp = '';
+      localStorage.removeItem(LS_ID);
+      localStorage.removeItem(LS_TOK);
+      body.querySelectorAll('.thread-msg').forEach((el) => el.remove());
+      input.disabled = false;
+      btn.disabled = false;
+      input.placeholder = 'Type here…';
+      input.focus();
     }
 
-    btn.addEventListener('click', () => {
-      if (step === 2 && !input.value.trim()) { skipToSubmit(); return; }
-      handleSend();
-    });
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        if (step === 2 && !input.value.trim()) { skipToSubmit(); return; }
-        handleSend();
-      }
+    btn.addEventListener('click', () => { handleSend(); });
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); handleSend(); } });
+
+    const newThreadLink = $('#chatNewThreadLink');
+    if (newThreadLink) newThreadLink.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (threadId && !confirm('Start a new chat? This clears the current conversation on this device.')) return;
+      resetThread();
     });
 
-    // Back to login / go to join
     $('#backToLoginLink').addEventListener('click', (e) => {
       e.preventDefault();
       $('#joinRequestScreen').style.display = 'none';
@@ -890,6 +899,10 @@
       $('#authScreen').style.display = 'none';
       $('#joinRequestScreen').style.display = '';
     });
+
+    if (threadId && guestToken && BACKEND_URL) {
+      pullMessages().then(() => { startPolling(); });
+    }
   }());
 
   channelListEl.addEventListener('click', (e) => { const li = e.target.closest('li'); if (li && li.dataset.channel) switchChannel(li.dataset.channel); });
