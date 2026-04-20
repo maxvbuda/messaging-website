@@ -378,16 +378,40 @@
   // ==============================
 
   async function enterApp() {
+    const pendingEl = $('#pendingRegScreen');
+    if (pendingEl) pendingEl.style.display = 'none';
+
     if (useServer) {
-      try {
-        const res = await fetch(BACKEND_URL + '/api/data', {
-          headers: { 'Authorization': 'Bearer ' + authToken },
-        });
-        if (!res.ok) { logout(); showAuthError('Session expired. Please sign in again.'); return; }
-        const d = await res.json();
-        currentUser = d.currentUser || currentUser;
-        users = d.users; channels = d.channels; messages = d.messages;
-      } catch { logout(); showAuthError('Could not reach the server.'); return; }
+      let d = null;
+      for (let attempt = 1; attempt <= 5; attempt++) {
+        try {
+          const res = await fetch(BACKEND_URL + '/api/data', {
+            headers: { 'Authorization': 'Bearer ' + authToken },
+          });
+          if (res.status === 401) {
+            logout();
+            showAuthError('Session expired. Please sign in again.');
+            return;
+          }
+          if (!res.ok) {
+            if (attempt < 5) { await new Promise(r => setTimeout(r, 2000)); continue; }
+            authScreen.style.display = '';
+            appWrapper.style.display = 'none';
+            showAuthError('Could not load your workspace. You are still signed in — try again in a moment or reload the page.');
+            return;
+          }
+          d = await res.json();
+          break;
+        } catch {
+          if (attempt < 5) { await new Promise(r => setTimeout(r, 2000)); continue; }
+          authScreen.style.display = '';
+          appWrapper.style.display = 'none';
+          showAuthError('Could not reach the server. You are still signed in — try again when you are online or reload.');
+          return;
+        }
+      }
+      currentUser = d.currentUser || currentUser;
+      users = d.users; channels = d.channels; messages = d.messages;
       connectSocket();
     } else {
       users = lsGetUsers();
