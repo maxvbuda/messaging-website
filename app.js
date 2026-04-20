@@ -77,40 +77,48 @@
     if (sfxUnlockBound) return;
     sfxUnlockBound = true;
     const unlock = () => {
-      try {
-        const Ctx = window.AudioContext || window.webkitAudioContext;
-        if (!Ctx) return;
-        if (!sfxCtx) sfxCtx = new Ctx();
-        if (sfxCtx.state === 'suspended') sfxCtx.resume();
-      } catch { /* ignore */ }
+      void (async () => {
+        try {
+          const Ctx = window.AudioContext || window.webkitAudioContext;
+          if (!Ctx) return;
+          if (!sfxCtx) sfxCtx = new Ctx();
+          if (sfxCtx.state === 'suspended') await sfxCtx.resume().catch(() => {});
+        } catch { /* ignore */ }
+      })();
     };
     document.addEventListener('pointerdown', unlock, { capture: true });
+    document.addEventListener('touchstart', unlock, { capture: true, passive: true });
     document.addEventListener('keydown', unlock, { capture: true });
   }
 
   function playNotificationSound() {
-    try {
-      const Ctx = window.AudioContext || window.webkitAudioContext;
-      if (!Ctx) return;
-      if (!sfxCtx) sfxCtx = new Ctx();
-      const ctx = sfxCtx;
-      if (ctx.state !== 'running') return;
+    void (async () => {
+      try {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return;
+        if (!sfxCtx) sfxCtx = new Ctx();
+        const ctx = sfxCtx;
+        if (ctx.state === 'suspended') {
+          await ctx.resume().catch(() => {});
+        }
+        if (ctx.state !== 'running') return;
 
-      const t0 = ctx.currentTime;
-      const g = ctx.createGain();
-      g.connect(ctx.destination);
-      g.gain.setValueAtTime(0, t0);
-      g.gain.linearRampToValueAtTime(0.11, t0 + 0.012);
-      g.gain.exponentialRampToValueAtTime(0.0008, t0 + 0.2);
+        const t0 = ctx.currentTime;
+        const g = ctx.createGain();
+        g.connect(ctx.destination);
+        g.gain.setValueAtTime(0, t0);
+        g.gain.linearRampToValueAtTime(0.18, t0 + 0.012);
+        g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.22);
 
-      const osc = ctx.createOscillator();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(880, t0);
-      osc.frequency.exponentialRampToValueAtTime(1320, t0 + 0.09);
-      osc.connect(g);
-      osc.start(t0);
-      osc.stop(t0 + 0.18);
-    } catch { /* ignore */ }
+        const osc = ctx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(880, t0);
+        osc.frequency.exponentialRampToValueAtTime(1320, t0 + 0.09);
+        osc.connect(g);
+        osc.start(t0);
+        osc.stop(t0 + 0.18);
+      } catch { /* ignore */ }
+    })();
   }
 
   // ── localStorage fallback (when no server) ──
@@ -425,7 +433,6 @@
 
     authScreen.style.display = 'none';
     appWrapper.style.display = 'flex';
-    bindNotificationAudioUnlock();
     renderAll();
     messageInput.focus();
   }
@@ -1155,6 +1162,8 @@
   // ==============================
   //  INIT
   // ==============================
+
+  bindNotificationAudioUnlock();
 
   if (useServer && authToken) {
     enterApp();
