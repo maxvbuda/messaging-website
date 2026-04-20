@@ -1,20 +1,11 @@
 /* ========================================
    SlackFlow — Client
    Connects to remote backend via Socket.IO.
-   Set BACKEND_URL below after deploying the server.
+   Default server URL is set in DEFAULT_SERVER_URL (workspaces block).
    ======================================== */
 
 (function () {
   'use strict';
-
-  // ┌─────────────────────────────────────────────┐
-  // │  SET THIS to your deployed server URL        │
-  // │  e.g. 'https://slackflow.onrender.com'       │
-  // │  Leave empty '' to use localStorage fallback  │
-  // └─────────────────────────────────────────────┘
-  const BACKEND_URL = 'https://messaging-website-6qqt.onrender.com';
-
-  const useServer = !!BACKEND_URL;
 
   // ── Theme ──
   const THEMES = ['dark', 'midnight', 'forest', 'sunset', 'rose', 'light'];
@@ -61,7 +52,6 @@
 
   // ── In-memory data ──
   let currentUser = null;
-  let authToken = localStorage.getItem('sf_token') || null;
   let users = [];
   let channels = [];
   let messages = {};
@@ -89,6 +79,107 @@
     document.addEventListener('pointerdown', unlock, { capture: true });
     document.addEventListener('touchstart', unlock, { capture: true, passive: true });
     document.addEventListener('keydown', unlock, { capture: true });
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') stopTitleFlash();
+    });
+  }
+
+  const SITE_TITLE = document.title;
+  let titleFlashTimer = null;
+
+  function channelDisplayName(channelId) {
+    const ch = channels.find(c => c.id === channelId);
+    if (!ch) return 'SlackFlow';
+    return channelId.startsWith('dm_') ? ch.name : '#' + ch.name;
+  }
+
+  function stopTitleFlash() {
+    if (titleFlashTimer != null) {
+      clearInterval(titleFlashTimer);
+      titleFlashTimer = null;
+    }
+    document.title = SITE_TITLE;
+  }
+
+  function startTitleFlash(label) {
+    stopTitleFlash();
+    let flip = false;
+    titleFlashTimer = setInterval(() => {
+      flip = !flip;
+      document.title = flip ? `${label} — ${SITE_TITLE}` : SITE_TITLE;
+    }, 800);
+  }
+
+  /** When the tab is in the background or another channel is open, surface a system notification and flash the title. */
+  function notifyIncomingIfAway({ channelId, fromName, body, tag }) {
+    if (!currentUser) return;
+    const viewingHere = channelId === activeChannelId && document.visibilityState === 'visible';
+    if (viewingHere) return;
+
+    if ('Notification' in window && Notification.permission === 'granted') {
+      try {
+        const title = `${fromName || 'Someone'} · ${channelDisplayName(channelId)}`;
+        const n = new Notification(title, {
+          body: (body || 'New message').slice(0, 160),
+          tag: tag || `ch-${channelId}`,
+          renotify: true,
+        });
+        n.onclick = () => {
+          window.focus();
+          n.close();
+          switchChannel(channelId);
+        };
+      } catch { /* ignore */ }
+    }
+
+    if (document.visibilityState === 'hidden' || channelId !== activeChannelId) {
+      startTitleFlash('New message');
+    }
+  }
+
+  /** Call synchronously from click/submit (before any await) so the browser ties audio to a user gesture. */
+  function primeAudioOnUserGesture() {
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      if (!sfxCtx) sfxCtx = new Ctx();
+      void sfxCtx.resume();
+      if (sfxCtx.state !== 'running') return;
+      const t0 = sfxCtx.currentTime;
+      const g = sfxCtx.createGain();
+      g.gain.value = 0.00002;
+      g.connect(sfxCtx.destination);
+      const osc = sfxCtx.createOscillator();
+      osc.frequency.value = 440;
+      osc.connect(g);
+      osc.start(t0);
+      osc.stop(t0 + 0.002);
+    } catch { /* ignore */ }
+    try {
+      if ('Notification' in window && Notification.permission === 'default') void Notification.requestPermission();
+    } catch { /* ignore */ }
+  }
+
+  function playBeepOnContext(ctx) {
+    const t0 = ctx.currentTime;
+    const g = ctx.createGain();
+    g.connect(ctx.destination);
+    g.gain.setValueAtTime(0, t0);
+    g.gain.linearRampToValueAtTime(0.18, t0 + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.22);
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(880, t0);
+    osc.frequency.exponentialRampToValueAtTime(1320, t0 + 0.09);
+    osc.connect(g);
+    osc.start(t0);
+    osc.stop(t0 + 0.18);
+  }
+
+  function buzzIfNoSound() {
+    try {
+      if (navigator.vibrate) navigator.vibrate([40, 35, 50]);
+    } catch { /* ignore */ }
   }
 
   function playNotificationSound() {
@@ -101,23 +192,14 @@
         if (ctx.state === 'suspended') {
           await ctx.resume().catch(() => {});
         }
-        if (ctx.state !== 'running') return;
-
-        const t0 = ctx.currentTime;
-        const g = ctx.createGain();
-        g.connect(ctx.destination);
-        g.gain.setValueAtTime(0, t0);
-        g.gain.linearRampToValueAtTime(0.18, t0 + 0.012);
-        g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.22);
-
-        const osc = ctx.createOscillator();
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(880, t0);
-        osc.frequency.exponentialRampToValueAtTime(1320, t0 + 0.09);
-        osc.connect(g);
-        osc.start(t0);
-        osc.stop(t0 + 0.18);
-      } catch { /* ignore */ }
+        if (ctx.state !== 'running') {
+          buzzIfNoSound();
+          return;
+        }
+        playBeepOnContext(ctx);
+      } catch {
+        buzzIfNoSound();
+      }
     })();
   }
 
@@ -137,7 +219,7 @@
   let bc;
   try { bc = new BroadcastChannel('slackflow_sync'); } catch { bc = null; }
   function broadcast(type, payload) {
-    if (bc && !useServer) bc.postMessage({ type, payload, senderId: currentUser ? currentUser.id : null });
+    if (bc && !inServerMode()) bc.postMessage({ type, payload, senderId: currentUser ? currentUser.id : null });
   }
 
   function lsGetUsers() { return lsLoad('sf_users', []); }
@@ -154,6 +236,195 @@
   function lsGetChannelMessages(chId) { return lsGetAllMessages()[chId] || []; }
   function lsAppendMessage(chId, msg) { const a = lsGetAllMessages(); if (!a[chId]) a[chId] = []; a[chId].push(msg); lsSaveAllMessages(a); }
   function lsUpdateMessages(chId, msgs) { const a = lsGetAllMessages(); a[chId] = msgs; lsSaveAllMessages(a); }
+
+  // ── Multi-workspace (per-server URL + token) ──
+  const WORKSPACES_LS = 'sf_workspaces_v1';
+  const DEFAULT_SERVER_URL = 'https://messaging-website-6qqt.onrender.com';
+
+  function normalizeServerUrl(str) {
+    return (str || '').trim().replace(/\/$/, '');
+  }
+
+  function loadWorkspacesState() {
+    try {
+      const raw = localStorage.getItem(WORKSPACES_LS);
+      if (raw) {
+        const state = JSON.parse(raw);
+        if (state && Array.isArray(state.list) && state.list.length) {
+          state.list.forEach(w => {
+            w.url = typeof w.url === 'string' ? normalizeServerUrl(w.url) : '';
+            if (!('token' in w)) w.token = null;
+          });
+          return state;
+        }
+      }
+    } catch { /* ignore */ }
+    const legacyTok = localStorage.getItem('sf_token');
+    const id = 'ws_default';
+    const baseUrl = normalizeServerUrl(DEFAULT_SERVER_URL);
+    const state = {
+      list: [{ id, label: 'SlackFlow HQ', url: baseUrl, token: baseUrl ? (legacyTok || null) : null }],
+      activeId: id,
+    };
+    localStorage.setItem(WORKSPACES_LS, JSON.stringify(state));
+    return state;
+  }
+
+  let wsState = loadWorkspacesState();
+
+  function activeWorkspace() {
+    let w = wsState.list.find(x => x.id === wsState.activeId);
+    if (!w && wsState.list[0]) {
+      wsState.activeId = wsState.list[0].id;
+      w = wsState.list[0];
+    }
+    return w || null;
+  }
+
+  function backUrl() {
+    const w = activeWorkspace();
+    return w && w.url ? w.url : '';
+  }
+
+  function inServerMode() {
+    return !!backUrl();
+  }
+
+  let authToken = null;
+
+  function saveWsState() {
+    localStorage.setItem(WORKSPACES_LS, JSON.stringify(wsState));
+    const w = activeWorkspace();
+    if (w && w.token) localStorage.setItem('sf_token', w.token);
+    else localStorage.removeItem('sf_token');
+    authToken = w && w.token ? w.token : null;
+  }
+
+  saveWsState();
+
+  function workspaceIconLetters(label) {
+    const s = (label || 'WS').trim();
+    if (!s) return '?';
+    const parts = s.split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+    return s.slice(0, 2).toUpperCase();
+  }
+
+  function renderWorkspaceRail() {
+    const wrap = $('#workspaceRailIcons');
+    const aside = $('#workspaceRailAside');
+    if (!wrap || !aside) return;
+    if (!inServerMode()) {
+      aside.style.display = 'none';
+      wrap.innerHTML = '';
+      return;
+    }
+    aside.style.display = '';
+    const activeId = wsState.activeId;
+    const icons = wsState.list.map(w => {
+      const active = w.id === activeId ? 'active' : '';
+      const letters = workspaceIconLetters(w.label);
+      return `<div class="workspace-icon ${active}" data-ws-id="${escHtml(w.id)}" title="${escHtml(w.label)}">${escHtml(letters)}</div>`;
+    }).join('');
+    wrap.innerHTML = icons + '<div class="workspace-icon workspace-add" title="Add workspace">+</div>';
+    wrap.querySelectorAll('[data-ws-id]').forEach(el => {
+      el.addEventListener('click', () => { switchWorkspace(el.getAttribute('data-ws-id')); });
+    });
+    const addBtn = wrap.querySelector('.workspace-add');
+    if (addBtn) addBtn.addEventListener('click', openAddWorkspaceModal);
+  }
+
+  function renderSidebarWorkspaceTitle() {
+    const el = $('#sidebarWorkspaceTitle');
+    if (!el) return;
+    const w = activeWorkspace();
+    el.textContent = w ? w.label : 'SlackFlow';
+  }
+
+  function switchWorkspace(wsId) {
+    const w = wsState.list.find(x => x.id === wsId);
+    if (!w || w.id === wsState.activeId) return;
+    if (socket) { socket.disconnect(); socket = null; }
+    wsState.activeId = w.id;
+    saveWsState();
+    currentUser = null;
+    users = []; channels = []; messages = {};
+    activeChannelId = 'c_general';
+    activeThreadMsgId = null;
+    threadPanel.classList.remove('open');
+    appWrapper.style.display = 'none';
+    renderWorkspaceRail();
+    renderSidebarWorkspaceTitle();
+    if (w.token) {
+      enterApp();
+    } else {
+      const p = $('#pendingRegScreen');
+      if (p) p.style.display = 'none';
+      authScreen.style.display = '';
+      setAuthSignInOnly();
+      hideAuthError();
+      authUsername.value = '';
+      authPassword.value = '';
+      authName.value = '';
+      renderRailAvatar();
+    }
+  }
+
+  function openAddWorkspaceModal() {
+    const lab = $('#newWorkspaceLabel');
+    const u = $('#newWorkspaceUrl');
+    const err = $('#addWorkspaceErr');
+    if (lab) lab.value = '';
+    if (u) u.value = '';
+    if (err) { err.textContent = ''; err.classList.remove('visible'); }
+    openModal('addWorkspaceModal');
+  }
+
+  function confirmAddWorkspace() {
+    const labIn = ($('#newWorkspaceLabel') && $('#newWorkspaceLabel').value.trim()) || '';
+    let urlIn = ($('#newWorkspaceUrl') && $('#newWorkspaceUrl').value.trim()) || '';
+    const err = $('#addWorkspaceErr');
+    if (!urlIn) {
+      if (err) { err.textContent = 'Enter a server URL.'; err.classList.add('visible'); }
+      return;
+    }
+    if (!/^https?:\/\//i.test(urlIn)) urlIn = 'https://' + urlIn;
+    let parsed;
+    try { parsed = new URL(urlIn); } catch {
+      if (err) { err.textContent = 'That URL does not look valid.'; err.classList.add('visible'); }
+      return;
+    }
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      if (err) { err.textContent = 'Only http and https URLs are allowed.'; err.classList.add('visible'); }
+      return;
+    }
+    let base = normalizeServerUrl(parsed.origin + (parsed.pathname === '/' ? '' : parsed.pathname.replace(/\/$/, '')));
+    if (!base) base = parsed.origin;
+    const label = labIn || parsed.hostname.replace(/^www\./, '') || 'Workspace';
+    const id = 'ws_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
+    wsState.list.push({ id, label, url: base, token: null });
+    wsState.activeId = id;
+    saveWsState();
+    if (socket) { socket.disconnect(); socket = null; }
+    currentUser = null;
+    users = []; channels = []; messages = {};
+    activeChannelId = 'c_general';
+    activeThreadMsgId = null;
+    threadPanel.classList.remove('open');
+    appWrapper.style.display = 'none';
+    const p = $('#pendingRegScreen');
+    if (p) p.style.display = 'none';
+    authScreen.style.display = '';
+    setAuthSignInOnly();
+    hideAuthError();
+    authUsername.value = '';
+    authPassword.value = '';
+    authName.value = '';
+    renderWorkspaceRail();
+    renderSidebarWorkspaceTitle();
+    renderRailAvatar();
+    closeModal('addWorkspaceModal');
+  }
 
   // ── DOM refs ──
   const $ = s => document.querySelector(s);
@@ -210,7 +481,7 @@
   function isImage(type) { return type && type.startsWith('image/'); }
   function isVideo(type) { return type && type.startsWith('video/'); }
 
-  function fileUrl(id) { return BACKEND_URL + '/api/files/' + id; }
+  function fileUrl(id) { return backUrl() + '/api/files/' + id; }
 
   function renderFileAttachment(file) {
     if (!file) return '';
@@ -250,11 +521,11 @@
   }
 
   async function uploadFile(fileObj) {
-    if (!useServer) return null;
+    if (!inServerMode()) return null;
     const form = new FormData();
     form.append('file', fileObj);
     try {
-      const res = await fetch(BACKEND_URL + '/api/upload', {
+      const res = await fetch(backUrl() + '/api/upload', {
         method: 'POST',
         headers: { 'Authorization': 'Bearer ' + authToken },
         body: form,
@@ -315,6 +586,7 @@
 
   async function handleAuth(e) {
     e.preventDefault();
+    primeAudioOnUserGesture();
     hideAuthError();
 
     const username = authUsername.value.trim().toLowerCase();
@@ -326,12 +598,12 @@
     if (isRegisterMode && !displayName) { showAuthError('Please enter a display name.'); return; }
     if (isRegisterMode && password.length < 3) { showAuthError('Password must be at least 3 characters.'); return; }
 
-    if (useServer) {
+    if (inServerMode()) {
       const endpoint = isRegisterMode ? '/api/register' : '/api/login';
       const inviteCode = authInvite ? authInvite.value.trim() : '';
       const body = isRegisterMode ? { username, password, name: displayName, inviteCode } : { username, password };
       try {
-        const res = await fetch(BACKEND_URL + endpoint, {
+        const res = await fetch(backUrl() + endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
@@ -340,7 +612,8 @@
         if (!res.ok) { showAuthError(d.error || 'Something went wrong.'); return; }
         authToken = d.token;
         currentUser = d.user;
-        localStorage.setItem('sf_token', authToken);
+        const aw = activeWorkspace();
+        if (aw) { aw.token = d.token; saveWsState(); }
         localStorage.removeItem('sf_pending_reg_id');
         localStorage.removeItem('sf_pending_reg_token');
         localStorage.removeItem('sf_pending_reg_username');
@@ -369,10 +642,12 @@
   }
 
   function logout() {
-    if (useServer) {
+    if (inServerMode()) {
       if (socket) socket.disconnect();
       socket = null;
-      localStorage.removeItem('sf_token');
+      const w = activeWorkspace();
+      if (w) w.token = null;
+      saveWsState();
     } else {
       if (currentUser) {
         const u2 = lsGetUsers(), u = u2.find(x => x.id === currentUser.id);
@@ -398,11 +673,11 @@
     const pendingEl = $('#pendingRegScreen');
     if (pendingEl) pendingEl.style.display = 'none';
 
-    if (useServer) {
+    if (inServerMode()) {
       let d = null;
       for (let attempt = 1; attempt <= 5; attempt++) {
         try {
-          const res = await fetch(BACKEND_URL + '/api/data', {
+          const res = await fetch(backUrl() + '/api/data', {
             headers: { 'Authorization': 'Bearer ' + authToken },
           });
           if (res.status === 401) {
@@ -475,24 +750,45 @@
   // ── BroadcastChannel listener (local mode) ──
   if (bc) {
     bc.onmessage = (e) => {
-      if (useServer) return;
+      if (inServerMode()) return;
       const { type, payload, senderId } = e.data;
       if (senderId === (currentUser && currentUser.id)) return;
-      if (type === 'new_message' && payload.channelId === activeChannelId) {
+      if (type === 'new_message') {
         messages = lsGetAllMessages();
-        const ch = messages[activeChannelId] || [];
-        const last = ch[ch.length - 1];
-        if (last && last.userId && currentUser && last.userId !== currentUser.id) playNotificationSound();
-        renderMessages();
+        const cid = payload.channelId;
+        const ch = messages[cid] || [];
+        const msg = payload.msgId ? ch.find(m => m.id === payload.msgId) : ch[ch.length - 1];
+        if (msg && msg.userId && currentUser && msg.userId !== currentUser.id) {
+          playNotificationSound();
+          const preview = msg.text || (msg.file ? 'Sent a file' : '');
+          notifyIncomingIfAway({
+            channelId: cid,
+            fromName: resolveUser(msg.userId, msg.userName).name,
+            body: preview,
+            tag: msg.id,
+          });
+        }
+        if (cid === activeChannelId) renderMessages();
       }
-      if (type === 'thread_reply' && payload.channelId === activeChannelId) {
+      if (type === 'thread_reply') {
         messages = lsGetAllMessages();
-        const parent = (messages[activeChannelId] || []).find(m => m.id === payload.parentMsgId);
+        const cid = payload.channelId;
+        const parent = (messages[cid] || []).find(m => m.id === payload.parentMsgId);
         const reps = parent && parent.threadReplies;
         const last = reps && reps[reps.length - 1];
-        if (last && last.userId && currentUser && last.userId !== currentUser.id) playNotificationSound();
-        renderMessages();
-        if (activeThreadMsgId === payload.parentMsgId) renderThread(payload.parentMsgId);
+        if (last && last.userId && currentUser && last.userId !== currentUser.id) {
+          playNotificationSound();
+          notifyIncomingIfAway({
+            channelId: cid,
+            fromName: resolveUser(last.userId, last.userName).name,
+            body: 'Thread: ' + (last.text || '').slice(0, 120),
+            tag: last.id,
+          });
+        }
+        if (cid === activeChannelId) {
+          renderMessages();
+          if (activeThreadMsgId === payload.parentMsgId) renderThread(payload.parentMsgId);
+        }
       }
       if (type === 'message_deleted' && payload.channelId === activeChannelId) { messages = lsGetAllMessages(); renderMessages(); }
       if (type === 'reaction' && payload.channelId === activeChannelId) { messages = lsGetAllMessages(); renderMessages(); }
@@ -507,9 +803,9 @@
   // ==============================
 
   function connectSocket() {
-    if (!useServer) return;
+    if (!inServerMode()) return;
     if (socket) socket.disconnect();
-    socket = io(BACKEND_URL);
+    socket = io(backUrl());
 
     socket.on('connect', () => { socket.emit('authenticate', authToken); });
     socket.on('authenticated', () => { socket.emit('join_channel', activeChannelId); });
@@ -519,7 +815,16 @@
       if (!messages[channelId]) messages[channelId] = [];
       if (messages[channelId].find(m => m.id === message.id)) return;
       messages[channelId].push(message);
-      if (currentUser && message.userId && message.userId !== currentUser.id) playNotificationSound();
+      if (currentUser && message.userId && message.userId !== currentUser.id) {
+        playNotificationSound();
+        const preview = message.text || (message.file ? 'Sent a file' : '');
+        notifyIncomingIfAway({
+          channelId,
+          fromName: message.userName || resolveUser(message.userId).name,
+          body: preview,
+          tag: message.id,
+        });
+      }
       if (channelId === activeChannelId) renderMessages();
     });
     socket.on('thread_reply', ({ channelId, parentMsgId, reply }) => {
@@ -528,7 +833,15 @@
       if (!p.threadReplies) p.threadReplies = [];
       if (p.threadReplies.find(r => r.id === reply.id)) return;
       p.threadReplies.push(reply);
-      if (currentUser && reply.userId && reply.userId !== currentUser.id) playNotificationSound();
+      if (currentUser && reply.userId && reply.userId !== currentUser.id) {
+        playNotificationSound();
+        notifyIncomingIfAway({
+          channelId,
+          fromName: reply.userName || resolveUser(reply.userId).name,
+          body: 'Thread: ' + (reply.text || '').slice(0, 120),
+          tag: reply.id,
+        });
+      }
       if (channelId === activeChannelId) { renderMessages(); if (activeThreadMsgId === parentMsgId) renderThread(parentMsgId); }
     });
     socket.on('reaction_updated', ({ channelId, msgId, reactions }) => {
@@ -575,7 +888,15 @@
   //  RENDER (shared by both modes)
   // ==============================
 
-  function renderAll() { renderChannelList(); renderDMList(); renderMessages(); renderRailAvatar(); renderEmojis(); }
+  function renderAll() {
+    renderWorkspaceRail();
+    renderSidebarWorkspaceTitle();
+    renderChannelList();
+    renderDMList();
+    renderMessages();
+    renderRailAvatar();
+    renderEmojis();
+  }
 
   function renderChannelList() {
     channelListEl.innerHTML = channels.filter(c => !c.id.startsWith('dm_')).map(ch => `
@@ -707,6 +1028,12 @@
 
   function renderRailAvatar() {
     const r = $('#railAvatar');
+    if (!r) return;
+    if (!currentUser) {
+      r.style.visibility = 'hidden';
+      return;
+    }
+    r.style.visibility = 'visible';
     r.style.background = colorFor(currentUser.name);
     r.style.display = 'flex'; r.style.alignItems = 'center'; r.style.justifyContent = 'center';
     r.style.fontSize = '13px'; r.style.fontWeight = '700'; r.style.color = '#fff';
@@ -735,7 +1062,7 @@
     if (!currentUser) return;
 
     let file = null;
-    if (pendingFile && useServer) {
+    if (pendingFile && inServerMode()) {
       const uploadingPill = $('#filePreview');
       if (uploadingPill) uploadingPill.innerHTML = '<span class="file-pill">⏳ Uploading…</span>';
       file = await uploadFile(pendingFile);
@@ -744,7 +1071,7 @@
       if (!file && !text.trim()) return;
     }
 
-    if (useServer && socket) {
+    if (inServerMode() && socket) {
       if (isThread && activeThreadMsgId) {
         socket.emit('thread_reply', { channelId: activeChannelId, parentMsgId: activeThreadMsgId, text: text.trim() });
       } else {
@@ -774,7 +1101,7 @@
   }
 
   function deleteMessage(msgId) {
-    if (useServer && socket) {
+    if (inServerMode() && socket) {
       socket.emit('delete_message', { channelId: activeChannelId, msgId });
     } else {
       const allMsgs = lsGetAllMessages();
@@ -788,7 +1115,7 @@
   }
 
   function toggleReaction(msgId, emoji) {
-    if (useServer && socket) {
+    if (inServerMode() && socket) {
       socket.emit('reaction', { channelId: activeChannelId, msgId, emoji });
     } else {
       const allMsgs = lsGetAllMessages();
@@ -807,9 +1134,9 @@
   }
 
   function switchChannel(chId) {
-    if (useServer && socket) { socket.emit('leave_channel', activeChannelId); }
+    if (inServerMode() && socket) { socket.emit('leave_channel', activeChannelId); }
     activeChannelId = chId;
-    if (useServer && socket) { socket.emit('join_channel', chId); }
+    if (inServerMode() && socket) { socket.emit('join_channel', chId); }
     threadPanel.classList.remove('open'); activeThreadMsgId = null;
     renderChannelList(); renderMessages(); closeMobileSidebar();
   }
@@ -916,9 +1243,9 @@
     }
 
     async function pollStatus() {
-      if (!regId || !pendingToken || !BACKEND_URL) return;
+      if (!regId || !pendingToken || !backUrl()) return;
       try {
-        const res = await fetch(BACKEND_URL + '/api/register-pending/' + encodeURIComponent(regId) + '/status?pendingToken=' + encodeURIComponent(pendingToken));
+        const res = await fetch(backUrl() + '/api/register-pending/' + encodeURIComponent(regId) + '/status?pendingToken=' + encodeURIComponent(pendingToken));
         if (!res.ok) return;
         const d = await res.json();
         if (d.status === 'approved' && d.token && d.user) {
@@ -926,7 +1253,8 @@
           clearPendingLs();
           authToken = d.token;
           currentUser = d.user;
-          localStorage.setItem('sf_token', authToken);
+          const aw = activeWorkspace();
+          if (aw) { aw.token = d.token; saveWsState(); }
           screen.style.display = 'none';
           enterApp();
           return;
@@ -961,7 +1289,7 @@
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       hideFormErr();
-      if (!BACKEND_URL) { showFormErr('Server is not configured.'); return; }
+      if (!backUrl()) { showFormErr('Server is not configured.'); return; }
 
       const name = nameEl.value.trim();
       const username = userEl.value.trim().toLowerCase();
@@ -970,8 +1298,10 @@
       if (username.length < 2) { showFormErr('Username must be at least 2 characters.'); return; }
       if (password.length < 3) { showFormErr('Password must be at least 3 characters.'); return; }
 
+      primeAudioOnUserGesture();
+
       try {
-        const res = await fetch(BACKEND_URL + '/api/register-request', {
+        const res = await fetch(backUrl() + '/api/register-request', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name, username, password }),
@@ -989,6 +1319,7 @@
     });
 
     function openSignIn() {
+      primeAudioOnUserGesture();
       stopPoll();
       setAuthSignInOnly();
       screen.style.display = 'none';
@@ -1012,7 +1343,7 @@
       showFormUI();
     });
 
-    if (regId && pendingToken && BACKEND_URL && !urlParams.get('invite')) {
+    if (regId && pendingToken && backUrl() && !urlParams.get('invite')) {
       showWaitingUI();
       startPoll();
     }
@@ -1023,7 +1354,7 @@
   dmListEl.addEventListener('click', (e) => {
     const li = e.target.closest('li'); if (!li || !li.dataset.user) return;
     const userId = li.dataset.user;
-    if (useServer && socket) {
+    if (inServerMode() && socket) {
       socket.emit('open_dm', { targetUserId: userId });
     } else {
       const user = resolveUser(userId);
@@ -1070,7 +1401,7 @@
     clearTimeout(typBcTO);
     typBcTO = setTimeout(() => {
       if (!currentUser || !messageInput.value.trim()) return;
-      if (useServer && socket) socket.emit('typing', { channelId: activeChannelId });
+      if (inServerMode() && socket) socket.emit('typing', { channelId: activeChannelId });
       else broadcast('typing', { channelId: activeChannelId, userName: currentUser.name });
     }, 300);
   });
@@ -1101,12 +1432,13 @@
   searchResultsInner.addEventListener('click', (e) => { const it = e.target.closest('.search-result-item'); if (it) { switchChannel(it.dataset.channel); searchInput.value = ''; searchResults.classList.remove('open'); } });
   document.addEventListener('click', (e) => { if (searchResults.classList.contains('open') && !searchResults.contains(e.target) && !e.target.closest('.sidebar-search')) searchResults.classList.remove('open'); });
 
+  $('#confirmAddWorkspaceBtn').addEventListener('click', confirmAddWorkspace);
   $('#addChannelBtn').addEventListener('click', (e) => { e.stopPropagation(); openModal('addChannelModal'); });
   $('#createChannelBtn').addEventListener('click', () => {
     const name = $('#newChannelName').value.trim();
     const desc = $('#newChannelDesc').value.trim();
     if (!name) return;
-    if (useServer && socket) { socket.emit('create_channel', { name, topic: desc }); }
+    if (inServerMode() && socket) { socket.emit('create_channel', { name, topic: desc }); }
     else {
       const slug = name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
       if (!slug) return;
@@ -1142,7 +1474,7 @@
   $('#saveProfileBtn').addEventListener('click', () => {
     const name = $('#profileName').value.trim();
     const statusMsg = $('#profileStatus').value.trim();
-    if (useServer && socket) {
+    if (inServerMode() && socket) {
       socket.emit('update_profile', { name: name || currentUser.name, statusMsg });
     } else {
       if (name) currentUser.name = name;
@@ -1162,7 +1494,7 @@
   });
 
   window.addEventListener('beforeunload', () => {
-    if (!useServer && currentUser) {
+    if (!inServerMode() && currentUser) {
       const u2 = lsGetUsers(), u = u2.find(x => x.id === currentUser.id);
       if (u) { u.status = 'offline'; lsSaveUsers(u2); }
       broadcast('user_offline', { userId: currentUser.id });
@@ -1174,10 +1506,11 @@
   // ==============================
 
   bindNotificationAudioUnlock();
+  renderWorkspaceRail();
 
-  if (useServer && authToken) {
+  if (inServerMode() && authToken) {
     enterApp();
-  } else if (!useServer) {
+  } else if (!inServerMode()) {
     const uid = lsLoad('sf_session', null);
     if (uid) { const u = lsGetUsers().find(x => x.id === uid); if (u) { currentUser = u; enterApp(); } }
   }

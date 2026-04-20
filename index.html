@@ -13,6 +13,14 @@
 </head>
 <body>
 
+  <div class="global-layout" id="globalLayout">
+    <aside class="workspace-rail workspace-rail-global" id="workspaceRailAside" aria-label="Workspaces">
+      <div id="workspaceRailIcons"></div>
+      <div class="rail-spacer"></div>
+      <div class="rail-avatar" id="railAvatar" title="Profile" style="visibility:hidden"></div>
+    </aside>
+    <div class="global-main" id="globalMain">
+
   <!-- ============ LOGIN SCREEN (hidden by default) ============ -->
   <div class="auth-screen" id="authScreen" style="display:none">
     <div class="auth-card">
@@ -97,18 +105,10 @@
   <!-- ============ MAIN APP (hidden until login) ============ -->
   <div class="app-wrapper" id="appWrapper" style="display:none">
 
-    <!-- Workspace Sidebar (left icon rail) -->
-    <aside class="workspace-rail">
-      <div class="workspace-icon active" title="SlackFlow HQ">SF</div>
-      <div class="workspace-icon" title="Add Workspace">+</div>
-      <div class="rail-spacer"></div>
-      <div class="rail-avatar" id="railAvatar" title="Profile"></div>
-    </aside>
-
     <!-- Channel Sidebar -->
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-header">
-        <h1 class="sidebar-title">SlackFlow HQ</h1>
+        <h1 class="sidebar-title" id="sidebarWorkspaceTitle">SlackFlow HQ</h1>
         <button class="btn-icon" id="logoutBtn" title="Sign Out">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
         </button>
@@ -228,6 +228,30 @@
       <div class="emoji-grid" id="emojiGrid"></div>
     </div>
 
+    <!-- Add workspace -->
+    <div class="modal-overlay" id="addWorkspaceModal">
+      <div class="modal">
+        <div class="modal-header">
+          <h3>Add a workspace</h3>
+          <button type="button" class="btn-icon modal-close" data-modal="addWorkspaceModal">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <p class="modal-hint" style="margin:0 0 14px;font-size:13px;color:var(--text-muted);text-align:left">Connect to another SlackFlow server (for example a staging deployment). You will sign in on that server next.</p>
+          <label class="form-label">Display name</label>
+          <input type="text" id="newWorkspaceLabel" class="form-input" placeholder="e.g. Staging">
+          <label class="form-label">Server URL</label>
+          <input type="url" id="newWorkspaceUrl" class="form-input" placeholder="https://your-server.onrender.com">
+          <div class="auth-error" id="addWorkspaceErr" style="margin-top:10px"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn-secondary" data-modal="addWorkspaceModal">Cancel</button>
+          <button type="button" class="btn-primary" id="confirmAddWorkspaceBtn">Continue</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Add Channel Modal -->
     <div class="modal-overlay" id="addChannelModal">
       <div class="modal">
@@ -290,6 +314,9 @@
     <div class="sidebar-overlay" id="sidebarOverlay"></div>
 
   </div><!-- /app-wrapper -->
+
+    </div><!-- /global-main -->
+  </div><!-- /global-layout -->
 
   <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
   <script src="app.js"></script>
