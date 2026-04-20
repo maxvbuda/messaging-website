@@ -464,7 +464,7 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-// ── REST: Join requests (guest ↔ admin chat threads) ──
+// ── REST: Join / pending account requests ──
 
 function ensureJrMessages(jr) {
   if (!jr) return jr;
@@ -483,23 +483,11 @@ function buildInviteUrl(code, jr) {
   return u;
 }
 
-async function appendJoinMessage(id, msg) {
-  const m = { from: msg.from, text: String(msg.text).slice(0, 4000), ts: Date.now() };
-  if (db) await joinRequestsCol.updateOne({ id }, { $push: { messages: m }, $set: { updatedAt: Date.now() } });
-  else {
-    const jr = (memData.joinRequests || []).find(r => r.id === id);
-    if (jr) {
-      ensureJrMessages(jr);
-      jr.messages.push(m);
-      jr.updatedAt = Date.now();
-    }
-  }
+async function findPendingRegistrationByUsername(uname) {
+  const u = uname.trim().toLowerCase();
+  if (db) return await joinRequestsCol.findOne({ username: u, status: 'pending', passwordHash: { $exists: true } });
+  return (memData.joinRequests || []).find((r) => r.username === u && r.status === 'pending' && r.passwordHash);
 }
-
-// Max 3 new threads per IP per hour
-const joinThreadStartAttempts = new Map();
-// Max 40 guest messages per IP per hour (follow-up replies)
-const joinThreadGuestMsgAttempts = new Map();
 
 function rateLimitCheck(map, ip, max, windowMs) {
   if (!ip) return null;
@@ -512,26 +500,34 @@ function rateLimitCheck(map, ip, max, windowMs) {
   return false;
 }
 
-app.post('/api/join-thread/start', async (req, res) => {
+const pendingRegAttempts = new Map();
+
+app.post('/api/register-request', async (req, res) => {
   const ip = getClientIp(req);
-  if (rateLimitCheck(joinThreadStartAttempts, ip, 3, 60 * 60 * 1000)) {
-    return res.status(429).json({ error: 'Too many new conversations. Try again later.' });
+  if (rateLimitCheck(pendingRegAttempts, ip, 3, 60 * 60 * 1000)) {
+    return res.status(429).json({ error: 'Too many requests. Try again later.' });
   }
 
-  const text = (req.body.text || '').trim();
-  if (!text) return res.status(400).json({ error: 'Please write a message.' });
-  if (isBlockedName('guest', text)) return res.status(403).json({ error: 'This request cannot be submitted.' });
+  const { name, username, password } = req.body;
+  if (!username || !password || !name) return res.status(400).json({ error: 'All fields are required.' });
+  if (username.trim().length < 2) return res.status(400).json({ error: 'Username must be at least 2 characters.' });
+  if (password.length < 3) return res.status(400).json({ error: 'Password must be at least 3 characters.' });
 
+  const uname = username.trim().toLowerCase();
+  if (isBlockedName(uname, name)) return res.status(403).json({ error: 'This request cannot be submitted.' });
+  if (await findUser({ username: uname })) return res.status(409).json({ error: 'That username is already taken.' });
+  if (await findPendingRegistrationByUsername(uname)) return res.status(409).json({ error: 'That username already has a pending request.' });
+
+  const hash = await bcrypt.hash(password, 10);
   const id = 'jr_' + uuidv4().slice(0, 12);
-  const guestToken = uuidv4();
+  const pendingToken = uuidv4();
   const ts = Date.now();
   const req_ = {
     id,
-    guestToken,
-    name: 'Applicant',
-    username: `pending_${uuidv4().replace(/-/g, '').slice(0, 10)}`,
-    message: text.slice(0, 2000),
-    messages: [{ from: 'guest', text: text.slice(0, 2000), ts }],
+    pendingToken,
+    name: name.trim(),
+    username: uname,
+    passwordHash: hash,
     status: 'pending',
     createdAt: ts,
     updatedAt: ts,
@@ -540,55 +536,35 @@ app.post('/api/join-thread/start', async (req, res) => {
   if (db) await joinRequestsCol.insertOne(req_);
   else { if (!memData.joinRequests) memData.joinRequests = []; memData.joinRequests.push(req_); }
 
-  res.json({ ok: true, id, guestToken });
+  res.json({ ok: true, id, pendingToken });
 });
 
-app.post('/api/join-thread/:id/guest-message', async (req, res) => {
-  const ip = getClientIp(req);
-  if (rateLimitCheck(joinThreadGuestMsgAttempts, ip, 40, 60 * 60 * 1000)) {
-    return res.status(429).json({ error: 'Too many messages. Try again later.' });
+app.get('/api/register-pending/:id/status', async (req, res) => {
+  const { id } = req.params;
+  const pendingToken = req.query.pendingToken;
+  if (!pendingToken) return res.status(400).json({ error: 'Missing token.' });
+
+  let jr;
+  if (db) jr = await joinRequestsCol.findOne({ id });
+  else jr = (memData.joinRequests || []).find((r) => r.id === id);
+  if (!jr || jr.pendingToken !== pendingToken) return res.status(404).json({ error: 'Not found.' });
+
+  if (jr.status === 'denied') return res.json({ status: 'denied' });
+
+  if (jr.status === 'approved' && jr.passwordHash) {
+    if (jr.authDeliveryToken) {
+      const tok = jr.authDeliveryToken;
+      const userId = jr.createdUserId;
+      if (db) await joinRequestsCol.updateOne({ id }, { $unset: { authDeliveryToken: '' } });
+      else delete jr.authDeliveryToken;
+      const user = await findUser({ id: userId });
+      if (!user) return res.json({ status: 'pending' });
+      return res.json({ status: 'approved', token: tok, user: publicUser(user) });
+    }
+    return res.json({ status: 'ready_sign_in' });
   }
 
-  const { id } = req.params;
-  const { guestToken, text } = req.body;
-  const body = (text || '').trim();
-  if (!guestToken || !body) return res.status(400).json({ error: 'Invalid message.' });
-
-  let jr;
-  if (db) jr = await joinRequestsCol.findOne({ id });
-  else jr = (memData.joinRequests || []).find(r => r.id === id);
-  if (!jr || jr.guestToken !== guestToken) return res.status(404).json({ error: 'Not found.' });
-  if (jr.status !== 'pending') return res.status(403).json({ error: 'This conversation is closed.' });
-  if (isBlockedName('guest', body)) return res.status(403).json({ error: 'Message not allowed.' });
-
-  await appendJoinMessage(id, { from: 'guest', text: body });
-  res.json({ ok: true });
-});
-
-app.get('/api/join-thread/:id/messages', async (req, res) => {
-  const { id } = req.params;
-  const guestToken = req.query.guestToken;
-  if (!guestToken) return res.status(400).json({ error: 'Missing token.' });
-
-  let jr;
-  if (db) jr = await joinRequestsCol.findOne({ id });
-  else jr = (memData.joinRequests || []).find(r => r.id === id);
-  if (!jr || jr.guestToken !== guestToken) return res.status(404).json({ error: 'Not found.' });
-
-  ensureJrMessages(jr);
-  res.json({ status: jr.status, messages: jr.messages });
-});
-
-// Legacy: status poll (optional for old clients)
-app.get('/api/join-request/:id/status', async (req, res) => {
-  const { id } = req.params;
-  let jr;
-  if (db) jr = await joinRequestsCol.findOne({ id });
-  else jr = (memData.joinRequests || []).find(r => r.id === id);
-  if (!jr) return res.status(404).json({ error: 'Not found.' });
-  const payload = { status: jr.status };
-  if (jr.status === 'approved' && jr.inviteCode) payload.inviteCode = jr.inviteCode;
-  res.json(payload);
+  return res.json({ status: 'pending' });
 });
 
 app.get('/api/admin/requests', requireAdmin, async (req, res) => {
@@ -597,25 +573,14 @@ app.get('/api/admin/requests', requireAdmin, async (req, res) => {
   else requests = (memData.joinRequests || []).slice().reverse();
   requests = requests.map((jr) => {
     ensureJrMessages(jr);
-    const { guestToken, ...pub } = jr;
+    const pub = { ...jr };
+    delete pub.guestToken;
+    delete pub.pendingToken;
+    delete pub.passwordHash;
+    delete pub.authDeliveryToken;
     return pub;
   });
   res.json({ requests });
-});
-
-app.post('/api/admin/requests/:id/message', requireAdmin, async (req, res) => {
-  const { id } = req.params;
-  const text = (req.body.text || '').trim();
-  if (!text) return res.status(400).json({ error: 'Empty message.' });
-
-  let jr;
-  if (db) jr = await joinRequestsCol.findOne({ id });
-  else jr = (memData.joinRequests || []).find(r => r.id === id);
-  if (!jr) return res.status(404).json({ error: 'Request not found.' });
-  if (jr.status !== 'pending') return res.status(403).json({ error: 'This request is no longer open for chat.' });
-
-  await appendJoinMessage(id, { from: 'admin', text });
-  res.json({ ok: true });
 });
 
 app.delete('/api/admin/requests', requireAdmin, async (req, res) => {
@@ -628,9 +593,45 @@ app.post('/api/admin/requests/:id/approve', requireAdmin, async (req, res) => {
   const { id } = req.params;
   let jr;
   if (db) jr = await joinRequestsCol.findOne({ id });
-  else jr = (memData.joinRequests || []).find(r => r.id === id);
+  else jr = (memData.joinRequests || []).find((r) => r.id === id);
   if (!jr) return res.status(404).json({ error: 'Request not found.' });
+  if (jr.status !== 'pending') return res.status(400).json({ error: 'Request is not pending.' });
 
+  // Pending account (password on file): create user and deliver session on poll
+  if (jr.passwordHash) {
+    if (await findUser({ username: jr.username })) {
+      return res.status(409).json({ error: 'That username is already registered. Deny this request.' });
+    }
+    const user = {
+      id: 'u_' + uuidv4().slice(0, 10),
+      username: jr.username,
+      passwordHash: jr.passwordHash,
+      name: (jr.name || '').trim() || jr.username,
+      status: 'online',
+      role: 'Member',
+      createdAt: Date.now(),
+    };
+    await insertUser(user);
+    const token = generateToken();
+    tokens.set(token, user.id);
+    if (db) await sessionsCol.insertOne({ token, userId: user.id, createdAt: new Date() });
+    io.emit('user_joined', { user: publicUser(user) });
+
+    if (db) {
+      await joinRequestsCol.updateOne(
+        { id },
+        { $set: { status: 'approved', authDeliveryToken: token, createdUserId: user.id, updatedAt: Date.now() } },
+      );
+    } else {
+      jr.status = 'approved';
+      jr.authDeliveryToken = token;
+      jr.createdUserId = user.id;
+      jr.updatedAt = Date.now();
+    }
+    return res.json({ ok: true, accountCreated: true });
+  }
+
+  // Legacy chat-style request: issue invite link only
   const code = await createInvite('admin');
   ensureJrMessages(jr);
   const url = buildInviteUrl(code, jr);
@@ -647,6 +648,7 @@ app.post('/api/admin/requests/:id/approve', requireAdmin, async (req, res) => {
   } else {
     jr.status = 'approved';
     jr.inviteCode = code;
+    ensureJrMessages(jr);
     jr.messages.push(linkMsg);
     jr.updatedAt = Date.now();
   }
@@ -658,23 +660,12 @@ app.post('/api/admin/requests/:id/deny', requireAdmin, async (req, res) => {
   const { id } = req.params;
   let jr;
   if (db) jr = await joinRequestsCol.findOne({ id });
-  else jr = (memData.joinRequests || []).find(r => r.id === id);
+  else jr = (memData.joinRequests || []).find((r) => r.id === id);
   if (!jr) return res.status(404).json({ error: 'Request not found.' });
 
-  const denyMsg = { from: 'admin', text: 'Your join request was not approved. Thanks for your interest.', ts: Date.now() };
-
-  if (db) {
-    await joinRequestsCol.updateOne(
-      { id },
-      {
-        $set: { status: 'denied', updatedAt: Date.now() },
-        $push: { messages: denyMsg },
-      },
-    );
-  } else if (jr) {
-    ensureJrMessages(jr);
+  if (db) await joinRequestsCol.updateOne({ id }, { $set: { status: 'denied', updatedAt: Date.now() } });
+  else {
     jr.status = 'denied';
-    jr.messages.push(denyMsg);
     jr.updatedAt = Date.now();
   }
 

@@ -83,15 +83,6 @@
     .gen-invite-bar input { flex: 1; padding: 8px 12px; background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 13px; font-family: var(--font); outline: none; }
     .btn-accent { padding: 8px 16px; background: var(--accent); color: #fff; border: none; border-radius: 6px; font-size: 13px; font-weight: 700; font-family: var(--font); cursor: pointer; }
     .btn-accent:hover { background: #7e70f0; }
-
-    .req-chat { padding: 10px 16px 4px; max-height: 260px; overflow-y: auto; border-bottom: 1px solid var(--border); background: var(--bg); }
-    .req-msg { margin-bottom: 8px; padding: 8px 11px; border-radius: 10px; font-size: 13px; line-height: 1.45; word-break: break-word; }
-    .req-msg-admin { background: rgba(108,92,231,0.22); margin-left: 20px; border-bottom-right-radius: 4px; }
-    .req-msg-guest { background: var(--bg3); margin-right: 20px; border-bottom-left-radius: 4px; }
-    .req-msg-link { color: #7cacf8; word-break: break-all; }
-    .req-chat-bar { display: flex; gap: 8px; padding: 10px 16px 14px; align-items: center; }
-    .req-chat-bar input { flex: 1; padding: 8px 12px; background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 13px; font-family: var(--font); outline: none; }
-    .req-chat-bar input:focus { border-color: var(--accent); }
   </style>
 </head>
 <body>
@@ -225,16 +216,6 @@
     });
   });
 
-  function formatReqMsgs(msgs) {
-    return (msgs || []).map((m) => {
-      const side = m.from === 'admin' ? 'req-msg-admin' : 'req-msg-guest';
-      let txt = esc(m.text);
-      txt = txt.replace(/(https?:\/\/[^\s&lt;]+)/g, '<a href="$1" target="_blank" rel="noopener" class="req-msg-link">$1</a>');
-      txt = txt.replace(/\n/g, '<br>');
-      return `<div class="req-msg ${side}">${txt}</div>`;
-    }).join('');
-  }
-
   // ── Join Requests ──
   async function loadRequests() {
     const el = document.getElementById('requestsList');
@@ -248,14 +229,16 @@
 
     el.innerHTML = requests.map((r) => {
       const msgs = r.messages || [];
-      const last = msgs.length ? msgs[msgs.length - 1] : null;
-      const sub = (last ? esc(last.text).slice(0, 72) + (last.text.length > 72 ? '…' : '') + ' · ' : '') + timeAgo(r.createdAt);
-      const chat = `<div class="req-chat">${formatReqMsgs(msgs)}</div>`;
-      const bar = r.status === 'pending' ? `
-        <div class="req-chat-bar">
-          <input type="text" id="admin-chat-in-${r.id}" placeholder="Reply to applicant…" autocomplete="off">
-          <button type="button" class="btn-accent" style="padding:7px 14px;font-size:12px" onclick="sendAdminReply('${r.id}')">Send</button>
-        </div>` : '';
+      const legacyChat = msgs.length > 0 || (r.message && String(r.message).trim());
+      let sub = timeAgo(r.createdAt);
+      if (legacyChat) {
+        const preview = (r.message && String(r.message).trim()) ? String(r.message) : (msgs[0] ? String(msgs[0].text) : '');
+        sub = esc(preview).slice(0, 80) + (preview.length > 80 ? '…' : '') + ' · ' + timeAgo(r.createdAt);
+      } else if (r.status === 'pending') {
+        sub = 'Account signup pending approval · ' + timeAgo(r.createdAt);
+      }
+      const approveBtnText = legacyChat ? 'Approve (invite)' : 'Approve (account)';
+      const showInvite = r.status === 'approved' && r.inviteCode;
       return `
       <div class="card" id="req-${r.id}" data-req-id="${r.id}">
         <div class="card-row">
@@ -267,35 +250,23 @@
           <div class="row-actions">
             <span class="badge badge-${r.status}">${r.status}</span>
             ${r.status === 'pending' ? `
-              <button class="btn-approve" onclick="approveRequest('${r.id}')">Approve + link</button>
+              <button class="btn-approve" onclick="approveRequest('${r.id}')">${approveBtnText}</button>
               <button class="btn-deny" onclick="denyRequest('${r.id}')">Deny</button>
             ` : ''}
           </div>
         </div>
-        ${chat}
-        ${bar}
-        ${r.status === 'approved' && r.inviteCode ? `
+        ${showInvite ? `
           <div style="padding:0 16px 14px">
             <div class="invite-box">
-              <div style="font-weight:700;margin-bottom:4px">Invite link (also in chat above)</div>
+              <div style="font-weight:700;margin-bottom:4px">Invite link</div>
               <div class="invite-link" id="ilink-${r.id}">${getInviteLink(r.inviteCode, r.name, r.username)}</div>
               <button class="copy-btn" onclick="copyLink('ilink-${r.id}')">Copy Link</button>
             </div>
           </div>
         ` : ''}
+        ${r.status === 'approved' && !r.inviteCode ? `<div style="padding:8px 16px 14px;font-size:12px;color:var(--muted)">Account created. Their open tab signs in automatically, or they can sign in with the same username and password.</div>` : ''}
       </div>`;
     }).join('');
-  }
-
-  async function sendAdminReply(id) {
-    const inp = document.getElementById('admin-chat-in-' + id);
-    if (!inp) return;
-    const text = inp.value.trim();
-    if (!text) return;
-    inp.value = '';
-    const d = await api('POST', '/api/admin/requests/' + id + '/message', { text });
-    if (d.error) { alert(d.error); return; }
-    loadRequests();
   }
 
   function getInviteLink(code, name, username) {
@@ -307,8 +278,8 @@
 
   async function approveRequest(id) {
     const d = await api('POST', `/api/admin/requests/${id}/approve`);
-    if (d.code) loadRequests();
-    else alert(d.error || 'Failed');
+    if (d.error) { alert(d.error); return; }
+    loadRequests();
   }
 
   async function denyRequest(id) {

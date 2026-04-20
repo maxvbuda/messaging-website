@@ -47,39 +47,51 @@
         <a href="#" id="authToggleLink">Create one</a>
       </p>
       <p class="auth-toggle" style="margin-top:10px">
-        <a href="#" id="goToJoinLink">← Back to join request</a>
+        <a href="#" id="goToPendingRegLink">Request an account (admin approval)</a>
       </p>
     </div>
   </div>
 
-  <!-- ============ JOIN REQUEST CHAT (shown by default) ============ -->
-  <div class="chat-landing-screen" id="joinRequestScreen" style="z-index:600">
-    <div class="chat-landing-wrap">
-      <div class="chat-landing-header">
-        <div class="chat-landing-logo">SF</div>
-        <div class="chat-landing-info">
-          <div class="chat-landing-name">SlackFlow HQ</div>
-          <div class="chat-landing-sub">Message an admin — they will reply here (invite link can appear in this chat)</div>
-        </div>
-        <div class="chat-landing-header-actions">
-          <a href="#" id="chatNewThreadLink" class="chat-landing-signin" style="margin-right:8px;border-color:transparent">New chat</a>
-          <a href="#" id="backToLoginLink" class="chat-landing-signin">Sign in</a>
-        </div>
-      </div>
+  <!-- ============ REQUEST ACCOUNT (default) — same fields as create account; auto sign-in when approved ============ -->
+  <div class="auth-screen" id="pendingRegScreen" style="z-index:600">
+    <div class="auth-card" id="pendingRegFormWrap">
+      <div class="auth-logo">SF</div>
+      <h1 class="auth-title">Request a <strong>SlackFlow</strong> account</h1>
+      <p class="auth-subtitle" style="text-align:left">Create the username and password you want. An admin will approve your request. <strong>Keep this page open</strong> — when you are approved, you will be <strong>signed in automatically</strong> on this device (no invite link needed).</p>
 
-      <div class="chat-landing-body" id="chatLandingBody">
-        <div class="chat-bubble bot-bubble">
-          👋 Hi — introduce yourself and say you would like to join. An admin will chat with you here and can send your signup link when you are approved.
+      <div class="auth-error" id="pendingRegError"></div>
+
+      <form id="pendingRegForm" autocomplete="off">
+        <div class="auth-field">
+          <label for="pendingRegName">Display Name</label>
+          <input type="text" id="pendingRegName" placeholder="e.g. Jane Doe" autocomplete="off">
         </div>
-      </div>
+        <div class="auth-field">
+          <label for="pendingRegUsername">Username</label>
+          <input type="text" id="pendingRegUsername" placeholder="e.g. jane" autocomplete="off">
+        </div>
+        <div class="auth-field">
+          <label for="pendingRegPassword">Password</label>
+          <input type="password" id="pendingRegPassword" placeholder="Choose a password" autocomplete="new-password">
+        </div>
+        <button type="submit" class="auth-btn" id="pendingRegSubmitBtn">Submit request</button>
+      </form>
 
-      <div class="chat-landing-input-row" id="chatLandingInputRow">
-        <input type="text" class="chat-landing-input" id="chatLandingInput" placeholder="Type here…" autocomplete="off" autocorrect="off" spellcheck="false">
-        <button class="chat-landing-btn" id="chatLandingBtn">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-        </button>
-      </div>
+      <p class="auth-toggle" style="margin-top:14px">
+        Already have an account? <a href="#" id="pendingRegToSignIn">Sign in</a>
+      </p>
+    </div>
 
+    <div class="auth-card" id="pendingRegWaitWrap" style="display:none;max-width:420px">
+      <div class="auth-logo">SF</div>
+      <h1 class="auth-title">Waiting for <strong>approval</strong></h1>
+      <p class="auth-subtitle" style="text-align:left">Your request was sent. <strong>Do not close this tab.</strong> When an admin approves you, this page will sign you in automatically. You can also leave the tab open in the background.</p>
+      <div class="auth-error" id="pendingRegWaitErr"></div>
+      <p class="auth-toggle" style="margin-top:18px">
+        <a href="#" id="pendingRegCancelWait">Cancel and start over</a>
+        ·
+        <a href="#" id="pendingRegWaitToSignIn">Sign in instead</a>
+      </p>
     </div>
   </div>
 

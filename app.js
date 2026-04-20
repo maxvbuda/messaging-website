@@ -238,7 +238,7 @@
     authToggleLink.textContent = 'Sign in';
     authSubtitle.textContent = 'Create your account to start messaging.';
     // Show login/register screen instead of join request
-    $('#joinRequestScreen').style.display = 'none';
+    $('#pendingRegScreen').style.display = 'none';
     authScreen.style.display = '';
     window.history.replaceState({}, '', window.location.pathname);
   }
@@ -271,6 +271,9 @@
         authToken = d.token;
         currentUser = d.user;
         localStorage.setItem('sf_token', authToken);
+        localStorage.removeItem('sf_pending_reg_id');
+        localStorage.removeItem('sf_pending_reg_token');
+        localStorage.removeItem('sf_pending_reg_username');
         enterApp();
       } catch { showAuthError('Could not reach the server.'); }
     } else {
@@ -311,7 +314,7 @@
     currentUser = null; authToken = null;
     users = []; channels = []; messages = {};
     appWrapper.style.display = 'none';
-    $('#joinRequestScreen').style.display = '';
+    $('#pendingRegScreen').style.display = '';
     $('#authScreen').style.display = 'none';
     authUsername.value = ''; authPassword.value = ''; authName.value = '';
     hideAuthError();
@@ -745,163 +748,158 @@
   authForm.addEventListener('submit', handleAuth);
   $('#logoutBtn').addEventListener('click', logout);
 
-  // ---- Chat landing: real guest ↔ admin thread ----
-  (function initChatLanding() {
-    const body = $('#chatLandingBody');
-    const input = $('#chatLandingInput');
-    const btn = $('#chatLandingBtn');
-    const LS_ID = 'sf_join_thread_id';
-    const LS_TOK = 'sf_join_guest_token';
+  // ---- Pending account request (no chat): submit credentials, poll, auto sign-in when approved ----
+  (function initPendingRegistration() {
+    const LS_ID = 'sf_pending_reg_id';
+    const LS_TOK = 'sf_pending_reg_token';
+    const LS_USER = 'sf_pending_reg_username';
 
-    let threadId = localStorage.getItem(LS_ID) || '';
-    let guestToken = localStorage.getItem(LS_TOK) || '';
+    const screen = $('#pendingRegScreen');
+    const formWrap = $('#pendingRegFormWrap');
+    const waitWrap = $('#pendingRegWaitWrap');
+    const form = $('#pendingRegForm');
+    const errEl = $('#pendingRegError');
+    const waitErr = $('#pendingRegWaitErr');
+    const nameEl = $('#pendingRegName');
+    const userEl = $('#pendingRegUsername');
+    const passEl = $('#pendingRegPassword');
+
+    let regId = localStorage.getItem(LS_ID) || '';
+    let pendingToken = localStorage.getItem(LS_TOK) || '';
     let pollTimer = null;
-    let lastFp = '';
 
-    function esc(s) {
-      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    function showFormErr(msg) {
+      errEl.textContent = msg;
+      errEl.classList.add('visible');
     }
-    function linkifyBr(t) {
-      let s = esc(t);
-      s = s.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener" style="color:#7cacf8;word-break:break-all">$1</a>');
-      return s.replace(/\n/g, '<br>');
+    function hideFormErr() { errEl.classList.remove('visible'); errEl.textContent = ''; }
+    function showWaitErr(msg) {
+      waitErr.textContent = msg;
+      waitErr.classList.add('visible');
     }
+    function hideWaitErr() { waitErr.classList.remove('visible'); waitErr.textContent = ''; }
 
-    function renderMessages(messages) {
-      body.querySelectorAll('.thread-msg').forEach((el) => el.remove());
-      (messages || []).forEach((m) => {
-        const div = document.createElement('div');
-        div.className = 'chat-bubble thread-msg ' + (m.from === 'admin' ? 'bot-bubble' : 'user-bubble');
-        if (m.from === 'admin') div.innerHTML = linkifyBr(m.text);
-        else div.textContent = m.text;
-        body.appendChild(div);
-      });
-      body.scrollTop = body.scrollHeight;
+    function showWaitingUI() {
+      formWrap.style.display = 'none';
+      waitWrap.style.display = 'block';
+      hideWaitErr();
     }
-
-    function addNotice(text, cls) {
-      const div = document.createElement('div');
-      div.className = 'chat-bubble thread-msg ' + cls;
-      div.textContent = text;
-      body.appendChild(div);
-      body.scrollTop = body.scrollHeight;
+    function showFormUI() {
+      waitWrap.style.display = 'none';
+      formWrap.style.display = 'block';
+      hideFormErr();
     }
 
-    async function pullMessages() {
-      if (!threadId || !guestToken || !BACKEND_URL) return;
+    function clearPendingLs() {
+      regId = '';
+      pendingToken = '';
+      localStorage.removeItem(LS_ID);
+      localStorage.removeItem(LS_TOK);
+      localStorage.removeItem(LS_USER);
+    }
+
+    function stopPoll() {
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    }
+
+    async function pollStatus() {
+      if (!regId || !pendingToken || !BACKEND_URL) return;
       try {
-        const res = await fetch(BACKEND_URL + '/api/join-thread/' + encodeURIComponent(threadId) + '/messages?guestToken=' + encodeURIComponent(guestToken));
+        const res = await fetch(BACKEND_URL + '/api/register-pending/' + encodeURIComponent(regId) + '/status?pendingToken=' + encodeURIComponent(pendingToken));
         if (!res.ok) return;
         const d = await res.json();
-        const msgs = d.messages || [];
-        const fp = JSON.stringify(msgs);
-        if (fp !== lastFp) {
-          lastFp = fp;
-          renderMessages(msgs);
+        if (d.status === 'approved' && d.token && d.user) {
+          stopPoll();
+          clearPendingLs();
+          authToken = d.token;
+          currentUser = d.user;
+          localStorage.setItem('sf_token', authToken);
+          screen.style.display = 'none';
+          enterApp();
+          return;
         }
-        if (d.status !== 'pending') {
-          input.disabled = true;
-          btn.disabled = true;
-          if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+        if (d.status === 'denied') {
+          stopPoll();
+          clearPendingLs();
+          showFormUI();
+          nameEl.value = ''; userEl.value = ''; passEl.value = '';
+          showFormErr('Your request was not approved. You can submit again with a different username if you like.');
+          return;
+        }
+        if (d.status === 'ready_sign_in') {
+          stopPoll();
+          const savedUser = localStorage.getItem(LS_USER) || '';
+          clearPendingLs();
+          screen.style.display = 'none';
+          authScreen.style.display = '';
+          authUsername.value = savedUser;
+          showAuthError('You were already approved. Sign in with the username and password you chose.');
         }
       } catch { /* ignore */ }
     }
 
-    function startPolling() {
-      if (pollTimer) clearInterval(pollTimer);
-      pollTimer = setInterval(pullMessages, 4000);
+    function startPoll() {
+      stopPoll();
+      pollTimer = setInterval(pollStatus, 3500);
+      pollStatus();
     }
 
-    async function handleSend() {
-      const val = input.value.trim();
-      if (!val) return;
-      if (!BACKEND_URL) {
-        addNotice('Server is not configured for join chat.', 'error-notice');
-        return;
-      }
-      input.value = '';
-      btn.disabled = true;
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      hideFormErr();
+      if (!BACKEND_URL) { showFormErr('Server is not configured.'); return; }
+
+      const name = nameEl.value.trim();
+      const username = userEl.value.trim().toLowerCase();
+      const password = passEl.value;
+      if (!name || !username || !password) { showFormErr('Please fill in all fields.'); return; }
+      if (username.length < 2) { showFormErr('Username must be at least 2 characters.'); return; }
+      if (password.length < 3) { showFormErr('Password must be at least 3 characters.'); return; }
 
       try {
-        if (!threadId) {
-          const res = await fetch(BACKEND_URL + '/api/join-thread/start', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: val }),
-          });
-          const d = await res.json();
-          if (!res.ok) {
-            addNotice('❌ ' + (d.error || 'Could not start chat.'), 'error-notice');
-            btn.disabled = false;
-            input.focus();
-            return;
-          }
-          threadId = d.id;
-          guestToken = d.guestToken;
-          localStorage.setItem(LS_ID, threadId);
-          localStorage.setItem(LS_TOK, guestToken);
-          lastFp = '';
-          await pullMessages();
-          addNotice('✅ Connected. Keep this page open — an admin will reply here.', 'sent-notice');
-          startPolling();
-        } else {
-          const res = await fetch(BACKEND_URL + '/api/join-thread/' + encodeURIComponent(threadId) + '/guest-message', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ guestToken, text: val }),
-          });
-          const d = await res.json();
-          if (!res.ok) {
-            addNotice('❌ ' + (d.error || 'Could not send.'), 'error-notice');
-          } else {
-            await pullMessages();
-          }
-        }
-      } catch {
-        addNotice('❌ Could not reach the server.', 'error-notice');
-      }
-      btn.disabled = false;
-      input.focus();
+        const res = await fetch(BACKEND_URL + '/api/register-request', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, username, password }),
+        });
+        const d = await res.json();
+        if (!res.ok) { showFormErr(d.error || 'Something went wrong.'); return; }
+        regId = d.id;
+        pendingToken = d.pendingToken;
+        localStorage.setItem(LS_ID, regId);
+        localStorage.setItem(LS_TOK, pendingToken);
+        localStorage.setItem(LS_USER, username);
+        showWaitingUI();
+        startPoll();
+      } catch { showFormErr('Could not reach the server.'); }
+    });
+
+    function openSignIn() {
+      stopPoll();
+      screen.style.display = 'none';
+      authScreen.style.display = '';
     }
 
-    function resetThread() {
-      if (pollTimer) clearInterval(pollTimer);
-      pollTimer = null;
-      threadId = '';
-      guestToken = '';
-      lastFp = '';
-      localStorage.removeItem(LS_ID);
-      localStorage.removeItem(LS_TOK);
-      body.querySelectorAll('.thread-msg').forEach((el) => el.remove());
-      input.disabled = false;
-      btn.disabled = false;
-      input.placeholder = 'Type here…';
-      input.focus();
-    }
-
-    btn.addEventListener('click', () => { handleSend(); });
-    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); handleSend(); } });
-
-    const newThreadLink = $('#chatNewThreadLink');
-    if (newThreadLink) newThreadLink.addEventListener('click', (e) => {
+    $('#pendingRegToSignIn').addEventListener('click', (e) => { e.preventDefault(); openSignIn(); });
+    $('#pendingRegWaitToSignIn').addEventListener('click', (e) => { e.preventDefault(); stopPoll(); clearPendingLs(); showFormUI(); openSignIn(); });
+    $('#pendingRegCancelWait').addEventListener('click', (e) => {
       e.preventDefault();
-      if (threadId && !confirm('Start a new chat? This clears the current conversation on this device.')) return;
-      resetThread();
+      stopPoll();
+      clearPendingLs();
+      showFormUI();
+      nameEl.value = ''; userEl.value = ''; passEl.value = '';
     });
 
-    $('#backToLoginLink').addEventListener('click', (e) => {
+    $('#goToPendingRegLink').addEventListener('click', (e) => {
       e.preventDefault();
-      $('#joinRequestScreen').style.display = 'none';
-      $('#authScreen').style.display = '';
-    });
-    $('#goToJoinLink').addEventListener('click', (e) => {
-      e.preventDefault();
-      $('#authScreen').style.display = 'none';
-      $('#joinRequestScreen').style.display = '';
+      authScreen.style.display = 'none';
+      screen.style.display = '';
+      showFormUI();
     });
 
-    if (threadId && guestToken && BACKEND_URL) {
-      pullMessages().then(() => { startPolling(); });
+    if (regId && pendingToken && BACKEND_URL && !urlParams.get('invite')) {
+      showWaitingUI();
+      startPoll();
     }
   }());
 
