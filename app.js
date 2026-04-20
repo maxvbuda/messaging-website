@@ -69,6 +69,50 @@
   let activeThreadMsgId = null;
   let socket = null;
 
+  // ── Notification sound (Web Audio; unlocked after first user gesture) ──
+  let sfxCtx = null;
+  let sfxUnlockBound = false;
+
+  function bindNotificationAudioUnlock() {
+    if (sfxUnlockBound) return;
+    sfxUnlockBound = true;
+    const unlock = () => {
+      try {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return;
+        if (!sfxCtx) sfxCtx = new Ctx();
+        if (sfxCtx.state === 'suspended') sfxCtx.resume();
+      } catch { /* ignore */ }
+    };
+    document.addEventListener('pointerdown', unlock, { capture: true });
+    document.addEventListener('keydown', unlock, { capture: true });
+  }
+
+  function playNotificationSound() {
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      if (!sfxCtx) sfxCtx = new Ctx();
+      const ctx = sfxCtx;
+      if (ctx.state !== 'running') return;
+
+      const t0 = ctx.currentTime;
+      const g = ctx.createGain();
+      g.connect(ctx.destination);
+      g.gain.setValueAtTime(0, t0);
+      g.gain.linearRampToValueAtTime(0.11, t0 + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0008, t0 + 0.2);
+
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(880, t0);
+      osc.frequency.exponentialRampToValueAtTime(1320, t0 + 0.09);
+      osc.connect(g);
+      osc.start(t0);
+      osc.stop(t0 + 0.18);
+    } catch { /* ignore */ }
+  }
+
   // ── localStorage fallback (when no server) ──
   function lsLoad(key, fb) { try { return JSON.parse(localStorage.getItem(key)) || fb; } catch { return fb; } }
   function lsSave(key, d) { localStorage.setItem(key, JSON.stringify(d)); }
@@ -348,6 +392,7 @@
 
     authScreen.style.display = 'none';
     appWrapper.style.display = 'flex';
+    bindNotificationAudioUnlock();
     renderAll();
     messageInput.focus();
   }
@@ -383,8 +428,22 @@
       if (useServer) return;
       const { type, payload, senderId } = e.data;
       if (senderId === (currentUser && currentUser.id)) return;
-      if (type === 'new_message' && payload.channelId === activeChannelId) { messages = lsGetAllMessages(); renderMessages(); }
-      if (type === 'thread_reply' && payload.channelId === activeChannelId) { messages = lsGetAllMessages(); renderMessages(); if (activeThreadMsgId === payload.parentMsgId) renderThread(payload.parentMsgId); }
+      if (type === 'new_message' && payload.channelId === activeChannelId) {
+        messages = lsGetAllMessages();
+        const ch = messages[activeChannelId] || [];
+        const last = ch[ch.length - 1];
+        if (last && last.userId && currentUser && last.userId !== currentUser.id) playNotificationSound();
+        renderMessages();
+      }
+      if (type === 'thread_reply' && payload.channelId === activeChannelId) {
+        messages = lsGetAllMessages();
+        const parent = (messages[activeChannelId] || []).find(m => m.id === payload.parentMsgId);
+        const reps = parent && parent.threadReplies;
+        const last = reps && reps[reps.length - 1];
+        if (last && last.userId && currentUser && last.userId !== currentUser.id) playNotificationSound();
+        renderMessages();
+        if (activeThreadMsgId === payload.parentMsgId) renderThread(payload.parentMsgId);
+      }
       if (type === 'message_deleted' && payload.channelId === activeChannelId) { messages = lsGetAllMessages(); renderMessages(); }
       if (type === 'reaction' && payload.channelId === activeChannelId) { messages = lsGetAllMessages(); renderMessages(); }
       if (type === 'new_channel') { channels = lsGetChannels(); renderChannelList(); }
@@ -408,14 +467,18 @@
 
     socket.on('new_message', ({ channelId, message }) => {
       if (!messages[channelId]) messages[channelId] = [];
-      if (!messages[channelId].find(m => m.id === message.id)) messages[channelId].push(message);
+      if (messages[channelId].find(m => m.id === message.id)) return;
+      messages[channelId].push(message);
+      if (currentUser && message.userId && message.userId !== currentUser.id) playNotificationSound();
       if (channelId === activeChannelId) renderMessages();
     });
     socket.on('thread_reply', ({ channelId, parentMsgId, reply }) => {
       const msgs = messages[channelId]; if (!msgs) return;
       const p = msgs.find(m => m.id === parentMsgId); if (!p) return;
       if (!p.threadReplies) p.threadReplies = [];
-      if (!p.threadReplies.find(r => r.id === reply.id)) p.threadReplies.push(reply);
+      if (p.threadReplies.find(r => r.id === reply.id)) return;
+      p.threadReplies.push(reply);
+      if (currentUser && reply.userId && reply.userId !== currentUser.id) playNotificationSound();
       if (channelId === activeChannelId) { renderMessages(); if (activeThreadMsgId === parentMsgId) renderThread(parentMsgId); }
     });
     socket.on('reaction_updated', ({ channelId, msgId, reactions }) => {
