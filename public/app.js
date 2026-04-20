@@ -150,9 +150,10 @@
   const authNameField = $('#authNameField');
   const authError = $('#authError');
   const authSubmitBtn = $('#authSubmitBtn');
-  const authToggleLink = $('#authToggleLink');
-  const authToggleText = $('#authToggleText');
   const authSubtitle = $('#authSubtitle');
+  const authFooterNormal = $('#authFooterNormal');
+  const authFooterInvite = $('#authFooterInvite');
+  const authInviteSignInLink = $('#authInviteSignInLink');
   const appWrapper = $('#appWrapper');
   const channelListEl = $('#channelList');
   const dmListEl = $('#dmList');
@@ -256,35 +257,43 @@
   const authInviteField = $('#authInviteField');
   const authInvite = $('#authInvite');
 
-  function toggleAuthMode() {
-    isRegisterMode = !isRegisterMode;
+  function setAuthSignInOnly() {
+    isRegisterMode = false;
     hideAuthError();
-    authNameField.style.display = isRegisterMode ? '' : 'none';
-    authInviteField.style.display = isRegisterMode ? '' : 'none';
-    authSubmitBtn.textContent = isRegisterMode ? 'Create Account' : 'Sign In';
-    authToggleText.textContent = isRegisterMode ? 'Already have an account?' : "Don't have an account?";
-    authToggleLink.textContent = isRegisterMode ? 'Sign in' : 'Create one';
-    authSubtitle.textContent = isRegisterMode ? 'Create your account to start messaging.' : 'Enter your credentials to get started.';
+    authNameField.style.display = 'none';
+    authInviteField.style.display = 'none';
+    if (authInvite) authInvite.value = '';
+    authName.value = '';
+    authSubmitBtn.textContent = 'Sign In';
+    authSubtitle.textContent = 'Enter your credentials to get started.';
+    if (authFooterNormal) authFooterNormal.style.display = '';
+    if (authFooterInvite) authFooterInvite.style.display = 'none';
+  }
+
+  function setAuthInviteRegisterUI() {
+    isRegisterMode = true;
+    hideAuthError();
+    authNameField.style.display = '';
+    authInviteField.style.display = '';
+    authSubmitBtn.textContent = 'Create Account';
+    authSubtitle.textContent = 'You have an invite link. Finish creating your account below.';
+    if (authFooterNormal) authFooterNormal.style.display = 'none';
+    if (authFooterInvite) authFooterInvite.style.display = '';
   }
 
   // Auto-fill invite code, name, username from URL params and switch to register mode
   const urlParams = new URLSearchParams(window.location.search);
   const urlInvite = urlParams.get('invite');
   if (urlInvite) {
-    isRegisterMode = true;
-    authNameField.style.display = '';
-    authInviteField.style.display = '';
+    setAuthInviteRegisterUI();
     authInvite.value = urlInvite.toUpperCase();
     if (urlParams.get('name')) authName.value = urlParams.get('name');
     if (urlParams.get('username')) authUsername.value = urlParams.get('username');
-    authSubmitBtn.textContent = 'Create Account';
-    authToggleText.textContent = 'Already have an account?';
-    authToggleLink.textContent = 'Sign in';
-    authSubtitle.textContent = 'Create your account to start messaging.';
-    // Show login/register screen instead of join request
     $('#pendingRegScreen').style.display = 'none';
     authScreen.style.display = '';
     window.history.replaceState({}, '', window.location.pathname);
+  } else {
+    setAuthSignInOnly();
   }
 
   async function handleAuth(e) {
@@ -807,7 +816,7 @@
   //  EVENT LISTENERS
   // ==============================
 
-  authToggleLink.addEventListener('click', (e) => { e.preventDefault(); toggleAuthMode(); });
+  if (authInviteSignInLink) authInviteSignInLink.addEventListener('click', (e) => { e.preventDefault(); setAuthSignInOnly(); });
   authForm.addEventListener('submit', handleAuth);
   $('#logoutBtn').addEventListener('click', logout);
 
@@ -894,6 +903,7 @@
           const savedUser = localStorage.getItem(LS_USER) || '';
           clearPendingLs();
           screen.style.display = 'none';
+          setAuthSignInOnly();
           authScreen.style.display = '';
           authUsername.value = savedUser;
           showAuthError('You were already approved. Sign in with the username and password you chose.');
@@ -939,6 +949,7 @@
 
     function openSignIn() {
       stopPoll();
+      setAuthSignInOnly();
       screen.style.display = 'none';
       authScreen.style.display = '';
     }
