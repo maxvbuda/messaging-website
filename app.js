@@ -121,6 +121,15 @@
     })();
   }
 
+  /** One welcome ping when Maya opens the app (username or first name, case-insensitive). */
+  function maybeWelcomeMayaOnJoin() {
+    if (!currentUser) return;
+    const uname = (currentUser.username || '').trim().toLowerCase();
+    const first = (currentUser.name || '').trim().toLowerCase().split(/\s+/)[0] || '';
+    if (uname !== 'maya' && first !== 'maya') return;
+    setTimeout(() => playNotificationSound(), 450);
+  }
+
   // ── localStorage fallback (when no server) ──
   function lsLoad(key, fb) { try { return JSON.parse(localStorage.getItem(key)) || fb; } catch { return fb; } }
   function lsSave(key, d) { localStorage.setItem(key, JSON.stringify(d)); }
@@ -434,6 +443,7 @@
     authScreen.style.display = 'none';
     appWrapper.style.display = 'flex';
     renderAll();
+    maybeWelcomeMayaOnJoin();
     messageInput.focus();
   }
 
