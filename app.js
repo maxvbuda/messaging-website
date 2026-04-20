@@ -1,5 +1,5 @@
 /* ========================================
-   SlackFlow — Client
+   SlackFlow 2 — Client
    Connects to remote backend via Socket.IO.
    Default server URL is set in DEFAULT_SERVER_URL (workspaces block).
    ======================================== */
@@ -89,7 +89,7 @@
 
   function channelDisplayName(channelId) {
     const ch = channels.find(c => c.id === channelId);
-    if (!ch) return 'SlackFlow';
+    if (!ch) return 'SlackFlow 2';
     return channelId.startsWith('dm_') ? ch.name : '#' + ch.name;
   }
 
@@ -217,7 +217,7 @@
   function lsSave(key, d) { localStorage.setItem(key, JSON.stringify(d)); }
 
   let bc;
-  try { bc = new BroadcastChannel('slackflow_sync'); } catch { bc = null; }
+  try { bc = new BroadcastChannel('slackflow2_sync'); } catch { bc = null; }
   function broadcast(type, payload) {
     if (bc && !inServerMode()) bc.postMessage({ type, payload, senderId: currentUser ? currentUser.id : null });
   }
@@ -263,7 +263,7 @@
     const id = 'ws_default';
     const baseUrl = normalizeServerUrl(DEFAULT_SERVER_URL);
     const state = {
-      list: [{ id, label: 'SlackFlow HQ', url: baseUrl, token: baseUrl ? (legacyTok || null) : null }],
+      list: [{ id, label: 'SlackFlow 2', url: baseUrl, token: baseUrl ? (legacyTok || null) : null }],
       activeId: id,
     };
     localStorage.setItem(WORKSPACES_LS, JSON.stringify(state));
@@ -338,7 +338,7 @@
     const el = $('#sidebarWorkspaceTitle');
     if (!el) return;
     const w = activeWorkspace();
-    el.textContent = w ? w.label : 'SlackFlow';
+    el.textContent = w ? w.label : 'SlackFlow 2';
   }
 
   function switchWorkspace(wsId) {
@@ -370,12 +370,18 @@
     }
   }
 
+  function sameServerDefaultUrl() {
+    const u = backUrl();
+    if (u) return u;
+    return normalizeServerUrl(DEFAULT_SERVER_URL);
+  }
+
   function openAddWorkspaceModal() {
     const lab = $('#newWorkspaceLabel');
     const u = $('#newWorkspaceUrl');
     const err = $('#addWorkspaceErr');
     if (lab) lab.value = '';
-    if (u) u.value = '';
+    if (u) u.value = sameServerDefaultUrl();
     if (err) { err.textContent = ''; err.classList.remove('visible'); }
     openModal('addWorkspaceModal');
   }
@@ -384,8 +390,9 @@
     const labIn = ($('#newWorkspaceLabel') && $('#newWorkspaceLabel').value.trim()) || '';
     let urlIn = ($('#newWorkspaceUrl') && $('#newWorkspaceUrl').value.trim()) || '';
     const err = $('#addWorkspaceErr');
+    if (!urlIn) urlIn = sameServerDefaultUrl();
     if (!urlIn) {
-      if (err) { err.textContent = 'Enter a server URL.'; err.classList.add('visible'); }
+      if (err) { err.textContent = 'Enter a server URL (no default server is configured).'; err.classList.add('visible'); }
       return;
     }
     if (!/^https?:\/\//i.test(urlIn)) urlIn = 'https://' + urlIn;

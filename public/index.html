@@ -6,7 +6,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#0f0f13">
-  <title>SlackFlow — Team Messaging</title>
+  <title>SlackFlow 2 — Team Messaging</title>
   <link rel="stylesheet" href="styles.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700;900&display=swap" rel="stylesheet">
@@ -24,8 +24,8 @@
   <!-- ============ LOGIN SCREEN (hidden by default) ============ -->
   <div class="auth-screen" id="authScreen" style="display:none">
     <div class="auth-card">
-      <div class="auth-logo">SF</div>
-      <h1 class="auth-title">Sign in to <strong>SlackFlow</strong></h1>
+      <div class="auth-logo">S2</div>
+      <h1 class="auth-title">Sign in to <strong>SlackFlow 2</strong></h1>
       <p class="auth-subtitle" id="authSubtitle">Enter your credentials to get started.</p>
 
       <div class="auth-error" id="authError"></div>
@@ -62,8 +62,8 @@
   <!-- ============ REQUEST ACCOUNT (default) — same fields as create account; auto sign-in when approved ============ -->
   <div class="auth-screen" id="pendingRegScreen" style="z-index:600">
     <div class="auth-card" id="pendingRegFormWrap">
-      <div class="auth-logo">SF</div>
-      <h1 class="auth-title">Request a <strong>SlackFlow</strong> account</h1>
+      <div class="auth-logo">S2</div>
+      <h1 class="auth-title">Request a <strong>SlackFlow 2</strong> account</h1>
       <p class="auth-subtitle" style="text-align:left">Create the username and password you want. An admin will approve your request. <strong>Keep this page open</strong> — when you are approved, you will be <strong>signed in automatically</strong> on this device (no invite link needed).</p>
 
       <div class="auth-error" id="pendingRegError"></div>
@@ -90,7 +90,7 @@
     </div>
 
     <div class="auth-card" id="pendingRegWaitWrap" style="display:none;max-width:420px">
-      <div class="auth-logo">SF</div>
+      <div class="auth-logo">S2</div>
       <h1 class="auth-title">Waiting for <strong>approval</strong></h1>
       <p class="auth-subtitle" style="text-align:left">Your request was sent. <strong>Do not close this tab.</strong> When an admin approves you, this page will sign you in automatically. You can also leave the tab open in the background.</p>
       <div class="auth-error" id="pendingRegWaitErr"></div>
@@ -108,7 +108,7 @@
     <!-- Channel Sidebar -->
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-header">
-        <h1 class="sidebar-title" id="sidebarWorkspaceTitle">SlackFlow HQ</h1>
+        <h1 class="sidebar-title" id="sidebarWorkspaceTitle">SlackFlow 2</h1>
         <button class="btn-icon" id="logoutBtn" title="Sign Out">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
         </button>
@@ -238,11 +238,11 @@
           </button>
         </div>
         <div class="modal-body">
-          <p class="modal-hint" style="margin:0 0 14px;font-size:13px;color:var(--text-muted);text-align:left">Connect to another SlackFlow server (for example a staging deployment). You will sign in on that server next.</p>
+          <p class="modal-hint" style="margin:0 0 14px;font-size:13px;color:var(--text-muted);text-align:left">Add another sign-in on the same deployment (for example a second account). The server URL is filled in for you; change it only if you need a different host.</p>
           <label class="form-label">Display name</label>
-          <input type="text" id="newWorkspaceLabel" class="form-input" placeholder="e.g. Staging">
-          <label class="form-label">Server URL</label>
-          <input type="url" id="newWorkspaceUrl" class="form-input" placeholder="https://your-server.onrender.com">
+          <input type="text" id="newWorkspaceLabel" class="form-input" placeholder="e.g. Work account">
+          <label class="form-label">Server URL <span class="optional">(optional)</span></label>
+          <input type="url" id="newWorkspaceUrl" class="form-input" placeholder="Same as current server if left blank">
           <div class="auth-error" id="addWorkspaceErr" style="margin-top:10px"></div>
         </div>
         <div class="modal-footer">
