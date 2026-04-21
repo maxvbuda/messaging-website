@@ -320,6 +320,46 @@
     return s.slice(0, 2).toUpperCase();
   }
 
+  function removeWorkspaceFromDevice(wsId) {
+    if (wsState.list.length < 2) return;
+    const w = wsState.list.find(x => x.id === wsId);
+    if (!w) return;
+    const label = w.label || 'This workspace';
+    if (!confirm(`Remove "${label}" from this browser? Its saved sign-in on this device will be cleared.`)) return;
+    const wasActive = wsState.activeId === wsId;
+    wsState.list = wsState.list.filter(x => x.id !== wsId);
+    if (wasActive) {
+      wsState.activeId = wsState.list[0].id;
+      saveWsState();
+      if (socket) { socket.disconnect(); socket = null; }
+      currentUser = null;
+      users = []; channels = []; messages = {};
+      activeChannelId = 'c_general';
+      activeThreadMsgId = null;
+      threadPanel.classList.remove('open');
+      appWrapper.style.display = 'none';
+      const nw = activeWorkspace();
+      renderWorkspaceRail();
+      renderSidebarWorkspaceTitle();
+      if (nw && nw.token) {
+        enterApp();
+      } else {
+        const p = $('#pendingRegScreen');
+        if (p) p.style.display = 'none';
+        authScreen.style.display = '';
+        setAuthSignInOnly();
+        hideAuthError();
+        authUsername.value = '';
+        authPassword.value = '';
+        authName.value = '';
+        renderRailAvatar();
+      }
+    } else {
+      saveWsState();
+      renderWorkspaceRail();
+    }
+  }
+
   function renderWorkspaceRail() {
     const wrap = $('#workspaceRailIcons');
     const aside = $('#workspaceRailAside');
@@ -331,14 +371,23 @@
     }
     aside.style.display = '';
     const activeId = wsState.activeId;
+    const canRemove = wsState.list.length > 1;
+    const removeHint = canRemove ? ' — Right-click to remove from this device' : '';
     const icons = wsState.list.map(w => {
       const active = w.id === activeId ? 'active' : '';
       const letters = workspaceIconLetters(w.label);
-      return `<div class="workspace-icon ${active}" data-ws-id="${escHtml(w.id)}" title="${escHtml(w.label)}">${escHtml(letters)}</div>`;
+      const t = escHtml(w.label) + escHtml(removeHint);
+      return `<div class="workspace-icon ${active}" data-ws-id="${escHtml(w.id)}" title="${t}">${escHtml(letters)}</div>`;
     }).join('');
     wrap.innerHTML = icons + '<div class="workspace-icon workspace-add" title="Add workspace">+</div>';
     wrap.querySelectorAll('[data-ws-id]').forEach(el => {
-      el.addEventListener('click', () => { switchWorkspace(el.getAttribute('data-ws-id')); });
+      const id = el.getAttribute('data-ws-id');
+      el.addEventListener('click', () => { switchWorkspace(id); });
+      el.addEventListener('contextmenu', (ev) => {
+        if (!canRemove) return;
+        ev.preventDefault();
+        removeWorkspaceFromDevice(id);
+      });
     });
     const addBtn = wrap.querySelector('.workspace-add');
     if (addBtn) addBtn.addEventListener('click', openAddWorkspaceModal);

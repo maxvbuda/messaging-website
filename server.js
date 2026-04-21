@@ -432,9 +432,17 @@ app.get('/api/data', async (req, res) => {
 
   const [users, channels, messages] = await Promise.all([getUsers(), getChannels(), getAllMessages()]);
 
+  const liveUsers = users.map(u => {
+    const pub = publicUser(u);
+    const sockets = activeSocketByUser.get(u.id) || 0;
+    const live = sockets > 0;
+    const status = u.id === user.id ? 'online' : (live ? 'online' : 'offline');
+    return { ...pub, status };
+  });
+
   res.json({
-    currentUser: publicUser(user),
-    users: users.map(publicUser),
+    currentUser: { ...publicUser(user), status: 'online' },
+    users: liveUsers,
     channels,
     messages,
   });
@@ -697,6 +705,7 @@ app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
   } else {
     memData.users = memData.users.filter(u => u.id !== id);
   }
+  activeSocketByUser.delete(id);
   io.emit('user_status', { userId: id, status: 'offline' });
   res.json({ ok: true });
 });
@@ -761,6 +770,8 @@ app.get('/api/files/:id', async (req, res) => {
 });
 
 // ── Socket.IO ──
+/** Live socket count per userId (authenticated connections). DB status can go stale; this is source of truth for "online". */
+const activeSocketByUser = new Map();
 
 io.on('connection', (socket) => {
   let currentUser = null;
@@ -773,7 +784,11 @@ io.on('connection', (socket) => {
       return;
     }
 
-    await updateUser(currentUser.id, { status: 'online' });
+    const uid = currentUser.id;
+    const prevSockets = activeSocketByUser.get(uid) || 0;
+    activeSocketByUser.set(uid, prevSockets + 1);
+
+    await updateUser(uid, { status: 'online' });
     currentUser.status = 'online';
 
     // Auto-join all non-DM channels so messages are always received
@@ -783,7 +798,9 @@ io.on('connection', (socket) => {
     } catch (e) { /* non-fatal */ }
 
     socket.emit('authenticated', { user: publicUser(currentUser) });
-    socket.broadcast.emit('user_status', { userId: currentUser.id, status: 'online' });
+    if (prevSockets === 0) {
+      socket.broadcast.emit('user_status', { userId: uid, status: 'online' });
+    }
   });
 
   socket.on('join_channel', (channelId) => { if (currentUser) socket.join(channelId); });
@@ -934,11 +951,18 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', async () => {
-    if (currentUser) {
+    if (!currentUser) return;
+    const uid = currentUser.id;
+    const prev = activeSocketByUser.get(uid) || 0;
+    const next = Math.max(0, prev - 1);
+    if (next === 0) {
+      activeSocketByUser.delete(uid);
       try {
-        await updateUser(currentUser.id, { status: 'offline' });
+        await updateUser(uid, { status: 'offline' });
       } catch (e) { console.error('DB error (disconnect):', e.message); }
-      io.emit('user_status', { userId: currentUser.id, status: 'offline' });
+      io.emit('user_status', { userId: uid, status: 'offline' });
+    } else {
+      activeSocketByUser.set(uid, next);
     }
   });
 });
