@@ -7,6 +7,7 @@ const { v4: uuidv4 } = require('uuid');
 const path = require('path');
 const { MongoClient } = require('mongodb');
 const multer = require('multer');
+const crypto = require('crypto');
 
 const app = express();
 const server = http.createServer(app);
@@ -448,6 +449,104 @@ app.get('/api/data', async (req, res) => {
   });
 });
 
+/** Extra STUN for ICE gathering (TURN still needed for hard NATs). */
+const DEFAULT_STUN_SERVERS = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'stun:stun.cloudflare.com:3478' },
+  { urls: 'stun:stun.relay.metered.ca:80' },
+];
+
+function iceServersFromEnvTurn() {
+  const turnUrls = (process.env.TURN_URLS || process.env.TURN_URL || '').trim();
+  const tu = (process.env.TURN_USERNAME || process.env.TURN_USER || '').trim();
+  const tp = (process.env.TURN_PASSWORD || process.env.TURN_CREDENTIAL || '').trim();
+  if (!turnUrls || !tu || !tp) return null;
+  const urls = turnUrls.split(',').map(s => s.trim()).filter(Boolean);
+  if (!urls.length) return null;
+  return { urls, username: tu, credential: tp };
+}
+
+/** Metered Open Relay “static auth” secret (public; see https://www.metered.ca/tools/openrelay). Ephemeral username per coturn REST/HMAC. */
+function openRelayMeteredEphemeral(userId) {
+  if (/^(1|true|yes)$/i.test(process.env.OPEN_RELAY_TURN_DISABLED || '')) return null;
+  const secret = (process.env.OPEN_RELAY_TURN_SECRET || 'openrelayprojectsecret').trim();
+  const host = (process.env.OPEN_RELAY_TURN_HOST || 'staticauth.openrelay.metered.ca').trim();
+  const ttl = parseInt(process.env.OPEN_RELAY_TURN_TTL_SEC || '86400', 10) || 86400;
+  const expiry = Math.floor(Date.now() / 1000) + ttl;
+  const username = `${expiry}:${String(userId || 'u').replace(/:/g, '_').slice(0, 120)}`;
+  const credential = crypto.createHmac('sha1', secret).update(username, 'utf8').digest('base64');
+  const urls = [
+    `turn:${host}:80`,
+    `turn:${host}:80?transport=tcp`,
+    `turn:${host}:443`,
+    `turn:${host}:443?transport=tcp`,
+    `turns:${host}:443?transport=tcp`,
+  ];
+  return { urls, username, credential };
+}
+
+async function fetchMeteredTurnCredentials() {
+  const apiKey = (process.env.METERED_TURN_API_KEY || '').trim();
+  const app = (process.env.METERED_TURN_APPNAME || process.env.METERED_TURN_APP || '').trim();
+  if (!apiKey || !app) return null;
+  const region = (process.env.METERED_TURN_REGION || '').trim();
+  let url = `https://${app}.metered.live/api/v1/turn/credentials?apiKey=${encodeURIComponent(apiKey)}`;
+  if (region) url += `&region=${encodeURIComponent(region)}`;
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 8000);
+  try {
+    const r = await fetch(url, { signal: ac.signal });
+    if (!r.ok) return null;
+    const data = await r.json();
+    return Array.isArray(data) && data.length ? data : null;
+  } catch (e) {
+    console.warn('METERED_TURN fetch failed:', e.message);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** WebRTC ICE: optional ICE_SERVERS_JSON override; else Metered API if configured; else Open Relay + STUN + optional env TURN. */
+async function buildIceServersForUser(userId) {
+  const raw = process.env.ICE_SERVERS_JSON;
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length) return parsed;
+    } catch (e) {
+      console.warn('ICE_SERVERS_JSON parse error:', e.message);
+    }
+  }
+
+  const metered = await fetchMeteredTurnCredentials();
+  if (metered) {
+    const envTurn = iceServersFromEnvTurn();
+    return envTurn ? [...metered, envTurn, ...DEFAULT_STUN_SERVERS] : [...metered, ...DEFAULT_STUN_SERVERS];
+  }
+
+  const servers = [...DEFAULT_STUN_SERVERS];
+  const envTurn = iceServersFromEnvTurn();
+  if (envTurn) servers.push(envTurn);
+  const openRelay = openRelayMeteredEphemeral(userId);
+  if (openRelay) servers.push(openRelay);
+  return servers;
+}
+
+app.get('/api/ice', async (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  const user = await getUserByToken(token);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    const iceServers = await buildIceServersForUser(user.id);
+    res.json({ iceServers });
+  } catch (e) {
+    console.error('buildIceServersForUser:', e);
+    res.json({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+  }
+});
+
 // ── Admin auth ──
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'slackflow-admin';
 const adminTokens = new Set();
@@ -773,6 +872,30 @@ app.get('/api/files/:id', async (req, res) => {
 /** Live socket count per userId (authenticated connections). DB status can go stale; this is source of truth for "online". */
 const activeSocketByUser = new Map();
 
+function parseDmPair(dmChannelId) {
+  if (!dmChannelId || typeof dmChannelId !== 'string' || !dmChannelId.startsWith('dm_')) return null;
+  const parts = dmChannelId.slice(3).split('_');
+  if (parts.length !== 2) return null;
+  return parts;
+}
+
+async function assertWebRtcRelay(channelId, fromUserId, toUserId) {
+  if (!fromUserId || !toUserId || fromUserId === toUserId) return false;
+  const ch = await findChannel({ id: channelId });
+  if (!ch) return false;
+  if (ch.isDM) {
+    const parts = parseDmPair(channelId);
+    if (!parts || !parts.includes(fromUserId) || !parts.includes(toUserId)) return false;
+    if (Array.isArray(ch.participants) && ch.participants.length) {
+      return ch.participants.includes(fromUserId) && ch.participants.includes(toUserId);
+    }
+    return true;
+  }
+  const u1 = await findUser({ id: fromUserId });
+  const u2 = await findUser({ id: toUserId });
+  return !!(u1 && u2);
+}
+
 io.on('connection', (socket) => {
   let currentUser = null;
 
@@ -790,6 +913,8 @@ io.on('connection', (socket) => {
 
     await updateUser(uid, { status: 'online' });
     currentUser.status = 'online';
+
+    socket.join('uid_' + uid);
 
     // Auto-join all non-DM channels so messages are always received
     try {
@@ -936,6 +1061,25 @@ io.on('connection', (socket) => {
   socket.on('typing', ({ channelId }) => {
     if (!currentUser) return;
     socket.to(channelId).emit('user_typing', { channelId, userId: currentUser.id, userName: currentUser.name });
+  });
+
+  socket.on('webrtc_relay', async ({ toUserId, channelId, dmChannelId, type, sdp, candidate }) => {
+    const chId = channelId || dmChannelId;
+    if (!currentUser || !toUserId || !chId) return;
+    const okTypes = new Set(['offer', 'answer', 'ice', 'hangup', 'decline']);
+    if (!okTypes.has(type)) return;
+    try {
+      if (!(await assertWebRtcRelay(chId, currentUser.id, toUserId))) return;
+    } catch {
+      return;
+    }
+    io.to('uid_' + toUserId).emit('webrtc_peer', {
+      fromUserId: currentUser.id,
+      channelId: chId,
+      type,
+      sdp: sdp || undefined,
+      candidate: candidate || undefined,
+    });
   });
 
   socket.on('update_profile', async ({ name, statusMsg }) => {

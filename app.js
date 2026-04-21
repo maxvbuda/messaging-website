@@ -59,6 +59,78 @@
   let activeThreadMsgId = null;
   let socket = null;
 
+  const DEFAULT_WEBRTC_STUN = [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun.cloudflare.com:3478' },
+    { urls: 'stun:stun.relay.metered.ca:80' },
+  ];
+  let webrtcIceConfig = { iceServers: DEFAULT_WEBRTC_STUN.map(s => ({ urls: s.urls })) };
+
+  async function openRelayEphemeralBrowser(userId) {
+    if (typeof crypto === 'undefined' || !crypto.subtle) return null;
+    const secret = 'openrelayprojectsecret';
+    const host = 'staticauth.openrelay.metered.ca';
+    const ttl = 86400;
+    const expiry = Math.floor(Date.now() / 1000) + ttl;
+    const username = `${expiry}:${String(userId || 'u').replace(/:/g, '_').slice(0, 120)}`;
+    const enc = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      'raw',
+      enc.encode(secret),
+      { name: 'HMAC', hash: 'SHA-1' },
+      false,
+      ['sign']
+    );
+    const sigBuf = await crypto.subtle.sign('HMAC', key, enc.encode(username));
+    const u8 = new Uint8Array(sigBuf);
+    let bin = '';
+    u8.forEach(b => { bin += String.fromCharCode(b); });
+    const credential = btoa(bin);
+    return {
+      urls: [
+        `turn:${host}:80`,
+        `turn:${host}:80?transport=tcp`,
+        `turn:${host}:443`,
+        `turn:${host}:443?transport=tcp`,
+        `turns:${host}:443?transport=tcp`,
+      ],
+      username,
+      credential,
+    };
+  }
+
+  async function refreshWebRtcIceConfig() {
+    if (!currentUser) return;
+    if (inServerMode()) {
+      if (!authToken) return;
+      try {
+        const res = await fetch(backUrl() + '/api/ice', { headers: { Authorization: 'Bearer ' + authToken } });
+        if (!res.ok) return;
+        const d = await res.json();
+        if (d.iceServers && Array.isArray(d.iceServers) && d.iceServers.length) {
+          webrtcIceConfig = { iceServers: d.iceServers };
+        }
+      } catch { /* keep default */ }
+      return;
+    }
+    try {
+      const iceServers = DEFAULT_WEBRTC_STUN.map(s => ({ urls: s.urls }));
+      const relay = await openRelayEphemeralBrowser(currentUser.id);
+      if (relay) iceServers.push(relay);
+      webrtcIceConfig = { iceServers };
+    } catch {
+      webrtcIceConfig = { iceServers: DEFAULT_WEBRTC_STUN.map(s => ({ urls: s.urls })) };
+    }
+  }
+  let videoPeerId = null;
+  let videoSignalChannelId = null;
+  let videoPc = null;
+  let videoLocalStream = null;
+  let videoIcePending = [];
+  let videoPendingOffer = null;
+  let videoMicMuted = false;
+
   // ── Notification sound (Web Audio; unlocked after first user gesture) ──
   let sfxCtx = null;
   let sfxUnlockBound = false;
@@ -331,6 +403,7 @@
     if (wasActive) {
       wsState.activeId = wsState.list[0].id;
       saveWsState();
+      endVideoCall(true);
       if (socket) { socket.disconnect(); socket = null; }
       currentUser = null;
       users = []; channels = []; messages = {};
@@ -403,6 +476,7 @@
   function switchWorkspace(wsId) {
     const w = wsState.list.find(x => x.id === wsId);
     if (!w || w.id === wsState.activeId) return;
+    endVideoCall(true);
     if (socket) { socket.disconnect(); socket = null; }
     wsState.activeId = w.id;
     saveWsState();
@@ -476,6 +550,7 @@
     wsState.list.push({ id, label, url: base, token: null });
     wsState.activeId = id;
     saveWsState();
+    endVideoCall(true);
     if (socket) { socket.disconnect(); socket = null; }
     currentUser = null;
     users = []; channels = []; messages = {};
@@ -653,6 +728,9 @@
     window.history.replaceState({}, '', window.location.pathname);
   } else {
     setAuthSignInOnly();
+    const p = $('#pendingRegScreen');
+    if (p) p.style.display = 'none';
+    authScreen.style.display = '';
   }
 
   async function handleAuth(e) {
@@ -713,6 +791,7 @@
   }
 
   function logout() {
+    endVideoCall(true);
     if (inServerMode()) {
       if (socket) socket.disconnect();
       socket = null;
@@ -730,8 +809,9 @@
     currentUser = null; authToken = null;
     users = []; channels = []; messages = {};
     appWrapper.style.display = 'none';
-    $('#pendingRegScreen').style.display = '';
-    $('#authScreen').style.display = 'none';
+    $('#pendingRegScreen').style.display = 'none';
+    $('#authScreen').style.display = '';
+    setAuthSignInOnly();
     authUsername.value = ''; authPassword.value = ''; authName.value = '';
     hideAuthError();
   }
@@ -775,6 +855,7 @@
       }
       currentUser = d.currentUser || currentUser;
       users = d.users; channels = d.channels; messages = d.messages;
+      await refreshWebRtcIceConfig();
       connectSocket();
     } else {
       users = lsGetUsers();
@@ -784,6 +865,7 @@
       if (u) { u.status = 'online'; u.lastSeen = Date.now(); lsSaveUsers(users); }
       startLocalHeartbeat();
       startLocalPolling();
+      await refreshWebRtcIceConfig();
     }
 
     authScreen.style.display = 'none';
@@ -866,6 +948,16 @@
       if (type === 'new_channel') { channels = lsGetChannels(); renderChannelList(); }
       if (['user_joined','user_online','user_offline'].includes(type)) { users = lsGetUsers(); renderDMList(); if (memberPanel.classList.contains('open')) renderMembers(); }
       if (type === 'typing' && payload.channelId === activeChannelId && payload.userName) showTyping(payload.userName);
+      if (type === 'webrtc_signal') {
+        if (!currentUser || !payload || payload.toUserId !== currentUser.id) return;
+        void handleWebrtcPeer({
+          fromUserId: payload.fromUserId,
+          channelId: payload.channelId,
+          type: payload.type,
+          sdp: payload.sdp,
+          candidate: payload.candidate,
+        });
+      }
     };
   }
 
@@ -873,13 +965,330 @@
   //  SOCKET.IO (server mode)
   // ==============================
 
+  function dmPeerUserId(channelId) {
+    if (!channelId || !channelId.startsWith('dm_') || !currentUser) return null;
+    const parts = channelId.slice(3).split('_');
+    if (parts.length !== 2) return null;
+    return parts[0] === currentUser.id ? parts[1] : parts[0];
+  }
+
+  function icePayload(candidate) {
+    if (!candidate) return null;
+    if (typeof candidate.toJSON === 'function') return candidate.toJSON();
+    return { candidate: candidate.candidate, sdpMid: candidate.sdpMid, sdpMLineIndex: candidate.sdpMLineIndex };
+  }
+
+  function relayVideo(toUserId, payload) {
+    const channelId = payload.channelId || activeChannelId;
+    if (!toUserId || !channelId) return;
+    if (inServerMode()) {
+      if (!socket || !socket.connected) return;
+      socket.emit('webrtc_relay', {
+        toUserId,
+        channelId,
+        type: payload.type,
+        sdp: payload.sdp,
+        candidate: payload.candidate,
+      });
+    } else {
+      if (!bc) return;
+      broadcast('webrtc_signal', {
+        toUserId,
+        channelId,
+        type: payload.type,
+        sdp: payload.sdp,
+        candidate: payload.candidate,
+        fromUserId: currentUser.id,
+      });
+    }
+  }
+
+  async function flushIceQueue(pc) {
+    const pending = videoIcePending.splice(0, videoIcePending.length);
+    for (const c of pending) {
+      try { await pc.addIceCandidate(c); } catch { /* ignore */ }
+    }
+  }
+
+  function endVideoCall(emitHangup) {
+    if (emitHangup && videoPeerId && videoSignalChannelId) {
+      relayVideo(videoPeerId, { channelId: videoSignalChannelId, type: 'hangup' });
+    }
+    if (videoPc) {
+      try {
+        videoPc.ontrack = null;
+        videoPc.onicecandidate = null;
+        videoPc.onconnectionstatechange = null;
+        videoPc.close();
+      } catch { /* ignore */ }
+      videoPc = null;
+    }
+    if (videoLocalStream) {
+      videoLocalStream.getTracks().forEach(t => { try { t.stop(); } catch { /* ignore */ } });
+      videoLocalStream = null;
+    }
+    videoIcePending = [];
+    videoPeerId = null;
+    videoSignalChannelId = null;
+    videoMicMuted = false;
+    const vl = $('#videoLocal');
+    const vr = $('#videoRemote');
+    if (vl) { try { vl.srcObject = null; } catch { /* ignore */ } }
+    if (vr) { try { vr.srcObject = null; } catch { /* ignore */ } }
+    $('#videoCallOverlay')?.classList.remove('open');
+    $('#videoIncomingModal')?.classList.remove('open');
+    $('#videoPickPeerModal')?.classList.remove('open');
+    const hint = $('#videoCallHint');
+    if (hint) hint.textContent = '';
+    const muteBtn = $('#videoToggleMute');
+    if (muteBtn) muteBtn.textContent = 'Mute mic';
+  }
+
+  function dismissIncomingOffer(declineRemote) {
+    const p = videoPendingOffer;
+    videoPendingOffer = null;
+    $('#videoIncomingModal')?.classList.remove('open');
+    if (declineRemote && p) {
+      const ch = p.channelId || p.dmChannelId;
+      if (ch) relayVideo(p.fromUserId, { channelId: ch, type: 'decline' });
+    }
+  }
+
+  async function acceptIncomingVideo() {
+    const po = videoPendingOffer;
+    if (!po) return;
+    const { fromUserId, sdp } = po;
+    const sigCh = po.channelId || po.dmChannelId;
+    videoPendingOffer = null;
+    $('#videoIncomingModal')?.classList.remove('open');
+    if (!sigCh) return;
+    if (activeChannelId !== sigCh) switchChannel(sigCh);
+    videoPeerId = fromUserId;
+    videoSignalChannelId = sigCh;
+    videoIcePending = [];
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    } catch {
+      relayVideo(fromUserId, { channelId: sigCh, type: 'decline' });
+      videoPeerId = null;
+      videoSignalChannelId = null;
+      return;
+    }
+    videoLocalStream = stream;
+    const localEl = $('#videoLocal');
+    const remoteEl = $('#videoRemote');
+    const overlay = $('#videoCallOverlay');
+    const hint = $('#videoCallHint');
+    if (localEl) localEl.srcObject = stream;
+    if (remoteEl) remoteEl.srcObject = null;
+    if (hint) hint.textContent = '';
+    if (overlay) overlay.classList.add('open');
+    videoMicMuted = false;
+    const muteBtn = $('#videoToggleMute');
+    if (muteBtn) muteBtn.textContent = 'Mute mic';
+
+    const pc = new RTCPeerConnection(webrtcIceConfig);
+    videoPc = pc;
+    pc.ontrack = (e) => {
+      const r = $('#videoRemote');
+      if (r && e.streams[0]) r.srcObject = e.streams[0];
+    };
+    pc.onicecandidate = (e) => {
+      if (e.candidate) relayVideo(fromUserId, { channelId: sigCh, type: 'ice', candidate: icePayload(e.candidate) });
+    };
+    pc.onconnectionstatechange = () => {
+      if (!videoPc || videoPc !== pc) return;
+      if (pc.connectionState === 'failed') endVideoCall(true);
+    };
+    stream.getTracks().forEach(t => pc.addTrack(t, stream));
+    try {
+      await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp }));
+      await flushIceQueue(pc);
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      relayVideo(fromUserId, { channelId: sigCh, type: 'answer', sdp: answer.sdp });
+    } catch (e) {
+      console.error(e);
+      endVideoCall(true);
+    }
+  }
+
+  function openVideoPeerPicker() {
+    const list = $('#videoPickPeerList');
+    if (!list) return;
+    const others = users.filter(u => u.id !== currentUser.id);
+    if (!others.length) {
+      list.innerHTML = '<p style="margin:0;color:var(--text-muted);font-size:13px;text-align:center">No one else is in this workspace.</p>';
+    } else {
+      list.innerHTML = others.map(u => `
+        <button type="button" class="video-pick-peer-btn" data-video-peer="${u.id.replace(/"/g, '')}">
+          <span class="dm-avatar" style="background:${colorFor(u.name)}">${initials(u.name)}</span>
+          <span class="video-pick-peer-name">${escHtml(u.name)}</span>
+          <span class="dm-status ${u.status === 'online' ? 'online' : 'offline'}"></span>
+        </button>`).join('');
+      list.querySelectorAll('[data-video-peer]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const id = btn.getAttribute('data-video-peer');
+          closeModal('videoPickPeerModal');
+          void startVideoCallWithPeer(id);
+        });
+      });
+    }
+    openModal('videoPickPeerModal');
+  }
+
+  function openVideoCallEntry() {
+    if (!currentUser) return;
+    if (inServerMode() && (!socket || !socket.connected)) return;
+    if (activeChannelId.startsWith('dm_')) {
+      const peer = dmPeerUserId(activeChannelId);
+      if (peer) void startVideoCallWithPeer(peer);
+      return;
+    }
+    openVideoPeerPicker();
+  }
+
+  async function startVideoCallWithPeer(peerId) {
+    if (!peerId || peerId === currentUser.id) return;
+    if (inServerMode() && (!socket || !socket.connected)) return;
+    if (videoPc || videoPendingOffer) return;
+    videoPeerId = peerId;
+    videoSignalChannelId = activeChannelId;
+    videoIcePending = [];
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    } catch {
+      videoPeerId = null;
+      videoSignalChannelId = null;
+      alert('Could not access camera or microphone.');
+      return;
+    }
+    videoLocalStream = stream;
+    const localEl = $('#videoLocal');
+    const remoteEl = $('#videoRemote');
+    const overlay = $('#videoCallOverlay');
+    const hint = $('#videoCallHint');
+    if (localEl) localEl.srcObject = stream;
+    if (remoteEl) remoteEl.srcObject = null;
+    if (hint) hint.textContent = 'Calling…';
+    if (overlay) overlay.classList.add('open');
+    videoMicMuted = false;
+    const muteBtn = $('#videoToggleMute');
+    if (muteBtn) muteBtn.textContent = 'Mute mic';
+
+    const sigCh = videoSignalChannelId;
+    const pc = new RTCPeerConnection(webrtcIceConfig);
+    videoPc = pc;
+    pc.ontrack = (e) => {
+      const r = $('#videoRemote');
+      if (r && e.streams[0]) {
+        r.srcObject = e.streams[0];
+        if (hint) hint.textContent = '';
+      }
+    };
+    pc.onicecandidate = (e) => {
+      if (e.candidate) relayVideo(peerId, { channelId: sigCh, type: 'ice', candidate: icePayload(e.candidate) });
+    };
+    pc.onconnectionstatechange = () => {
+      if (!videoPc || videoPc !== pc) return;
+      if (pc.connectionState === 'failed') endVideoCall(true);
+    };
+    stream.getTracks().forEach(t => pc.addTrack(t, stream));
+    try {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      relayVideo(peerId, { channelId: sigCh, type: 'offer', sdp: offer.sdp });
+    } catch (e) {
+      console.error(e);
+      endVideoCall(false);
+    }
+  }
+
+  function toggleVideoMic() {
+    if (!videoLocalStream) return;
+    videoMicMuted = !videoMicMuted;
+    videoLocalStream.getAudioTracks().forEach(t => { t.enabled = !videoMicMuted; });
+    const b = $('#videoToggleMute');
+    if (b) b.textContent = videoMicMuted ? 'Unmute mic' : 'Mute mic';
+  }
+
+  async function handleWebrtcPeer(payload) {
+    const channelId = payload && (payload.channelId || payload.dmChannelId);
+    const { fromUserId, type, sdp, candidate } = payload || {};
+    if (!currentUser || !fromUserId || fromUserId === currentUser.id || !channelId) return;
+
+    if (type === 'hangup') {
+      if (videoPeerId === fromUserId && videoSignalChannelId === channelId) endVideoCall(false);
+      if (videoPendingOffer && videoPendingOffer.fromUserId === fromUserId) {
+        const poCh = videoPendingOffer.channelId || videoPendingOffer.dmChannelId;
+        if (poCh === channelId) dismissIncomingOffer(false);
+      }
+      return;
+    }
+
+    if (type === 'decline') {
+      if (videoPc && videoPeerId === fromUserId && videoSignalChannelId === channelId) {
+        endVideoCall(false);
+        const h = $('#videoCallHint');
+        if (h) {
+          h.textContent = 'Call declined.';
+          setTimeout(() => { if (h) h.textContent = ''; }, 4000);
+        }
+      }
+      return;
+    }
+
+    if (type === 'ice' && candidate) {
+      const c = new RTCIceCandidate(candidate);
+      if (!videoPc || videoPeerId !== fromUserId || videoSignalChannelId !== channelId) return;
+      try {
+        if (!videoPc.remoteDescription) videoIcePending.push(c);
+        else await videoPc.addIceCandidate(c);
+      } catch { /* ignore */ }
+      return;
+    }
+
+    if (type === 'offer' && sdp) {
+      if (videoPc) {
+        relayVideo(fromUserId, { channelId, type: 'decline' });
+        return;
+      }
+      videoPendingOffer = { fromUserId, sdp, channelId };
+      const name = resolveUser(fromUserId).name;
+      const t = $('#videoIncomingTitle');
+      if (t) t.textContent = `${name} wants a video call`;
+      $('#videoIncomingModal')?.classList.add('open');
+      playNotificationSound();
+      return;
+    }
+
+    if (type === 'answer' && sdp) {
+      if (!videoPc || videoPeerId !== fromUserId || videoSignalChannelId !== channelId) return;
+      try {
+        await videoPc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp }));
+        await flushIceQueue(videoPc);
+        const h = $('#videoCallHint');
+        if (h) h.textContent = '';
+      } catch (e) {
+        console.error(e);
+        endVideoCall(false);
+      }
+    }
+  }
+
   function connectSocket() {
     if (!inServerMode()) return;
+    if (socket && socket.connected) endVideoCall(true);
     if (socket) socket.disconnect();
     socket = io(backUrl());
 
     socket.on('connect', () => { socket.emit('authenticate', authToken); });
-    socket.on('authenticated', () => { socket.emit('join_channel', activeChannelId); });
+    socket.on('authenticated', () => {
+      socket.emit('join_channel', activeChannelId);
+      renderMessages();
+    });
     socket.on('auth_error', () => { logout(); showAuthError('Session expired.'); });
 
     socket.on('new_message', ({ channelId, message }) => {
@@ -953,6 +1362,7 @@
     socket.on('user_typing', ({ channelId, userName }) => {
       if (channelId === activeChannelId) showTyping(userName);
     });
+    socket.on('webrtc_peer', (payload) => { void handleWebrtcPeer(payload); });
   }
 
   // ==============================
@@ -1055,6 +1465,13 @@
     if (!msgs.length && ch) html += `<div style="text-align:center;padding:40px 20px;color:var(--text-muted)">No messages yet. Be the first to say something!</div>`;
     messagesListEl.innerHTML = html;
     scrollToBottom();
+    const vBtn = $('#videoCallBtn');
+    if (vBtn) {
+      const canVideo = !!(currentUser && ch && users.some(u => u.id !== currentUser.id) && (
+        inServerMode() ? (socket && socket.connected) : true
+      ));
+      vBtn.style.display = canVideo ? '' : 'none';
+    }
   }
 
   function scrollToBottom() { requestAnimationFrame(() => { messagesContainer.scrollTop = messagesContainer.scrollHeight; }); }
@@ -1205,6 +1622,13 @@
   }
 
   function switchChannel(chId) {
+    if (videoPendingOffer) {
+      const poCh = videoPendingOffer.channelId || videoPendingOffer.dmChannelId;
+      if (poCh !== chId) dismissIncomingOffer(true);
+    }
+    if (videoSignalChannelId && videoSignalChannelId !== chId) {
+      endVideoCall(true);
+    }
     if (inServerMode() && socket) { socket.emit('leave_channel', activeChannelId); }
     activeChannelId = chId;
     if (inServerMode() && socket) { socket.emit('join_channel', chId); }
@@ -1258,6 +1682,12 @@
   if (authInviteSignInLink) authInviteSignInLink.addEventListener('click', (e) => { e.preventDefault(); setAuthSignInOnly(); });
   authForm.addEventListener('submit', handleAuth);
   $('#logoutBtn').addEventListener('click', logout);
+
+  $('#videoCallBtn')?.addEventListener('click', () => { openVideoCallEntry(); });
+  $('#videoCallHangup')?.addEventListener('click', () => endVideoCall(true));
+  $('#videoIncomingAccept')?.addEventListener('click', () => { void acceptIncomingVideo(); });
+  $('#videoIncomingDecline')?.addEventListener('click', () => dismissIncomingOffer(true));
+  $('#videoToggleMute')?.addEventListener('click', () => toggleVideoMic());
 
   // ---- Pending account request (no chat): submit credentials, poll, auto sign-in when approved ----
   (function initPendingRegistration() {
@@ -1415,6 +1845,8 @@
     });
 
     if (regId && pendingToken && backUrl() && !urlParams.get('invite')) {
+      screen.style.display = '';
+      authScreen.style.display = 'none';
       showWaitingUI();
       startPoll();
     }
