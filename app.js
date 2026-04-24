@@ -1467,10 +1467,8 @@
     scrollToBottom();
     const vBtn = $('#videoCallBtn');
     if (vBtn) {
-      const canVideo = !!(currentUser && ch && users.some(u => u.id !== currentUser.id) && (
-        inServerMode() ? (socket && socket.connected) : true
-      ));
-      vBtn.style.display = canVideo ? '' : 'none';
+      const canVideo = !!(currentUser && ch && (inServerMode() ? (socket && socket.connected) : true));
+      vBtn.style.display = canVideo ? 'flex' : 'none';
     }
   }
 

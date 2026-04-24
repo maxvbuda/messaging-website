@@ -1665,8 +1665,6 @@ body {
 /* ========================================
    DM video call (WebRTC)
    ======================================== */
-#videoCallBtn { display: none; }
-
 .video-incoming-modal {
   z-index: 850;
 }
