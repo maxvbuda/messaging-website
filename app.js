@@ -1143,21 +1143,26 @@
     ];
     for (const c of attempts) {
       try {
-        return await navigator.mediaDevices.getUserMedia(c);
+        const stream = await navigator.mediaDevices.getUserMedia(c);
+        if (c.audio === false) stream.__sfMediaWarning = 'Microphone unavailable. You joined with camera only.';
+        if (c.video === false) stream.__sfMediaWarning = 'Camera unavailable. You joined with microphone only.';
+        return stream;
       } catch { /* try next */ }
     }
-    throw new Error('getUserMedia failed');
+    const stream = new MediaStream();
+    stream.__sfMediaWarning = 'Camera and microphone unavailable. You can still receive the call.';
+    return stream;
   }
 
-  function showMediaPermissionError() {
-    const msg =
-      'Could not access your camera or microphone.\n\n' +
-      'To fix this:\n' +
-      '  1. Click the camera/lock icon in your browser address bar.\n' +
-      '  2. Set Camera and Microphone to "Allow".\n' +
-      '  3. Reload the page and try the call again.\n\n' +
-      '(You can still join with just audio if your camera is unavailable.)';
-    alert(msg);
+  function localMediaWarning(stream) {
+    return stream && stream.__sfMediaWarning ? stream.__sfMediaWarning : '';
+  }
+
+  function attachLocalTracksOrRecvOnly(pc, stream) {
+    const tracks = stream ? stream.getTracks() : [];
+    tracks.forEach(t => pc.addTrack(t, stream));
+    if (!tracks.some(t => t.kind === 'audio')) pc.addTransceiver('audio', { direction: 'recvonly' });
+    if (!tracks.some(t => t.kind === 'video')) pc.addTransceiver('video', { direction: 'recvonly' });
   }
 
   function wirePeerConnectionRemoteVideo(pc, hintEl) {
@@ -1250,11 +1255,8 @@
     try {
       stream = await acquireCallMedia();
     } catch {
-      relayVideo(fromUserId, { channelId: sigCh, type: 'decline' });
-      videoPeerId = null;
-      videoSignalChannelId = null;
-      showMediaPermissionError();
-      return;
+      stream = new MediaStream();
+      stream.__sfMediaWarning = 'Camera and microphone unavailable. You can still receive the call.';
     }
     videoLocalStream = stream;
     const localEl = $('#videoLocal');
@@ -1266,7 +1268,7 @@
       playVideoElement(localEl);
     }
     if (remoteEl) remoteEl.srcObject = null;
-    if (hint) hint.textContent = '';
+    if (hint) hint.textContent = localMediaWarning(stream);
     if (overlay) overlay.classList.add('open');
     videoMicMuted = false;
     const muteBtn = $('#videoToggleMute');
@@ -1365,11 +1367,8 @@
     try {
       stream = await acquireCallMedia();
     } catch {
-      videoPeerId = null;
-      videoSignalChannelId = null;
-      videoCallDialing = false;
-      showMediaPermissionError();
-      return;
+      stream = new MediaStream();
+      stream.__sfMediaWarning = 'Camera and microphone unavailable. You can still receive the call.';
     }
     videoLocalStream = stream;
     const localEl = $('#videoLocal');
@@ -1381,7 +1380,7 @@
       playVideoElement(localEl);
     }
     if (remoteEl) remoteEl.srcObject = null;
-    if (hint) hint.textContent = 'Calling…';
+    if (hint) hint.textContent = localMediaWarning(stream) || 'Calling…';
     if (overlay) overlay.classList.add('open');
     videoMicMuted = false;
     const muteBtn = $('#videoToggleMute');
@@ -1409,7 +1408,7 @@
         setTimeout(() => { if (videoPc === pc) endVideoCall(true); }, 2500);
       }
     };
-    stream.getTracks().forEach(t => pc.addTrack(t, stream));
+    attachLocalTracksOrRecvOnly(pc, stream);
     try {
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
