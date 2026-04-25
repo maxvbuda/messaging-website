@@ -130,10 +130,13 @@
   let videoIcePending = [];
   let videoPendingOffer = null;
   let videoMicMuted = false;
+  /** True while startVideoCallWithPeer is mid-flight (prevents double-tap / concurrent dial races). */
+  let videoCallDialing = false;
 
   // ── Notification sound (Web Audio; unlocked after first user gesture) ──
   let sfxCtx = null;
   let sfxUnlockBound = false;
+  let incomingCallRingTimer = null;
 
   function bindNotificationAudioUnlock() {
     if (sfxUnlockBound) return;
@@ -269,6 +272,92 @@
           return;
         }
         playBeepOnContext(ctx);
+      } catch {
+        buzzIfNoSound();
+      }
+    })();
+  }
+
+  function stopIncomingCallRing() {
+    if (incomingCallRingTimer != null) {
+      clearInterval(incomingCallRingTimer);
+      incomingCallRingTimer = null;
+    }
+  }
+
+  /**
+   * North-American wired-phone style ring (440 Hz + 480 Hz Bell spec),
+   * with light harmonics and a double-ring cadence (~1s on / ~0.35s gap / ~1s on, then pause).
+   */
+  function playRingBurstOnContext(ctx) {
+    const t0 = ctx.currentTime;
+    const peak = 0.11;
+    const attack = 0.032;
+    const release = 0.09;
+    const ringOn = 0.88;
+    const interRingGap = 0.28;
+
+    function ringSegment(start, dur) {
+      const master = ctx.createGain();
+      master.connect(ctx.destination);
+      const g = master.gain;
+      g.setValueAtTime(0, start);
+      g.linearRampToValueAtTime(peak, start + attack);
+      g.setValueAtTime(peak, start + dur - release);
+      g.exponentialRampToValueAtTime(0.0008, start + dur);
+
+      const bus = ctx.createGain();
+      bus.gain.value = 1;
+      bus.connect(master);
+
+      const freqs = [
+        [440, 1],
+        [480, 1],
+        [880, 0.14],
+        [960, 0.14],
+      ];
+      freqs.forEach(([hz, w]) => {
+        const o = ctx.createOscillator();
+        o.type = 'sine';
+        o.frequency.value = hz;
+        const gg = ctx.createGain();
+        gg.gain.value = w;
+        o.connect(gg);
+        gg.connect(bus);
+        o.start(start);
+        o.stop(start + dur);
+      });
+    }
+
+    ringSegment(t0, ringOn);
+    ringSegment(t0 + ringOn + interRingGap, ringOn);
+  }
+
+  function playIncomingCallRing() {
+    stopIncomingCallRing();
+    void (async () => {
+      try {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) {
+          buzzIfNoSound();
+          return;
+        }
+        if (!sfxCtx) sfxCtx = new Ctx();
+        const ctx = sfxCtx;
+        if (ctx.state === 'suspended') await ctx.resume().catch(() => {});
+        if (ctx.state !== 'running') {
+          buzzIfNoSound();
+          return;
+        }
+        const ringOnce = () => {
+          if (!videoPendingOffer) {
+            stopIncomingCallRing();
+            return;
+          }
+          playRingBurstOnContext(ctx);
+        };
+        ringOnce();
+        incomingCallRingTimer = setInterval(ringOnce, 4800);
       } catch {
         buzzIfNoSound();
       }
@@ -1010,7 +1099,52 @@
     }
   }
 
+  function updateVideoRemoteLabel() {
+    const el = $('#videoRemoteLabel');
+    if (!el) return;
+    el.textContent = videoPeerId ? resolveUser(videoPeerId).name : 'Participant';
+  }
+
+  async function acquireCallMedia() {
+    const attempts = [
+      { video: { facingMode: { ideal: 'user' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: true },
+      { video: { facingMode: { ideal: 'user' } }, audio: true },
+      { video: true, audio: true },
+    ];
+    for (const c of attempts) {
+      try {
+        return await navigator.mediaDevices.getUserMedia(c);
+      } catch { /* try next */ }
+    }
+    throw new Error('getUserMedia failed');
+  }
+
+  function wirePeerConnectionRemoteVideo(pc, hintEl) {
+    pc.ontrack = (e) => {
+      const r = $('#videoRemote');
+      if (!r) return;
+      if (e.streams && e.streams[0] && e.streams[0].getTracks().length > 0) {
+        r.srcObject = e.streams[0];
+      } else if (e.track) {
+        let ms = r.srcObject instanceof MediaStream ? r.srcObject : null;
+        if (!ms) ms = new MediaStream();
+        if (!ms.getTracks().some(t => t.id === e.track.id)) ms.addTrack(e.track);
+        r.srcObject = ms;
+      }
+      void r.play().catch(() => {});
+      if (hintEl) hintEl.textContent = '';
+    };
+  }
+
+  function playVideoElement(el) {
+    if (!el) return;
+    void el.play().catch(() => {});
+  }
+
   function endVideoCall(emitHangup) {
+    stopIncomingCallRing();
+    videoPendingOffer = null;
+    videoCallDialing = false;
     if (emitHangup && videoPeerId && videoSignalChannelId) {
       relayVideo(videoPeerId, { channelId: videoSignalChannelId, type: 'hangup' });
     }
@@ -1042,9 +1176,12 @@
     if (hint) hint.textContent = '';
     const muteBtn = $('#videoToggleMute');
     if (muteBtn) muteBtn.textContent = 'Mute mic';
+    const rLab = $('#videoRemoteLabel');
+    if (rLab) rLab.textContent = 'Participant';
   }
 
   function dismissIncomingOffer(declineRemote) {
+    stopIncomingCallRing();
     const p = videoPendingOffer;
     videoPendingOffer = null;
     $('#videoIncomingModal')?.classList.remove('open');
@@ -1055,6 +1192,7 @@
   }
 
   async function acceptIncomingVideo() {
+    stopIncomingCallRing();
     const po = videoPendingOffer;
     if (!po) return;
     const { fromUserId, sdp } = po;
@@ -1062,13 +1200,13 @@
     videoPendingOffer = null;
     $('#videoIncomingModal')?.classList.remove('open');
     if (!sigCh) return;
-    if (activeChannelId !== sigCh) switchChannel(sigCh);
     videoPeerId = fromUserId;
     videoSignalChannelId = sigCh;
+    if (activeChannelId !== sigCh) switchChannel(sigCh);
     videoIcePending = [];
     let stream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      stream = await acquireCallMedia();
     } catch {
       relayVideo(fromUserId, { channelId: sigCh, type: 'decline' });
       videoPeerId = null;
@@ -1080,20 +1218,21 @@
     const remoteEl = $('#videoRemote');
     const overlay = $('#videoCallOverlay');
     const hint = $('#videoCallHint');
-    if (localEl) localEl.srcObject = stream;
+    if (localEl) {
+      localEl.srcObject = stream;
+      playVideoElement(localEl);
+    }
     if (remoteEl) remoteEl.srcObject = null;
     if (hint) hint.textContent = '';
     if (overlay) overlay.classList.add('open');
     videoMicMuted = false;
     const muteBtn = $('#videoToggleMute');
     if (muteBtn) muteBtn.textContent = 'Mute mic';
+    updateVideoRemoteLabel();
 
     const pc = new RTCPeerConnection(webrtcIceConfig);
     videoPc = pc;
-    pc.ontrack = (e) => {
-      const r = $('#videoRemote');
-      if (r && e.streams[0]) r.srcObject = e.streams[0];
-    };
+    wirePeerConnectionRemoteVideo(pc, hint);
     pc.onicecandidate = (e) => {
       if (e.candidate) relayVideo(fromUserId, { channelId: sigCh, type: 'ice', candidate: icePayload(e.candidate) });
     };
@@ -1101,10 +1240,10 @@
       if (!videoPc || videoPc !== pc) return;
       if (pc.connectionState === 'failed') endVideoCall(true);
     };
-    stream.getTracks().forEach(t => pc.addTrack(t, stream));
     try {
       await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp }));
       await flushIceQueue(pc);
+      stream.getTracks().forEach(t => pc.addTrack(t, stream));
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       relayVideo(fromUserId, { channelId: sigCh, type: 'answer', sdp: answer.sdp });
@@ -1152,17 +1291,28 @@
   async function startVideoCallWithPeer(peerId) {
     if (!peerId || peerId === currentUser.id) return;
     if (inServerMode() && (!socket || !socket.connected)) return;
-    if (videoPc || videoPendingOffer) return;
+    if (videoPc || videoCallDialing) return;
+    if (videoPendingOffer) {
+      const incomingEl = $('#videoIncomingModal');
+      if (!incomingEl || !incomingEl.classList.contains('open')) {
+        videoPendingOffer = null;
+        stopIncomingCallRing();
+      } else {
+        return;
+      }
+    }
+    videoCallDialing = true;
     videoPeerId = peerId;
     videoSignalChannelId = activeChannelId;
     videoIcePending = [];
     let stream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      stream = await acquireCallMedia();
     } catch {
       videoPeerId = null;
       videoSignalChannelId = null;
       alert('Could not access camera or microphone.');
+      videoCallDialing = false;
       return;
     }
     videoLocalStream = stream;
@@ -1170,24 +1320,22 @@
     const remoteEl = $('#videoRemote');
     const overlay = $('#videoCallOverlay');
     const hint = $('#videoCallHint');
-    if (localEl) localEl.srcObject = stream;
+    if (localEl) {
+      localEl.srcObject = stream;
+      playVideoElement(localEl);
+    }
     if (remoteEl) remoteEl.srcObject = null;
     if (hint) hint.textContent = 'Calling…';
     if (overlay) overlay.classList.add('open');
     videoMicMuted = false;
     const muteBtn = $('#videoToggleMute');
     if (muteBtn) muteBtn.textContent = 'Mute mic';
+    updateVideoRemoteLabel();
 
     const sigCh = videoSignalChannelId;
     const pc = new RTCPeerConnection(webrtcIceConfig);
     videoPc = pc;
-    pc.ontrack = (e) => {
-      const r = $('#videoRemote');
-      if (r && e.streams[0]) {
-        r.srcObject = e.streams[0];
-        if (hint) hint.textContent = '';
-      }
-    };
+    wirePeerConnectionRemoteVideo(pc, hint);
     pc.onicecandidate = (e) => {
       if (e.candidate) relayVideo(peerId, { channelId: sigCh, type: 'ice', candidate: icePayload(e.candidate) });
     };
@@ -1203,6 +1351,8 @@
     } catch (e) {
       console.error(e);
       endVideoCall(false);
+    } finally {
+      videoCallDialing = false;
     }
   }
 
@@ -1260,7 +1410,7 @@
       const t = $('#videoIncomingTitle');
       if (t) t.textContent = `${name} wants a video call`;
       $('#videoIncomingModal')?.classList.add('open');
-      playNotificationSound();
+      playIncomingCallRing();
       return;
     }
 
@@ -1958,7 +2108,13 @@
   $('#usersToggle').addEventListener('click', () => { $('#usersToggle').classList.toggle('collapsed'); dmListEl.style.display = $('#usersToggle').classList.contains('collapsed') ? 'none' : ''; });
 
   $$('.modal-close, .btn-secondary[data-modal]').forEach(b => { b.addEventListener('click', () => closeModal(b.dataset.modal)); });
-  $$('.modal-overlay').forEach(o => { o.addEventListener('click', (e) => { if (e.target === o) o.classList.remove('open'); }); });
+  $$('.modal-overlay').forEach(o => {
+    o.addEventListener('click', (e) => {
+      if (e.target !== o) return;
+      if (o.id === 'videoIncomingModal') dismissIncomingOffer(false);
+      else o.classList.remove('open');
+    });
+  });
 
   $('#railAvatar').addEventListener('click', () => {
     const a = $('#profileAvatarLg'); a.style.background = colorFor(currentUser.name); a.textContent = initials(currentUser.name);
@@ -1991,7 +2147,15 @@
   sidebarOverlay.addEventListener('click', closeMobileSidebar);
 
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { threadPanel.classList.remove('open'); memberPanel.classList.remove('open'); closeEmojiPicker(); $$('.modal-overlay.open').forEach(m => m.classList.remove('open')); searchResults.classList.remove('open'); closeMobileSidebar(); }
+    if (e.key === 'Escape') {
+      threadPanel.classList.remove('open');
+      memberPanel.classList.remove('open');
+      closeEmojiPicker();
+      if ($('#videoIncomingModal')?.classList.contains('open')) dismissIncomingOffer(false);
+      $$('.modal-overlay.open').forEach(m => m.classList.remove('open'));
+      searchResults.classList.remove('open');
+      closeMobileSidebar();
+    }
   });
 
   window.addEventListener('beforeunload', () => {
