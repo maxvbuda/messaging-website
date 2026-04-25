@@ -123,6 +123,20 @@
       webrtcIceConfig = { iceServers: DEFAULT_WEBRTC_STUN.map(s => ({ urls: s.urls })) };
     }
   }
+
+  /** Stable WebRTC settings across Chrome / Edge / Safari (ICE trickle end + pooling + bundle). */
+  function rtcPeerConnectionConfig() {
+    const iceServers = (webrtcIceConfig && Array.isArray(webrtcIceConfig.iceServers) && webrtcIceConfig.iceServers.length)
+      ? webrtcIceConfig.iceServers.map(s => ({ ...s }))
+      : DEFAULT_WEBRTC_STUN.map(s => ({ urls: s.urls }));
+    return {
+      iceServers,
+      bundlePolicy: 'max-bundle',
+      rtcpMuxPolicy: 'require',
+      iceCandidatePoolSize: 10,
+    };
+  }
+
   let videoPeerId = null;
   let videoSignalChannelId = null;
   let videoPc = null;
@@ -1045,6 +1059,7 @@
           type: payload.type,
           sdp: payload.sdp,
           candidate: payload.candidate,
+          iceDone: payload.iceDone,
         });
       }
     };
@@ -1072,30 +1087,40 @@
     if (!toUserId || !channelId) return;
     if (inServerMode()) {
       if (!socket || !socket.connected) return;
-      socket.emit('webrtc_relay', {
+      const relay = {
         toUserId,
         channelId,
         type: payload.type,
         sdp: payload.sdp,
         candidate: payload.candidate,
-      });
+      };
+      if (payload.iceDone === true) relay.iceDone = true;
+      socket.emit('webrtc_relay', relay);
     } else {
       if (!bc) return;
-      broadcast('webrtc_signal', {
+      const sig = {
         toUserId,
         channelId,
         type: payload.type,
         sdp: payload.sdp,
         candidate: payload.candidate,
         fromUserId: currentUser.id,
-      });
+      };
+      if (payload.iceDone === true) sig.iceDone = true;
+      broadcast('webrtc_signal', sig);
     }
   }
 
   async function flushIceQueue(pc) {
     const pending = videoIcePending.splice(0, videoIcePending.length);
     for (const c of pending) {
-      try { await pc.addIceCandidate(c); } catch { /* ignore */ }
+      try {
+        if (c && c.__iceEnd) {
+          try { await pc.addIceCandidate(); } catch { await pc.addIceCandidate(null); }
+        } else {
+          await pc.addIceCandidate(c);
+        }
+      } catch { /* ignore */ }
     }
   }
 
@@ -1200,6 +1225,7 @@
     videoPendingOffer = null;
     $('#videoIncomingModal')?.classList.remove('open');
     if (!sigCh) return;
+    await refreshWebRtcIceConfig();
     videoPeerId = fromUserId;
     videoSignalChannelId = sigCh;
     if (activeChannelId !== sigCh) switchChannel(sigCh);
@@ -1230,15 +1256,25 @@
     if (muteBtn) muteBtn.textContent = 'Mute mic';
     updateVideoRemoteLabel();
 
-    const pc = new RTCPeerConnection(webrtcIceConfig);
+    const pc = new RTCPeerConnection(rtcPeerConnectionConfig());
     videoPc = pc;
     wirePeerConnectionRemoteVideo(pc, hint);
     pc.onicecandidate = (e) => {
       if (e.candidate) relayVideo(fromUserId, { channelId: sigCh, type: 'ice', candidate: icePayload(e.candidate) });
+      else relayVideo(fromUserId, { channelId: sigCh, type: 'ice', iceDone: true });
     };
     pc.onconnectionstatechange = () => {
       if (!videoPc || videoPc !== pc) return;
-      if (pc.connectionState === 'failed') endVideoCall(true);
+      const h = $('#videoCallHint');
+      const st = pc.connectionState;
+      if (st === 'connected') {
+        if (h) h.textContent = '';
+      } else if (st === 'disconnected') {
+        if (h) h.textContent = 'Reconnecting…';
+      } else if (st === 'failed') {
+        if (h) h.textContent = 'Connection failed.';
+        setTimeout(() => { if (videoPc === pc) endVideoCall(true); }, 2500);
+      }
     };
     try {
       await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp }));
@@ -1248,8 +1284,10 @@
       await pc.setLocalDescription(answer);
       relayVideo(fromUserId, { channelId: sigCh, type: 'answer', sdp: answer.sdp });
     } catch (e) {
-      console.error(e);
-      endVideoCall(true);
+      console.error('acceptIncomingVideo SDP error:', e);
+      const h = $('#videoCallHint');
+      if (h) h.textContent = 'Call setup failed.';
+      setTimeout(() => endVideoCall(true), 2500);
     }
   }
 
@@ -1305,6 +1343,7 @@
     videoPeerId = peerId;
     videoSignalChannelId = activeChannelId;
     videoIcePending = [];
+    await refreshWebRtcIceConfig();
     let stream;
     try {
       stream = await acquireCallMedia();
@@ -1333,15 +1372,25 @@
     updateVideoRemoteLabel();
 
     const sigCh = videoSignalChannelId;
-    const pc = new RTCPeerConnection(webrtcIceConfig);
+    const pc = new RTCPeerConnection(rtcPeerConnectionConfig());
     videoPc = pc;
     wirePeerConnectionRemoteVideo(pc, hint);
     pc.onicecandidate = (e) => {
       if (e.candidate) relayVideo(peerId, { channelId: sigCh, type: 'ice', candidate: icePayload(e.candidate) });
+      else relayVideo(peerId, { channelId: sigCh, type: 'ice', iceDone: true });
     };
     pc.onconnectionstatechange = () => {
       if (!videoPc || videoPc !== pc) return;
-      if (pc.connectionState === 'failed') endVideoCall(true);
+      const h = $('#videoCallHint');
+      const st = pc.connectionState;
+      if (st === 'connected') {
+        if (h) h.textContent = '';
+      } else if (st === 'disconnected') {
+        if (h) h.textContent = 'Reconnecting…';
+      } else if (st === 'failed') {
+        if (h) h.textContent = 'Connection failed.';
+        setTimeout(() => { if (videoPc === pc) endVideoCall(true); }, 2500);
+      }
     };
     stream.getTracks().forEach(t => pc.addTrack(t, stream));
     try {
@@ -1349,7 +1398,7 @@
       await pc.setLocalDescription(offer);
       relayVideo(peerId, { channelId: sigCh, type: 'offer', sdp: offer.sdp });
     } catch (e) {
-      console.error(e);
+      console.error('startVideoCallWithPeer SDP error:', e);
       endVideoCall(false);
     } finally {
       videoCallDialing = false;
@@ -1366,7 +1415,7 @@
 
   async function handleWebrtcPeer(payload) {
     const channelId = payload && (payload.channelId || payload.dmChannelId);
-    const { fromUserId, type, sdp, candidate } = payload || {};
+    const { fromUserId, type, sdp, candidate, iceDone } = payload || {};
     if (!currentUser || !fromUserId || fromUserId === currentUser.id || !channelId) return;
 
     if (type === 'hangup') {
@@ -1380,19 +1429,40 @@
 
     if (type === 'decline') {
       if (videoPc && videoPeerId === fromUserId && videoSignalChannelId === channelId) {
-        endVideoCall(false);
+        // Show the message INSIDE the overlay before closing it
         const h = $('#videoCallHint');
-        if (h) {
-          h.textContent = 'Call declined.';
-          setTimeout(() => { if (h) h.textContent = ''; }, 4000);
-        }
+        if (h) h.textContent = 'Call declined.';
+        setTimeout(() => endVideoCall(false), 2500);
       }
       return;
     }
 
-    if (type === 'ice' && candidate) {
+    if (type === 'ice') {
+      const peerMatch = videoPeerId === fromUserId && videoSignalChannelId === channelId;
+      const pendingMatch = !peerMatch && videoPendingOffer &&
+        videoPendingOffer.fromUserId === fromUserId &&
+        (videoPendingOffer.channelId || videoPendingOffer.dmChannelId) === channelId;
+      if (!peerMatch && !pendingMatch) return;
+
+      // Queue ICE even when videoPc is not yet created (e.g. callee is mid-accept,
+      // waiting for camera permission). flushIceQueue applies them after setRemoteDescription.
+      if (!videoPc) {
+        if (iceDone === true) { videoIcePending.push({ __iceEnd: true }); return; }
+        if (!candidate) return;
+        try { videoIcePending.push(new RTCIceCandidate(candidate)); } catch { /* ignore */ }
+        return;
+      }
+      if (iceDone === true) {
+        try {
+          if (!videoPc.remoteDescription) videoIcePending.push({ __iceEnd: true });
+          else {
+            try { await videoPc.addIceCandidate(); } catch { await videoPc.addIceCandidate(null); }
+          }
+        } catch { /* ignore */ }
+        return;
+      }
+      if (!candidate) return;
       const c = new RTCIceCandidate(candidate);
-      if (!videoPc || videoPeerId !== fromUserId || videoSignalChannelId !== channelId) return;
       try {
         if (!videoPc.remoteDescription) videoIcePending.push(c);
         else await videoPc.addIceCandidate(c);
@@ -1402,6 +1472,9 @@
 
     if (type === 'offer' && sdp) {
       if (videoPc) {
+        // Duplicate or late offer after we already accepted (same peer/channel) — do not
+        // auto-decline or the caller sees "declined" even though the callee picked up.
+        if (videoPeerId === fromUserId && videoSignalChannelId === channelId) return;
         relayVideo(fromUserId, { channelId, type: 'decline' });
         return;
       }
@@ -1420,10 +1493,12 @@
         await videoPc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp }));
         await flushIceQueue(videoPc);
         const h = $('#videoCallHint');
-        if (h) h.textContent = '';
+        if (h) h.textContent = 'Connecting…';
       } catch (e) {
-        console.error(e);
-        endVideoCall(false);
+        console.error('answer setRemoteDescription error:', e);
+        const h = $('#videoCallHint');
+        if (h) h.textContent = 'Call setup failed.';
+        setTimeout(() => endVideoCall(false), 2500);
       }
     }
   }

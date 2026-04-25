@@ -268,8 +268,8 @@ app.get('/api/invite/list', async (req, res) => {
 
 // ── REST: Auth ──
 
-// Names/usernames blocked from registering or logging in
-const BLOCKED_NAMES = ['aaryan'];
+// Names/usernames blocked from registering or logging in (substring match, case-insensitive)
+const BLOCKED_NAMES = [];
 
 // Blocked IPs (populated at runtime from banned users' last known IPs)
 const BLOCKED_IPS = new Set();
@@ -796,6 +796,24 @@ app.post('/api/admin/users/:id/unban', requireAdmin, async (req, res) => {
   res.json({ ok: true });
 });
 
+/** Unban every user, clear derived IP blocks, clear name blocklist (runtime), and reset login lockouts. */
+app.post('/api/admin/unban-all', requireAdmin, async (req, res) => {
+  try {
+    if (db) {
+      await usersCol.updateMany({}, { $set: { banned: false } });
+    } else {
+      for (const u of memData.users) u.banned = false;
+    }
+    BLOCKED_IPS.clear();
+    BLOCKED_NAMES.length = 0;
+    loginAttempts.clear();
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('admin unban-all:', e);
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
 app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
   const { id } = req.params;
   if (db) {
@@ -1063,7 +1081,7 @@ io.on('connection', (socket) => {
     socket.to(channelId).emit('user_typing', { channelId, userId: currentUser.id, userName: currentUser.name });
   });
 
-  socket.on('webrtc_relay', async ({ toUserId, channelId, dmChannelId, type, sdp, candidate }) => {
+  socket.on('webrtc_relay', async ({ toUserId, channelId, dmChannelId, type, sdp, candidate, iceDone }) => {
     const chId = channelId || dmChannelId;
     if (!currentUser || !toUserId || !chId) return;
     const okTypes = new Set(['offer', 'answer', 'ice', 'hangup', 'decline']);
@@ -1073,13 +1091,15 @@ io.on('connection', (socket) => {
     } catch {
       return;
     }
-    io.to('uid_' + toUserId).emit('webrtc_peer', {
+    const out = {
       fromUserId: currentUser.id,
       channelId: chId,
       type,
       sdp: sdp || undefined,
-      candidate: candidate || undefined,
-    });
+    };
+    if (candidate !== undefined && candidate !== null) out.candidate = candidate;
+    if (iceDone === true) out.iceDone = true;
+    io.to('uid_' + toUserId).emit('webrtc_peer', out);
   });
 
   socket.on('update_profile', async ({ name, statusMsg }) => {
