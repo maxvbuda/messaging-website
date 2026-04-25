@@ -1132,9 +1132,14 @@
 
   async function acquireCallMedia() {
     const attempts = [
+      // Full video + audio (preferred)
       { video: { facingMode: { ideal: 'user' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: true },
       { video: { facingMode: { ideal: 'user' } }, audio: true },
       { video: true, audio: true },
+      // Audio only — no camera attached or camera denied
+      { video: false, audio: true },
+      // Video only — no mic attached or mic denied
+      { video: true, audio: false },
     ];
     for (const c of attempts) {
       try {
@@ -1142,6 +1147,17 @@
       } catch { /* try next */ }
     }
     throw new Error('getUserMedia failed');
+  }
+
+  function showMediaPermissionError() {
+    const msg =
+      'Could not access your camera or microphone.\n\n' +
+      'To fix this:\n' +
+      '  1. Click the camera/lock icon in your browser address bar.\n' +
+      '  2. Set Camera and Microphone to "Allow".\n' +
+      '  3. Reload the page and try the call again.\n\n' +
+      '(You can still join with just audio if your camera is unavailable.)';
+    alert(msg);
   }
 
   function wirePeerConnectionRemoteVideo(pc, hintEl) {
@@ -1237,6 +1253,7 @@
       relayVideo(fromUserId, { channelId: sigCh, type: 'decline' });
       videoPeerId = null;
       videoSignalChannelId = null;
+      showMediaPermissionError();
       return;
     }
     videoLocalStream = stream;
@@ -1350,8 +1367,8 @@
     } catch {
       videoPeerId = null;
       videoSignalChannelId = null;
-      alert('Could not access camera or microphone.');
       videoCallDialing = false;
+      showMediaPermissionError();
       return;
     }
     videoLocalStream = stream;
