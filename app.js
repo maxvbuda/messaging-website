@@ -1167,11 +1167,14 @@
 
   function wirePeerConnectionRemoteVideo(pc, hintEl) {
     pc.ontrack = (e) => {
+      console.log('[WebRTC] ontrack event:', e.track?.kind, e.track?.id, 'stream count:', e.streams?.length);
       const r = $('#videoRemote');
       if (!r) return;
       if (e.streams && e.streams[0] && e.streams[0].getTracks().length > 0) {
+        console.log('[WebRTC] Setting remote video from stream');
         r.srcObject = e.streams[0];
       } else if (e.track) {
+        console.log('[WebRTC] Setting remote video from track');
         let ms = r.srcObject instanceof MediaStream ? r.srcObject : null;
         if (!ms) ms = new MediaStream();
         if (!ms.getTracks().some(t => t.id === e.track.id)) ms.addTrack(e.track);
@@ -1238,6 +1241,7 @@
   }
 
   async function acceptIncomingVideo() {
+    console.log('[WebRTC] acceptIncomingVideo called');
     stopIncomingCallRing();
     const po = videoPendingOffer;
     if (!po) return;
@@ -1254,9 +1258,11 @@
     let stream;
     try {
       stream = await acquireCallMedia();
+      console.log('[WebRTC] Callee acquired media, tracks:', stream.getTracks().length);
     } catch {
       stream = new MediaStream();
       stream.__sfMediaWarning = 'Camera and microphone unavailable. You can still receive the call.';
+      console.log('[WebRTC] Callee no media, using empty stream');
     }
     videoLocalStream = stream;
     const localEl = $('#videoLocal');
@@ -1283,6 +1289,7 @@
       else relayVideo(fromUserId, { channelId: sigCh, type: 'ice', iceDone: true });
     };
     pc.onconnectionstatechange = () => {
+      console.log('[WebRTC] Callee connection state:', pc.connectionState);
       if (!videoPc || videoPc !== pc) return;
       const h = $('#videoCallHint');
       const st = pc.connectionState;
@@ -1296,12 +1303,19 @@
       }
     };
     try {
+      console.log('[WebRTC] Callee setting remote description');
       await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp }));
+      console.log('[WebRTC] Callee remote description set');
       await flushIceQueue(pc);
+      console.log('[WebRTC] Callee ICE queue flushed, adding tracks');
       attachLocalTracksOrRecvOnly(pc, stream);
+      console.log('[WebRTC] Callee transceivers after attach:', pc.getTransceivers().length);
       const answer = await pc.createAnswer();
+      console.log('[WebRTC] Callee created answer');
       await pc.setLocalDescription(answer);
+      console.log('[WebRTC] Callee set local description, sending answer');
       relayVideo(fromUserId, { channelId: sigCh, type: 'answer', sdp: answer.sdp });
+      console.log('[WebRTC] Callee sent answer');
     } catch (e) {
       console.error('acceptIncomingVideo SDP error:', e);
       const h = $('#videoCallHint');
@@ -1346,6 +1360,7 @@
   }
 
   async function startVideoCallWithPeer(peerId) {
+    console.log('[WebRTC] startVideoCallWithPeer called for peer:', peerId);
     if (!peerId || peerId === currentUser.id) return;
     if (inServerMode() && (!socket || !socket.connected)) return;
     if (videoPc || videoCallDialing) return;
@@ -1366,9 +1381,11 @@
     let stream;
     try {
       stream = await acquireCallMedia();
+      console.log('[WebRTC] Caller acquired media, tracks:', stream.getTracks().length);
     } catch {
       stream = new MediaStream();
       stream.__sfMediaWarning = 'Camera and microphone unavailable. You can still receive the call.';
+      console.log('[WebRTC] Caller no media, using empty stream');
     }
     videoLocalStream = stream;
     const localEl = $('#videoLocal');
@@ -1396,6 +1413,7 @@
       else relayVideo(peerId, { channelId: sigCh, type: 'ice', iceDone: true });
     };
     pc.onconnectionstatechange = () => {
+      console.log('[WebRTC] Caller connection state:', pc.connectionState);
       if (!videoPc || videoPc !== pc) return;
       const h = $('#videoCallHint');
       const st = pc.connectionState;
@@ -1408,11 +1426,16 @@
         setTimeout(() => { if (videoPc === pc) endVideoCall(true); }, 2500);
       }
     };
+    pc.onnegotiationneeded = () => console.log('[WebRTC] Caller negotiation needed');
     attachLocalTracksOrRecvOnly(pc, stream);
+    console.log('[WebRTC] Caller transceivers after attach:', pc.getTransceivers().length);
     try {
       const offer = await pc.createOffer();
+      console.log('[WebRTC] Caller created offer');
       await pc.setLocalDescription(offer);
+      console.log('[WebRTC] Caller set local description');
       relayVideo(peerId, { channelId: sigCh, type: 'offer', sdp: offer.sdp });
+      console.log('[WebRTC] Caller sent offer');
     } catch (e) {
       console.error('startVideoCallWithPeer SDP error:', e);
       endVideoCall(false);
@@ -1504,12 +1527,19 @@
     }
 
     if (type === 'answer' && sdp) {
-      if (!videoPc || videoPeerId !== fromUserId || videoSignalChannelId !== channelId) return;
+      console.log('[WebRTC] Received answer from', fromUserId);
+      if (!videoPc || videoPeerId !== fromUserId || videoSignalChannelId !== channelId) {
+        console.log('[WebRTC] Answer rejected: pc=', !!videoPc, 'peerMatch=', videoPeerId === fromUserId, 'channelMatch=', videoSignalChannelId === channelId);
+        return;
+      }
       try {
+        console.log('[WebRTC] Setting remote description (answer)');
         await videoPc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp }));
+        console.log('[WebRTC] Remote description set, flushing ICE');
         await flushIceQueue(videoPc);
         const h = $('#videoCallHint');
         if (h) h.textContent = 'Connecting…';
+        console.log('[WebRTC] Answer processed successfully');
       } catch (e) {
         console.error('answer setRemoteDescription error:', e);
         const h = $('#videoCallHint');
