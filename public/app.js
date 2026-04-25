@@ -1298,7 +1298,7 @@
     try {
       await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp }));
       await flushIceQueue(pc);
-      stream.getTracks().forEach(t => pc.addTrack(t, stream));
+      attachLocalTracksOrRecvOnly(pc, stream);
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       relayVideo(fromUserId, { channelId: sigCh, type: 'answer', sdp: answer.sdp });
