@@ -133,7 +133,7 @@
       iceServers,
       bundlePolicy: 'max-bundle',
       rtcpMuxPolicy: 'require',
-      iceCandidatePoolSize: 10,
+      iceCandidatePoolSize: 0,
     };
   }
 
@@ -1158,11 +1158,23 @@
     return stream && stream.__sfMediaWarning ? stream.__sfMediaWarning : '';
   }
 
-  function attachLocalTracksOrRecvOnly(pc, stream) {
+  /** Caller only: before createOffer — add local tracks, recvonly transceivers for missing kinds. */
+  function attachCallerLocalTracks(pc, stream) {
     const tracks = stream ? stream.getTracks() : [];
     tracks.forEach(t => pc.addTrack(t, stream));
     if (!tracks.some(t => t.kind === 'audio')) pc.addTransceiver('audio', { direction: 'recvonly' });
     if (!tracks.some(t => t.kind === 'video')) pc.addTransceiver('video', { direction: 'recvonly' });
+  }
+
+  /**
+   * Callee only: after setRemoteDescription(offer). Transceivers already match the offer's m-lines.
+   * Never addTransceiver here — extra m-lines break SDP vs the caller.
+   */
+  function attachCalleeLocalTracks(pc, stream) {
+    const tracks = stream ? stream.getTracks() : [];
+    tracks.forEach(t => {
+      try { pc.addTrack(t, stream); } catch { /* ignore */ }
+    });
   }
 
   function wirePeerConnectionRemoteVideo(pc, hintEl) {
@@ -1298,7 +1310,7 @@
     try {
       await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp }));
       await flushIceQueue(pc);
-      attachLocalTracksOrRecvOnly(pc, stream);
+      attachCalleeLocalTracks(pc, stream);
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       relayVideo(fromUserId, { channelId: sigCh, type: 'answer', sdp: answer.sdp });
@@ -1408,7 +1420,7 @@
         setTimeout(() => { if (videoPc === pc) endVideoCall(true); }, 2500);
       }
     };
-    attachLocalTracksOrRecvOnly(pc, stream);
+    attachCallerLocalTracks(pc, stream);
     try {
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
@@ -1504,7 +1516,9 @@
     }
 
     if (type === 'answer' && sdp) {
-      if (!videoPc || videoPeerId !== fromUserId || videoSignalChannelId !== channelId) return;
+      if (!videoPc || videoPeerId !== fromUserId || videoSignalChannelId !== channelId) {
+        return;
+      }
       try {
         await videoPc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp }));
         await flushIceQueue(videoPc);

@@ -1666,13 +1666,13 @@ body {
    DM video call (WebRTC)
    ======================================== */
 .video-incoming-modal {
-  z-index: 850;
+  z-index: 10040;
 }
 
 .video-call-overlay {
   position: fixed;
   inset: 0;
-  z-index: 840;
+  z-index: 10050;
   background: rgba(6, 6, 10, 0.92);
   display: none;
   flex-direction: column;
