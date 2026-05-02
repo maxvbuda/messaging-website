@@ -83,6 +83,22 @@
     .gen-invite-bar input { flex: 1; padding: 8px 12px; background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 13px; font-family: var(--font); outline: none; }
     .btn-accent { padding: 8px 16px; background: var(--accent); color: #fff; border: none; border-radius: 6px; font-size: 13px; font-weight: 700; font-family: var(--font); cursor: pointer; }
     .btn-accent:hover { background: #7e70f0; }
+
+    .msg-search-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+    .msg-search-bar input { flex: 1; min-width: 160px; padding: 8px 12px; background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 13px; font-family: var(--font); outline: none; }
+    .msg-search-bar input:focus { border-color: var(--accent); }
+    .msg-search-bar input::placeholder { color: var(--muted); }
+    .msg-row { display: flex; align-items: flex-start; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+    .msg-row:last-child { border-bottom: none; }
+    .msg-meta { flex: 1; min-width: 0; }
+    .msg-channel { font-size: 11px; font-weight: 700; color: var(--accent); margin-bottom: 3px; }
+    .msg-channel-thread { color: var(--muted); font-weight: 400; }
+    .msg-sender { font-size: 13px; font-weight: 700; display: inline; }
+    .msg-time { font-size: 11px; color: var(--muted); margin-left: 6px; }
+    .msg-text { font-size: 13px; color: var(--secondary); margin-top: 4px; word-break: break-word; }
+    .msg-status { font-size: 11px; margin-left: 8px; }
+    .msg-status.ok { color: var(--green); }
+    .msg-status.err { color: var(--red); }
   </style>
 </head>
 <body>
@@ -117,6 +133,7 @@
       <div class="tab active" data-tab="requests">Join Requests <span id="pendingBadge"></span></div>
       <div class="tab" data-tab="invites">Invite Codes</div>
       <div class="tab" data-tab="users">Users</div>
+      <div class="tab" data-tab="messages">Messages</div>
     </div>
 
     <!-- Join Requests -->
@@ -139,6 +156,16 @@
     <!-- Users -->
     <div class="tab-pane" id="tab-users">
       <div id="usersList"></div>
+    </div>
+
+    <!-- Messages -->
+    <div class="tab-pane" id="tab-messages">
+      <div class="msg-search-bar">
+        <input type="text" id="msgQuery" placeholder="Search by keyword…">
+        <input type="text" id="msgChannel" placeholder="Filter by channel (optional)" style="max-width:200px">
+        <button class="btn-accent" id="msgSearchBtn">Search</button>
+      </div>
+      <div id="msgResults"></div>
     </div>
   </div>
 </div>
@@ -213,6 +240,7 @@
       if (tab.dataset.tab === 'requests') loadRequests();
       if (tab.dataset.tab === 'invites') loadInvites();
       if (tab.dataset.tab === 'users') loadUsers();
+      if (tab.dataset.tab === 'messages') { /* wait for search */ document.getElementById('msgResults').innerHTML = '<div class="empty">Enter a keyword and press Search.</div>'; }
     });
   });
 
@@ -371,6 +399,56 @@
     await api('DELETE', `/api/admin/users/${id}`);
     loadUsers();
   }
+
+  // ── Messages ──
+  async function searchMessages() {
+    const q = document.getElementById('msgQuery').value.trim();
+    const channel = document.getElementById('msgChannel').value.trim();
+    const el = document.getElementById('msgResults');
+    if (!q) { el.innerHTML = '<div class="empty">Enter a keyword and press Search.</div>'; return; }
+    el.innerHTML = '<div class="empty">Searching…</div>';
+    const params = new URLSearchParams({ q });
+    if (channel) params.set('channel', channel);
+    const d = await api('GET', '/api/admin/messages/search?' + params.toString());
+    if (d.error) { el.innerHTML = `<div class="empty" style="color:var(--red)">${esc(d.error)}</div>`; return; }
+    const msgs = d.messages || [];
+    if (!msgs.length) { el.innerHTML = '<div class="empty">No messages found.</div>'; return; }
+    el.innerHTML = `<div class="card">${msgs.map(m => {
+      const preview = esc(m.text || '').slice(0, 120) + ((m.text || '').length > 120 ? '…' : '');
+      const channelLabel = m.isThreadReply
+        ? `#${esc(m.channelName)} <span class="msg-channel-thread">· thread reply</span>`
+        : `#${esc(m.channelName)}`;
+      return `<div class="msg-row" id="msgrow-${esc(m.id)}">
+        <div class="msg-meta">
+          <div class="msg-channel">${channelLabel}</div>
+          <div><span class="msg-sender">${esc(m.userName)}</span><span class="msg-time">${timeAgo(m.ts)}</span></div>
+          <div class="msg-text">${preview || '<em style="color:var(--muted)">no text</em>'}</div>
+        </div>
+        <div class="row-actions" style="align-items:center">
+          <span class="msg-status" id="msgst-${esc(m.id)}"></span>
+          <button class="btn-deny" onclick="deleteMsg(${JSON.stringify(m.channelId)},${JSON.stringify(m.id)},${m.isThreadReply ? 'true' : 'false'},${JSON.stringify(m.parentMsgId||'')})">Delete</button>
+        </div>
+      </div>`;
+    }).join('')}</div>`;
+  }
+
+  async function deleteMsg(channelId, msgId, isThreadReply, parentMsgId) {
+    const row = document.getElementById('msgrow-' + msgId);
+    const st = document.getElementById('msgst-' + msgId);
+    const params = new URLSearchParams();
+    if (isThreadReply) { params.set('threadReply', 'true'); if (parentMsgId) params.set('parentMsgId', parentMsgId); }
+    const qs = params.toString() ? '?' + params.toString() : '';
+    const d = await api('DELETE', `/api/admin/messages/${encodeURIComponent(channelId)}/${encodeURIComponent(msgId)}${qs}`);
+    if (d.ok) {
+      if (st) { st.textContent = '✓ Deleted'; st.classList.add('ok'); }
+      setTimeout(() => { if (row) row.remove(); }, 800);
+    } else {
+      if (st) { st.textContent = d.error || 'Error'; st.classList.add('err'); }
+    }
+  }
+
+  document.getElementById('msgSearchBtn').addEventListener('click', searchMessages);
+  document.getElementById('msgQuery').addEventListener('keydown', e => { if (e.key === 'Enter') searchMessages(); });
 
   // ── Init ──
   function showApp() {
