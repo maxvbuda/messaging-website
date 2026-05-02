@@ -83,6 +83,18 @@
     .gen-invite-bar input { flex: 1; padding: 8px 12px; background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 13px; font-family: var(--font); outline: none; }
     .btn-accent { padding: 8px 16px; background: var(--accent); color: #fff; border: none; border-radius: 6px; font-size: 13px; font-weight: 700; font-family: var(--font); cursor: pointer; }
     .btn-accent:hover { background: #7e70f0; }
+
+    /* Message checkboxes */
+    .msg-cb-cell { display: flex; align-items: center; justify-content: center; padding-right: 4px; flex-shrink: 0; }
+    .msg-cb { appearance: none; -webkit-appearance: none; width: 16px; height: 16px; border: 1.5px solid var(--border); border-radius: 4px; background: var(--bg3); cursor: pointer; flex-shrink: 0; transition: background 0.1s, border-color 0.1s; }
+    .msg-cb:checked { background: var(--accent); border-color: var(--accent); }
+    .msg-cb:checked::after { content: ''; display: block; width: 4px; height: 8px; border: 2px solid #fff; border-top: none; border-left: none; transform: rotate(45deg) translate(1px, -1px); margin: 1px auto 0; }
+    .msg-cb:hover:not(:checked) { border-color: var(--accent); }
+    .card-row.msg-selected { background: rgba(108,92,231,0.08); }
+
+    /* Bulk action bar */
+    .bulk-bar { display: none; align-items: center; gap: 10px; padding: 8px 0 12px; }
+    .bulk-bar.visible { display: flex; }
   </style>
 </head>
 <body>
@@ -148,6 +160,10 @@
         <input type="text" id="msgSearchQuery" placeholder="Search messages…" style="flex:1">
         <input type="text" id="msgSearchChannel" placeholder="Channel (optional)" style="width:160px">
         <button class="btn-accent" id="msgSearchBtn">Search</button>
+      </div>
+      <div class="bulk-bar" id="msgBulkBar">
+        <button class="btn-deny" id="msgBulkDeleteBtn" onclick="bulkDeleteSelected()">Delete Selected (0)</button>
+        <span style="font-size:12px;color:var(--muted)" id="msgBulkCount"></span>
       </div>
       <div id="msgSearchResults"><div class="empty">Enter a query above and press Search.</div></div>
     </div>
@@ -385,19 +401,78 @@
   }
 
   // ── Messages ──
+  let msgList = [];          // current search result array
+  let lastCheckedIndex = -1; // for shift-click range selection
+  const selectedMsgIds = new Set();
+
+  function updateBulkBar() {
+    const n = selectedMsgIds.size;
+    const bar = document.getElementById('msgBulkBar');
+    const btn = document.getElementById('msgBulkDeleteBtn');
+    if (n > 0) {
+      bar.classList.add('visible');
+      btn.textContent = `Delete Selected (${n})`;
+    } else {
+      bar.classList.remove('visible');
+    }
+  }
+
+  function handleMsgCheckbox(e, index) {
+    const cb = e.target;
+    const msgId = cb.dataset.msgid;
+    const row = document.getElementById('msgrow-' + msgId);
+
+    if (e.shiftKey && lastCheckedIndex !== -1) {
+      const lo = Math.min(lastCheckedIndex, index);
+      const hi = Math.max(lastCheckedIndex, index);
+      const shouldCheck = cb.checked; // the current cb was already toggled by browser
+      for (let i = lo; i <= hi; i++) {
+        const m = msgList[i];
+        if (!m) continue;
+        const c = document.querySelector(`.msg-cb[data-msgid="${CSS.escape(m.id)}"]`);
+        const r = document.getElementById('msgrow-' + m.id);
+        if (c) c.checked = shouldCheck;
+        if (r) r.classList.toggle('msg-selected', shouldCheck);
+        if (shouldCheck) selectedMsgIds.add(m.id);
+        else selectedMsgIds.delete(m.id);
+      }
+    } else {
+      if (cb.checked) { selectedMsgIds.add(msgId); row && row.classList.add('msg-selected'); }
+      else { selectedMsgIds.delete(msgId); row && row.classList.remove('msg-selected'); }
+      lastCheckedIndex = index;
+    }
+
+    updateBulkBar();
+  }
+
+  function clearMsgSelection() {
+    selectedMsgIds.clear();
+    lastCheckedIndex = -1;
+    document.querySelectorAll('.msg-cb').forEach(c => { c.checked = false; });
+    document.querySelectorAll('.card-row.msg-selected').forEach(r => r.classList.remove('msg-selected'));
+    updateBulkBar();
+  }
+
   async function searchMessages() {
     const q = document.getElementById('msgSearchQuery').value.trim();
     const channel = document.getElementById('msgSearchChannel').value.trim();
     const el = document.getElementById('msgSearchResults');
     if (!q) { el.innerHTML = '<div class="empty">Please enter a search query.</div>'; return; }
     el.innerHTML = '<div class="empty">Searching…</div>';
+    clearMsgSelection();
     const qs = '?q=' + encodeURIComponent(q) + (channel ? '&channel=' + encodeURIComponent(channel) : '');
     const d = await api('GET', '/api/admin/messages/search' + qs);
     if (d.error) { el.innerHTML = '<div class="empty" style="color:var(--red)">' + esc(d.error) + '</div>'; return; }
-    const msgs = d.messages || [];
-    if (!msgs.length) { el.innerHTML = '<div class="empty">No messages found.</div>'; return; }
-    el.innerHTML = `<div class="card">${msgs.map(m => `
+    msgList = d.messages || [];
+    if (!msgList.length) { el.innerHTML = '<div class="empty">No messages found.</div>'; return; }
+    el.innerHTML = `<div class="card">${msgList.map((m, i) => `
       <div class="card-row" id="msgrow-${esc(m.id)}">
+        <div class="msg-cb-cell">
+          <input type="checkbox" class="msg-cb"
+            data-msgid="${esc(m.id)}"
+            data-index="${i}"
+            onclick="handleMsgCheckbox(event,${i})">
+        </div>
         <div class="row-info">
           <div class="row-name" style="font-size:12px;color:var(--muted)">#${esc(m.channelName)} · ${esc(m.userName)} · ${timeAgo(m.ts)}${m.isThreadReply ? ' · <em>thread reply</em>' : ''}</div>
           <div class="row-sub" style="font-size:14px;color:var(--text);margin-top:4px">${esc(m.text)}</div>
@@ -417,6 +492,29 @@
     if (d.error) { alert(d.error); return; }
     const row = document.getElementById('msgrow-' + msgId);
     if (row) row.remove();
+    selectedMsgIds.delete(msgId);
+    msgList = msgList.filter(m => m.id !== msgId);
+    updateBulkBar();
+  }
+
+  async function bulkDeleteSelected() {
+    const ids = [...selectedMsgIds];
+    if (!ids.length) return;
+    if (!confirm(`Permanently delete ${ids.length} message${ids.length > 1 ? 's' : ''}? This cannot be undone.`)) return;
+    const toDelete = msgList.filter(m => ids.includes(m.id));
+    let failed = 0;
+    for (const m of toDelete) {
+      let path = `/api/admin/messages/${encodeURIComponent(m.channelId)}/${encodeURIComponent(m.id)}`;
+      if (m.isThreadReply && m.parentMsgId) path += `?threadReply=true&parentMsgId=${encodeURIComponent(m.parentMsgId)}`;
+      const d = await api('DELETE', path);
+      if (d.error) { failed++; continue; }
+      const row = document.getElementById('msgrow-' + m.id);
+      if (row) row.remove();
+    }
+    msgList = msgList.filter(m => !ids.includes(m.id) || toDelete.find(t => t.id === m.id && false));
+    msgList = msgList.filter(m => !ids.includes(m.id));
+    clearMsgSelection();
+    if (failed) alert(`${failed} message(s) could not be deleted.`);
   }
 
   document.getElementById('msgSearchBtn').addEventListener('click', searchMessages);
