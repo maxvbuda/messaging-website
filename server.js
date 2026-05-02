@@ -842,20 +842,50 @@ app.get('/api/admin/messages/search', requireAdmin, async (req, res) => {
     const channelFilter = (req.query.channel || '').trim().toLowerCase();
     if (!q) return res.status(400).json({ error: 'Query parameter q is required.' });
 
-    const channels = await getChannels();
+    const [channels, allUsers] = await Promise.all([getChannels(), getUsers()]);
+    const userMap = {};
+    allUsers.forEach(u => { userMap[u.id] = u.name; });
+
     const results = [];
+    const qLower = q.toLowerCase();
 
     for (const ch of channels) {
-      if (channelFilter && ch.name.toLowerCase() !== channelFilter) continue;
+      const isDM = !!ch.isDM;
+
+      // Build a human-readable display name
+      let displayName = ch.name;
+      if (isDM && Array.isArray(ch.participants) && ch.participants.length === 2) {
+        const nameA = userMap[ch.participants[0]] || ch.participants[0];
+        const nameB = userMap[ch.participants[1]] || ch.participants[1];
+        displayName = `DM: ${nameA} ↔ ${nameB}`;
+      }
+
+      // Apply channel filter
+      if (channelFilter) {
+        if (isDM) {
+          // Match against display name, either participant's name, or the raw channel id
+          const participantNames = (ch.participants || []).map(id => (userMap[id] || id).toLowerCase());
+          const matches =
+            displayName.toLowerCase().includes(channelFilter) ||
+            participantNames.some(n => n.includes(channelFilter)) ||
+            ch.id.toLowerCase().includes(channelFilter) ||
+            channelFilter === 'dm';
+          if (!matches) continue;
+        } else {
+          if (ch.name.toLowerCase() !== channelFilter) continue;
+        }
+      }
+
       const msgs = await getMessages(ch.id);
       for (const m of msgs) {
         if (results.length >= 100) break;
         const textLower = (m.text || '').toLowerCase();
-        if (textLower.includes(q.toLowerCase())) {
+        if (textLower.includes(qLower)) {
           results.push({
             id: m.id,
             channelId: ch.id,
-            channelName: ch.name,
+            channelName: displayName,
+            isDM,
             userId: m.userId,
             userName: m.userName || m.userId,
             text: m.text || '',
@@ -868,11 +898,12 @@ app.get('/api/admin/messages/search', requireAdmin, async (req, res) => {
         for (const r of (m.threadReplies || [])) {
           if (results.length >= 100) break;
           const replyTextLower = (r.text || '').toLowerCase();
-          if (replyTextLower.includes(q.toLowerCase())) {
+          if (replyTextLower.includes(qLower)) {
             results.push({
               id: r.id,
               channelId: ch.id,
-              channelName: ch.name,
+              channelName: displayName,
+              isDM,
               userId: r.userId,
               userName: r.userName || r.userId,
               text: r.text || '',
