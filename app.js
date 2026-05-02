@@ -1801,9 +1801,9 @@
   // ==============================
 
 const EXPLICIT_WORDS = [
-  'fuck', 'fucks', 'fucked', 'fucker', 'fuckers', 'fucking', 'motherfucker', 'motherfuckers',
-  'shit', 'shits', 'shitty', 'shitting', 'bullshit',
-  'bitch', 'bitches', 'bitching',
+  'fuck', 'fucks', 'fucked', 'fucker', 'fuckers', 'fucking', 'fuckin', 'motherfucker', 'motherfuckers', 'motherfuckin', 'motherfucking',
+  'shit', 'shits', 'shitty', 'shitting', 'shittin', 'bullshit', 'bullshitting',
+  'bitch', 'bitches', 'bitching', 'bitchin',
   'asshole', 'assholes',
   'cunt', 'cunts',
   'dick', 'dicks',
@@ -1812,7 +1812,7 @@ const EXPLICIT_WORDS = [
   'slut', 'sluts',
   'whore', 'whores',
   'faggot', 'faggots',
-  'nigger', 'niggers',
+  'nigger', 'niggers', 'nigga', 'niggas',
   'cock', 'cocks', 'cocksucker',
   'twat', 'twats',
   'wanker', 'wankers',
