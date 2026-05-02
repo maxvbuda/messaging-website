@@ -1801,8 +1801,22 @@
   // ==============================
 
 const EXPLICIT_WORDS = [
-  'fuck', 'shit', 'bitch', 'asshole', 'cunt', 'dick', 'pussy', 'bastard', 'slut', 'whore',
-  'faggot', 'nigger', 'cock', 'motherfucker', 'twat', 'wanker', 'prick'
+  'fuck', 'fucks', 'fucked', 'fucker', 'fuckers', 'fucking', 'motherfucker', 'motherfuckers',
+  'shit', 'shits', 'shitty', 'shitting', 'bullshit',
+  'bitch', 'bitches', 'bitching',
+  'asshole', 'assholes',
+  'cunt', 'cunts',
+  'dick', 'dicks',
+  'pussy', 'pussies',
+  'bastard', 'bastards',
+  'slut', 'sluts',
+  'whore', 'whores',
+  'faggot', 'faggots',
+  'nigger', 'niggers',
+  'cock', 'cocks', 'cocksucker',
+  'twat', 'twats',
+  'wanker', 'wankers',
+  'prick', 'pricks'
 ];
 
 function filterExplicit(text) {
