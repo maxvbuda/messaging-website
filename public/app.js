@@ -1800,33 +1800,174 @@
   //  ACTIONS
   // ==============================
 
+/**
+ * Comprehensive alphabetical list of explicit words to filter from chat messages.
+ * Includes profanity, slurs, sexual terms, drug refs, and offensive slang along with
+ * common variations (-s, -es, -ed, -er, -ers, -ing, -in, -y).
+ * Short entries (<4 chars) are matched only as exact words; longer entries also match
+ * spaced-out / dotted obfuscations like "f u c k", "s.h.i.t", "b-i-t-c-h".
+ */
 const EXPLICIT_WORDS = [
-  'fuck', 'fucks', 'fucked', 'fucker', 'fuckers', 'fucking', 'fuckin', 'motherfucker', 'motherfuckers', 'motherfuckin', 'motherfucking',
-  'shit', 'shits', 'shitty', 'shitting', 'shittin', 'bullshit', 'bullshitting',
-  'bitch', 'bitches', 'bitching', 'bitchin',
-  'asshole', 'assholes',
-  'cunt', 'cunts',
-  'dick', 'dicks',
-  'pussy', 'pussies',
-  'bastard', 'bastards',
-  'slut', 'sluts',
-  'whore', 'whores',
-  'faggot', 'faggots',
-  'nigger', 'niggers', 'nigga', 'niggas',
-  'cock', 'cocks', 'cocksucker',
-  'twat', 'twats',
-  'wanker', 'wankers',
-  'prick', 'pricks'
+  'anal','analed','analing','anally','analsex','anus','anuses','arse','arsebag','arsebags',
+  'arsebandit','arsebandits','arsed','arsefuck','arsefucked','arsefucker','arsefuckers','arsefucking','arsefucks','arsehat',
+  'arsehats','arsehead','arseheads','arsehole','arseholes','arses','arsewipe','arsewipes','ass','assbag',
+  'assbags','assbang','assbanged','assbanger','assbangers','assbanging','assbangs','assbreath','assclown','assclowns',
+  'asscock','asscocks','asscrack','asscracker','asscrackers','asscracks','assdick','assdicks','assed','asses',
+  'assface','assfaces','assfuck','assfucked','assfucker','assfuckers','assfucking','assfucks','assgoblin','assgoblins',
+  'asshat','asshats','asshattery','asshead','assheads','asshole','assholery','assholes','assholish','asslick',
+  'asslicked','asslicker','asslickers','asslicking','asslicks','asslover','asslovers','assmaster','assmasters','assmonkey',
+  'assmonkeys','assmunch','assmuncher','assmunchers','assmunches','assmunching','asspirate','asspirates','assplay','asspuppies',
+  'asspuppy','assram','assrammer','assrammers','assramming','assrams','asssucker','asssuckers','asswad','asswads',
+  'asswagon','asswagons','asswipe','asswiped','asswiper','asswipers','asswipes','asswiping','autoerotic','autoerotism',
+  'ballbag','ballbags','ballsack','ballsacks','ballsucker','ballsuckers','bastard','bastardly','bastards','beaner',
+  'beaners','beaver','beavers','biatch','biatches','bigot','bigotry','bigots','bimbo','bimbos',
+  'bint','bints','bitch','bitchass','bitchasses','bitched','bitcher','bitchers','bitches','bitchier',
+  'bitchiest','bitchin','bitching','bitchtits','bitchy','blowjob','blowjobs','blumpkin','blumpkins','bollock',
+  'bollocks','boner','boners','boob','boobies','boobs','booby','bukkake','bullshit','bullshits',
+  'bullshitted','bullshitter','bullshitters','bullshitting','bunghole','bungholes','butt','buttbang','buttbanged','buttbanger',
+  'buttbangers','buttbanging','buttbangs','buttcheek','buttcheeks','buttface','buttfaces','buttfuck','buttfucked','buttfucker',
+  'buttfuckers','buttfucking','buttfucks','butthead','buttheads','butthole','buttholes','buttmunch','buttmuncher','buttmunchers',
+  'buttmunches','buttmunching','buttplug','buttplugs',
+  'camwhore','camwhores','carpetmuncher','carpetmunchers','chickenfucker','chickenfuckers','chinaman','chinamen','chink','chinks',
+  'choad','choads','chode','chodes','chuff','chuffer','chuffers','chuffing','chuffs','circlejerk',
+  'circlejerks','clit','clitfuck','clitfucked','clitfucker','clitfuckers','clitfucking','clitfucks','clitoris','clitorises',
+  'clits','clitties','clitty','clusterfuck','clusterfucks','cock','cockass','cockasses','cockbag','cockbags',
+  'cockblock','cockblocked','cockblocker','cockblockers','cockblocking','cockblocks','cockboy','cockboys','cockface','cockfaces',
+  'cockfucker','cockfuckers','cockhead','cockheads','cockknob','cockknobs','cockmaster','cockmasters','cockmonkey','cockmonkeys',
+  'cockmonster','cockmonsters','cockmunch','cockmuncher','cockmunchers','cockmunching','cocknose','cocknoses','cocknut','cocknuts',
+  'cockpipe','cockpipes','cocks','cocksmith','cocksmiths','cocksniffer','cocksniffers','cocksuck','cocksucked','cocksucker',
+  'cocksuckers','cocksucking','cocksucks','cockwaffle','cockwaffles','coochie','coochies','coon','coonass','coonasses',
+  'coons','cooter','cooters','cornhole','cornholed','cornholes','cornholing','crackbabies','crackbaby','crackhead',
+  'crackheads','crackho','crackhoes','crackhouse','crackhouses','crackwhore','crackwhores','crap','crapped','crapper',
+  'crappers','crappier','crappiest','crapping','crappy','craps','creampie','creampied','creampieing','creampies',
+  'cretin','cretins','crotch','crotchrocket','crotchrockets','cum','cumbag','cumbags','cumbubble','cumbubbles',
+  'cumdumpster','cumdumpsters','cumguzzler','cumguzzlers','cumjockey','cumjockeys','cummed','cumming','cums','cumshot',
+  'cumshots','cumslut','cumsluts','cumstain','cumstains','cumtart','cumtarts','cunilingus','cunnilingus','cunt',
+  'cuntbag','cuntbags','cuntface','cuntfaces','cuntfuck','cuntfucker','cuntfuckers','cuntfucking','cunthole','cuntholes',
+  'cunthunter','cunthunters','cuntlick','cuntlicker','cuntlickers','cuntlicking','cuntlicks','cuntmuncher','cuntmunchers','cuntmunching',
+  'cunts','cuntsicle','cuntsicles','cuntspaz','cuntspazzes',
+  'dammit','damn','damned','damning','damnit','damns','darkie','darkies','deepthroat','deepthroated',
+  'deepthroater','deepthroaters','deepthroating','deepthroats','dick','dickbag','dickbags','dickbeater','dickbeaters','dickbeating',
+  'dickface','dickfaces','dickfuck','dickfucked','dickfucker','dickfuckers','dickfucking','dickfucks','dickhead','dickheads',
+  'dickhole','dickholes','dickjuice','dickjuices','dickless','dicklick','dicklicker','dicklickers','dicklicking','dicklicks',
+  'dickmonger','dickmongers','dicks','dickslap','dickslapper','dickslappers','dickslapping','dickslaps','dicksuck','dicksucker',
+  'dicksuckers','dicksucking','dicksucks','dickwad','dickwads','dickweasel','dickweasels','dickweed','dickweeds','dickwod',
+  'dickwods','dildo','dildos','dink','dinks','dipshit','dipshits','dipstick','dipsticks','doggie',
+  'doggystyle','doggystyles','dong','dongs','dookie','dookies','douche','douchebag','douchebags','douched',
+  'douches','douchewaffle','douchewaffles','douchey','douching','dumbass','dumbasses','dumbcunt','dumbcunts','dumbfuck',
+  'dumbfucks','dumbshit','dumbshits','dumbtwat','dumbtwats','dyke','dykes',
+  'ejaculate','ejaculated','ejaculates','ejaculating','ejaculation','ejaculations','ejaculator','ejaculators','erect','erected',
+  'erecting','erection','erections','erects','erotic','erotica','erotically','erotism',
+  'fag','fagbag','fagbags','fagdom','fagged','fagging','faggit','faggity','faggot','faggotcock',
+  'faggotcocks','faggotry','faggots','faggoty','fags','fagtard','fagtards','fannies','fanny','fap',
+  'fapped','fapper','fappers','fapping','faps','fartbag','fartbags','farted','farter','farters',
+  'fartface','fartfaces','farting','fartknocker','fartknockers','farts','fatass','fatasses','felch','felched',
+  'felcher','felchers','felches','felching','fellatio','feltch','feltcher','feltchers','feltching','fingerbang',
+  'fingerbanged','fingerbanger','fingerbangers','fingerbanging','fingerbangs','fingerfuck','fingerfucked','fingerfucker','fingerfuckers','fingerfucking',
+  'fingerfucks','fistfuck','fistfucked','fistfucker','fistfuckers','fistfucking','fistfucks','fooker','fookers','fookin',
+  'fooking','footfuck','footfucked','footfucker','footfuckers','footfucking','footfucks','frigger','friggers','frigging',
+  'fuck','fuckable','fucked','fucker','fuckers','fuckface','fuckfaces','fuckhead','fuckheads','fuckhole',
+  'fuckholes','fuckin','fucking','fuckings','fuckme','fuckmeat','fucknugget','fucknuggets','fuckoff','fuckoffs',
+  'fucks','fuckstick','fucksticks','fucktard','fucktards','fucktwat','fucktwats','fuckup','fuckups','fuckwad',
+  'fuckwads','fuckwhit','fuckwhits','fuckwit','fuckwits','fudgepacker','fudgepackers','fugly',
+  'gangbang','gangbanged','gangbanger','gangbangers','gangbanging','gangbangs','gayass','gayasses','gaybob','gaybobs',
+  'gayboy','gayboys','gaycock','gaycocks','gayfuck','gayfucker','gayfuckers','gayfucking','gayfucks','gaylord',
+  'gaylords','gaytard','gaytards','gaywad','gaywads','gigolo','gigolos','godcursed','goddam','goddammit',
+  'goddamn','goddamned','goddamning','goddamnit','goddamns','gook','gooks','gringo','gringos',
+  'handjob','handjobs','hardon','hardons','hell','hellbent','hellish','hentai','hermaphrodite','hermaphrodites',
+  'heshe','heshes','hick','hicks','hillbillies','hillbilly','hitler','hitlers','hoe','hoer',
+  'hoers','hoes','homo','homoerotic','homos','homosexual','homosexuality','homosexuals','hooker','hookers',
+  'hornbag','hornbags','horny','horseshit','horseshits','hotbox','hotboxed','hotboxes','hotboxing','hump',
+  'humped','humper','humpers','humping','humps',
+  'incest','intercourse',
+  'jackass','jackasses','jackoff','jackoffs','jagoff','jagoffs','jailbait','jailbaits','jap','japs',
+  'jerkoff','jerkoffs','jigaboo','jigaboos','jissom','jissoms','jiz','jizm','jizz','jizzed',
+  'jizzes','jizzing','jizzy',
+  'kike','kikes','killyourself','knob','knobend','knobends','knobhead','knobheads','knobjocky','knobs',
+  'kooch','kootch','kraut','krauts','kunt','kunts','kyke','kykes',
+  'labia','labias','lardass','lardasses','lesbo','lesbos','libtard','libtards','limpdick','limpdicks',
+  'livesex','lubejob','lubejobs',
+  'mafucker','mafuckers','masochist','masochists','masturbate','masturbated','masturbater','masturbaters','masturbates','masturbating',
+  'masturbation','masturbations','meth','methhead','methheads','midget','midgets','milf','milfs','minge',
+  'minger','minges','mof','mofo','mofos','molest','molested','molester','molesters','molesting',
+  'molests','mong','mongoloid','mongoloids','mongs','moolie','moolies','moron','morons','motherfuck',
+  'motherfucked','motherfucker','motherfuckers','motherfuckin','motherfucking','motherfucks','muff','muffdive','muffdived','muffdiver',
+  'muffdivers','muffdives','muffdiving','muffs','muthafucka','muthafuckas','muthafucker','muthafuckers','muthafucking',
+  'nads','nazi','nazis','necrophiliac','negro','negroes','nig','nigga','niggas','nigger',
+  'niggered','niggering','niggers','niglet','niglets','nimrod','nimrods','nip','nipple','nipples',
+  'nips','nob','nobhead','nobheads','nobs','nonce','nonces','numbnut','numbnuts','nutsack',
+  'nutsacks','nutter','nutters',
+  'oral','organ','organs','orgasm','orgasmed','orgasmic','orgasming','orgasms','orgies','orgy',
+  'paedo','paedophile','paedophiles','paedos','paki','pakis','panooch','panties','panty','pecker',
+  'peckerhead','peckerheads','peckers','pedo','pedophile','pedophiles','pedophilia','pedos','penis','penises',
+  'perv','perve','perved','perversion','perversions','pervert','perverted','perves','pervo','pervos',
+  'pervs','piss','pissed','pisser','pissers','pisses','pissflaps','pissing','pissoff','pissy',
+  'polack','polacks','poof','poofs','pooftah','poofter','poofters','poon','poons','poontang',
+  'poontangs','poop','pooper','poopers','poopface','poopfaces','pooping','poops','poopy','porchmonkey',
+  'porchmonkeys','porn','porno','pornographic','pornography','pornos','prick','pricked','pricking','pricks',
+  'prig','prigs','pron','prons','prostitute','prostitutes','pube','pubes','punani','punanis',
+  'punannies','punany','punta','puntas','pussies','pussy','pussyfart','pussyfarts','pussylicker','pussylickers',
+  'pussylicking','pussylicks','pussylover','pussylovers','pussypounder','pussypounders',
+  'queef','queefed','queefing','queefs','queer','queerbait','queerbaits','queerbo','queerbos','queers',
+  'quim',
+  'racism','racist','racists','raghead','ragheads','randy','rape','raped','raper','rapers',
+  'rapes','raping','rapist','rapists','rectum','rectums','redneck','rednecks','retard','retarded',
+  'retards','rimjob','rimjobs',
+  'sandnigger','sandniggers','scag','scags','scank','scanks','schlong','schlongs','screw','screwed',
+  'screwing','screws','scromp','scrotum','scrotums','scumbag','scumbags','semen','semens','sexcam',
+  'sexcams','sexed','sexes','sexist','sexists','sexpot','sexpots','sextape','sextapes','sexually',
+  'sexy','shag','shagged','shagger','shaggers','shagging','shags','shemale','shemales','shit',
+  'shitass','shitasses','shitbag','shitbags','shitbird','shitbirds','shitblimp','shitblimps','shitbrain','shitbrains',
+  'shitbreath','shitcanned','shitcunt','shitcunts','shitdick','shitdicks','shiteater','shiteaters','shited','shites',
+  'shitey','shitface','shitfaced','shitfaces','shitforbrains','shitfuck','shitfucker','shitfuckers','shitfucking','shitfucks',
+  'shitfull','shithead','shitheads','shithole','shitholes','shithouse','shithouses','shitkicker','shitkickers','shitload',
+  'shitloads','shitlord','shitlords','shitmuncher','shitmunchers','shits','shitspitter','shitstain','shitstains','shitstick',
+  'shitstorm','shitstorms','shitter','shitters','shittier','shittiest','shittin','shitting','shitty','shitwhore',
+  'shiz','shizz','shizzle','sissy','skank','skanks','skanky','sleaze','sleazebag','sleazebags',
+  'sleazes','slut','slutbag','slutbags','slutface','slutfaces','sluts','slutty','smegma','smut',
+  'smuts','snatch','snatches','sodom','sodomite','sodomites','sodomize','sodomized','sodomizes','sodomizing',
+  'spaz','spazz','spazzed','spazzes','spazzing','spazzy','sperm','sperms','spic','spicks',
+  'spics','spook','spooks','spunk','spunks','stripper','strippers','stupidass','stupidasses','suckass',
+  'taintlicker','taintlickers','tampon','tampons','tard','tards','teabag','teabagged','teabagger','teabaggers',
+  'teabagging','teabags','testicle','testicles','threesome','threesomes','throating','tit','titbag','titbags',
+  'titfuck','titfucked','titfucker','titfuckers','titfucking','titfucks','tits','tittie','titties','titty',
+  'tittyfuck','tittyfucked','tittyfucker','tittyfuckers','tittyfucking','tittyfucks','tonguefuck','tonguefucks','toolbag','toolbags',
+  'tosser','tossers','towelhead','towelheads','tramp','tramps','trannies','tranny','trashbag','trashbags',
+  'turd','turdface','turdfaces','turds','twat','twatface','twatfaces','twathead','twatheads','twatlip',
+  'twatlips','twats','twatwaffle','twatwaffles','twink','twinkie','twinkies','twinks',
+  'unclefucker','unclefuckers','urinate',
+  'vagina','vaginal','vaginas','vibrator','vibrators','vulva',
+  'wank','wanked','wanker','wankers','wanking','wankjob','wankjobs','wanks','wankstain','wankstains',
+  'wanky','wedgie','wedgies','wetback','wetbacks','whore','whored','whoreface','whorefaces','whorehouse',
+  'whorehouses','whores','whoring','whorish','wigger','wiggers','wiggery','willies','willy','wog',
+  'wogs','wop','wops',
+  'xrated','xxx',
+  'yobbo','yobs',
+  'zoophile','zoophilia',
 ];
+
+/**
+ * Compiled regex that matches any explicit word, including spaced-out obfuscations
+ * (e.g. "f u c k", "s.h.i.t", "b-i-t-c-h"). Built once at module load for speed.
+ * Word-boundary anchored so we don't match inside legitimate words ("hello", "class", etc).
+ * Spaced detection only applies to entries with 4+ characters to avoid over-matching short words.
+ */
+const _EXPLICIT_REGEX = (() => {
+  const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const sep = '[\\s._\\-]+';
+  const byLengthDesc = (a, b) => b.length - a.length;
+  const direct = EXPLICIT_WORDS.slice().sort(byLengthDesc).map(escape).join('|');
+  const spaced = EXPLICIT_WORDS
+    .filter((w) => w.length >= 4)
+    .sort(byLengthDesc)
+    .map((w) => w.split('').map(escape).join(sep))
+    .join('|');
+  return new RegExp(`\\b(?:${direct}|${spaced})\\b`, 'gi');
+})();
 
 function filterExplicit(text) {
   if (!text) return text;
-  let filtered = text;
-  for (const word of EXPLICIT_WORDS) {
-    const regex = new RegExp(`\\b${word}\\b`, 'gi');
-    filtered = filtered.replace(regex, match => '*'.repeat(match.length));
-  }
-  return filtered;
+  return text.replace(_EXPLICIT_REGEX, (match) => '*'.repeat(match.length));
 }
 
   async function sendMessage(text, isThread = false) {

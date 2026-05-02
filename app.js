@@ -1955,9 +1955,11 @@ const EXPLICIT_WORDS = [
 const _EXPLICIT_REGEX = (() => {
   const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const sep = '[\\s._\\-]+';
-  const direct = EXPLICIT_WORDS.map(escape).join('|');
+  const byLengthDesc = (a, b) => b.length - a.length;
+  const direct = EXPLICIT_WORDS.slice().sort(byLengthDesc).map(escape).join('|');
   const spaced = EXPLICIT_WORDS
     .filter((w) => w.length >= 4)
+    .sort(byLengthDesc)
     .map((w) => w.split('').map(escape).join(sep))
     .join('|');
   return new RegExp(`\\b(?:${direct}|${spaced})\\b`, 'gi');
