@@ -956,7 +956,7 @@ io.on('connection', (socket) => {
       id: 'msg_' + uuidv4().slice(0, 12),
       userId: currentUser.id,
       userName: currentUser.name,
-      text: (text || '').trim(),
+      text: filterExplicit((text || '').trim()),
       file: file || null,
       ts: Date.now(),
       reactions: {},
@@ -980,7 +980,7 @@ io.on('connection', (socket) => {
         id: 'reply_' + uuidv4().slice(0, 12),
         userId: currentUser.id,
         userName: currentUser.name,
-        text: text.trim(),
+        text: filterExplicit(text.trim()),
         ts: Date.now(),
       };
 
@@ -1130,6 +1130,21 @@ io.on('connection', (socket) => {
     }
   });
 });
+
+const EXPLICIT_WORDS = [
+  'fuck', 'shit', 'bitch', 'asshole', 'cunt', 'dick', 'pussy', 'bastard', 'slut', 'whore',
+  'faggot', 'nigger', 'cock', 'motherfucker', 'twat', 'wanker', 'prick'
+];
+
+function filterExplicit(text) {
+  if (!text) return text;
+  let filtered = text;
+  for (const word of EXPLICIT_WORDS) {
+    const regex = new RegExp(`\\b${word}\\b`, 'gi');
+    filtered = filtered.replace(regex, match => '*'.repeat(match.length));
+  }
+  return filtered;
+}
 
 // ── Cleanup orphaned messages (from deleted users) ──
 async function loadBlockedIps() {

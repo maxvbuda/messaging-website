@@ -1262,7 +1262,6 @@
     videoPeerId = fromUserId;
     videoSignalChannelId = sigCh;
     if (activeChannelId !== sigCh) switchChannel(sigCh);
-    videoIcePending = [];
     let stream;
     try {
       stream = await acquireCallMedia();
@@ -1270,6 +1269,7 @@
       stream = new MediaStream();
       stream.__sfMediaWarning = 'Camera and microphone unavailable. You can still receive the call.';
     }
+    if (videoPeerId !== fromUserId) return;
     videoLocalStream = stream;
     const localEl = $('#videoLocal');
     const remoteEl = $('#videoRemote');
@@ -1382,6 +1382,7 @@
       stream = new MediaStream();
       stream.__sfMediaWarning = 'Camera and microphone unavailable. You can still receive the call.';
     }
+    if (videoPeerId !== peerId) return;
     videoLocalStream = stream;
     const localEl = $('#videoLocal');
     const remoteEl = $('#videoRemote');
@@ -1507,6 +1508,7 @@
         return;
       }
       videoPendingOffer = { fromUserId, sdp, channelId };
+      videoIcePending = []; // Clear queue for the new incoming offer
       const name = resolveUser(fromUserId).name;
       const t = $('#videoIncomingTitle');
       if (t) t.textContent = `${name} wants a video call`;
@@ -1798,6 +1800,21 @@
   //  ACTIONS
   // ==============================
 
+const EXPLICIT_WORDS = [
+  'fuck', 'shit', 'bitch', 'asshole', 'cunt', 'dick', 'pussy', 'bastard', 'slut', 'whore',
+  'faggot', 'nigger', 'cock', 'motherfucker', 'twat', 'wanker', 'prick'
+];
+
+function filterExplicit(text) {
+  if (!text) return text;
+  let filtered = text;
+  for (const word of EXPLICIT_WORDS) {
+    const regex = new RegExp(`\\b${word}\\b`, 'gi');
+    filtered = filtered.replace(regex, match => '*'.repeat(match.length));
+  }
+  return filtered;
+}
+
   async function sendMessage(text, isThread = false) {
     if (!text.trim() && !pendingFile) return;
     if (!currentUser) return;
@@ -1819,7 +1836,8 @@
         socket.emit('send_message', { channelId: activeChannelId, text: text.trim(), file });
       }
     } else {
-      const msg = { id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2,6), userId: currentUser.id, text: text.trim(), ts: Date.now(), reactions: {}, threadReplies: [] };
+      const filteredText = filterExplicit(text.trim());
+      const msg = { id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2,6), userId: currentUser.id, text: filteredText, ts: Date.now(), reactions: {}, threadReplies: [] };
       if (isThread && activeThreadMsgId) {
         const allMsgs = lsGetAllMessages();
         const chMsgs = allMsgs[activeChannelId] || [];
