@@ -117,6 +117,7 @@
       <div class="tab active" data-tab="requests">Join Requests <span id="pendingBadge"></span></div>
       <div class="tab" data-tab="invites">Invite Codes</div>
       <div class="tab" data-tab="users">Users</div>
+      <div class="tab" data-tab="messages">Messages</div>
     </div>
 
     <!-- Join Requests -->
@@ -139,6 +140,16 @@
     <!-- Users -->
     <div class="tab-pane" id="tab-users">
       <div id="usersList"></div>
+    </div>
+
+    <!-- Messages -->
+    <div class="tab-pane" id="tab-messages">
+      <div class="gen-invite-bar" style="margin-bottom:8px">
+        <input type="text" id="msgSearchQuery" placeholder="Search messages…" style="flex:1">
+        <input type="text" id="msgSearchChannel" placeholder="Channel (optional)" style="width:160px">
+        <button class="btn-accent" id="msgSearchBtn">Search</button>
+      </div>
+      <div id="msgSearchResults"><div class="empty">Enter a query above and press Search.</div></div>
     </div>
   </div>
 </div>
@@ -213,6 +224,7 @@
       if (tab.dataset.tab === 'requests') loadRequests();
       if (tab.dataset.tab === 'invites') loadInvites();
       if (tab.dataset.tab === 'users') loadUsers();
+      if (tab.dataset.tab === 'messages') { document.getElementById('msgSearchResults').innerHTML = '<div class="empty">Enter a query above and press Search.</div>'; }
     });
   });
 
@@ -371,6 +383,44 @@
     await api('DELETE', `/api/admin/users/${id}`);
     loadUsers();
   }
+
+  // ── Messages ──
+  async function searchMessages() {
+    const q = document.getElementById('msgSearchQuery').value.trim();
+    const channel = document.getElementById('msgSearchChannel').value.trim();
+    const el = document.getElementById('msgSearchResults');
+    if (!q) { el.innerHTML = '<div class="empty">Please enter a search query.</div>'; return; }
+    el.innerHTML = '<div class="empty">Searching…</div>';
+    const qs = '?q=' + encodeURIComponent(q) + (channel ? '&channel=' + encodeURIComponent(channel) : '');
+    const d = await api('GET', '/api/admin/messages/search' + qs);
+    if (d.error) { el.innerHTML = '<div class="empty" style="color:var(--red)">' + esc(d.error) + '</div>'; return; }
+    const msgs = d.messages || [];
+    if (!msgs.length) { el.innerHTML = '<div class="empty">No messages found.</div>'; return; }
+    el.innerHTML = `<div class="card">${msgs.map(m => `
+      <div class="card-row" id="msgrow-${esc(m.id)}">
+        <div class="row-info">
+          <div class="row-name" style="font-size:12px;color:var(--muted)">#${esc(m.channelName)} · ${esc(m.userName)} · ${timeAgo(m.ts)}${m.isThreadReply ? ' · <em>thread reply</em>' : ''}</div>
+          <div class="row-sub" style="font-size:14px;color:var(--text);margin-top:4px">${esc(m.text)}</div>
+        </div>
+        <div class="row-actions">
+          <button class="btn-deny" onclick="deleteMsg('${esc(m.channelId)}','${esc(m.id)}',${m.isThreadReply},'${esc(m.parentMsgId || '')}')">Delete</button>
+        </div>
+      </div>
+    `).join('')}</div>`;
+  }
+
+  async function deleteMsg(channelId, msgId, isThreadReply, parentMsgId) {
+    if (!confirm('Delete this message? This cannot be undone.')) return;
+    let path = `/api/admin/messages/${encodeURIComponent(channelId)}/${encodeURIComponent(msgId)}`;
+    if (isThreadReply && parentMsgId) path += `?threadReply=true&parentMsgId=${encodeURIComponent(parentMsgId)}`;
+    const d = await api('DELETE', path);
+    if (d.error) { alert(d.error); return; }
+    const row = document.getElementById('msgrow-' + msgId);
+    if (row) row.remove();
+  }
+
+  document.getElementById('msgSearchBtn').addEventListener('click', searchMessages);
+  document.getElementById('msgSearchQuery').addEventListener('keydown', e => { if (e.key === 'Enter') searchMessages(); });
 
   // ── Init ──
   function showApp() {
