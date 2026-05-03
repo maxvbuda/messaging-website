@@ -316,43 +316,122 @@
 
             <!-- Build Avatar tab -->
             <div id="avtPaneBuild" style="display:none">
-              <div class="avb-preview-row">
-                <div id="avbPreview"></div>
-              </div>
-              <div class="avb-options-scroll">
-                <div class="avb-row">
-                  <span class="avb-label">Background</span>
-                  <div class="avb-swatches" id="avbBgSwatches"></div>
+              <div class="avb-layout">
+                <!-- Preview + actions -->
+                <div class="avb-header">
+                  <div id="avbPreview"></div>
+                  <div class="avb-header-btns">
+                    <button type="button" class="avb-action-btn" id="avbRandomizeBtn">🎲 Randomize</button>
+                    <button type="button" class="btn-primary avb-save-btn" id="saveBuiltBtn">Save Avatar</button>
+                  </div>
                 </div>
-                <div class="avb-row">
-                  <span class="avb-label">Skin Tone</span>
-                  <div class="avb-swatches" id="avbSkinSwatches"></div>
+                <!-- Category tabs -->
+                <div class="avb-cat-tabs">
+                  <button class="avb-cat-btn active" data-cat="face">Face</button>
+                  <button class="avb-cat-btn" data-cat="hair">Hair</button>
+                  <button class="avb-cat-btn" data-cat="eyes">Eyes</button>
+                  <button class="avb-cat-btn" data-cat="nose">Nose</button>
+                  <button class="avb-cat-btn" data-cat="mouth">Mouth</button>
+                  <button class="avb-cat-btn" data-cat="acc">Extras</button>
+                  <button class="avb-cat-btn" data-cat="bg">BG</button>
                 </div>
-                <div class="avb-row">
-                  <span class="avb-label">Hair Style</span>
-                  <div class="avb-chips" id="avbHairStyleChips"></div>
-                </div>
-                <div class="avb-row" id="avbHairColorRow">
-                  <span class="avb-label">Hair Color</span>
-                  <div class="avb-swatches" id="avbHairColorSwatches"></div>
-                </div>
-                <div class="avb-row">
-                  <span class="avb-label">Eyes</span>
-                  <div class="avb-chips" id="avbEyeChips"></div>
-                </div>
-                <div class="avb-row">
-                  <span class="avb-label">Expression</span>
-                  <div class="avb-chips" id="avbMouthChips"></div>
-                </div>
-                <div class="avb-row">
-                  <span class="avb-label">Accessories</span>
-                  <div class="avb-toggles">
-                    <label class="avb-toggle-lbl"><input type="checkbox" id="avbGlassesChk"> Glasses</label>
-                    <label class="avb-toggle-lbl"><input type="checkbox" id="avbHatChk"> Hat</label>
+                <!-- Option panels -->
+                <div class="avb-panels">
+                  <!-- Face panel -->
+                  <div class="avb-panel active" data-panel="face">
+                    <div class="avb-row">
+                      <span class="avb-label">Face Shape</span>
+                      <div class="avb-chips" id="avbFaceChips"></div>
+                    </div>
+                    <div class="avb-row">
+                      <span class="avb-label">Skin Tone</span>
+                      <div class="avb-swatches" id="avbSkinSwatches"></div>
+                    </div>
+                    <div class="avb-row">
+                      <span class="avb-label">Ear Size</span>
+                      <div class="avb-chips" id="avbEarChips"></div>
+                    </div>
+                    <div class="avb-row">
+                      <span class="avb-label">Cheeks</span>
+                      <div class="avb-chips" id="avbCheekChips"></div>
+                    </div>
+                  </div>
+                  <!-- Hair panel -->
+                  <div class="avb-panel" data-panel="hair">
+                    <div class="avb-row">
+                      <span class="avb-label">Hairstyle</span>
+                      <div class="avb-chips" id="avbHairStyleChips"></div>
+                    </div>
+                    <div class="avb-row" id="avbHairColorRow">
+                      <span class="avb-label">Hair Color</span>
+                      <div class="avb-swatches" id="avbHairColorSwatches"></div>
+                    </div>
+                    <div class="avb-row">
+                      <span class="avb-label">Facial Hair</span>
+                      <div class="avb-chips" id="avbFacialHairChips"></div>
+                    </div>
+                  </div>
+                  <!-- Eyes panel -->
+                  <div class="avb-panel" data-panel="eyes">
+                    <div class="avb-row">
+                      <span class="avb-label">Eye Shape</span>
+                      <div class="avb-chips" id="avbEyeShapeChips"></div>
+                    </div>
+                    <div class="avb-row">
+                      <span class="avb-label">Eye Color</span>
+                      <div class="avb-swatches" id="avbEyeColorSwatches"></div>
+                    </div>
+                    <div class="avb-row">
+                      <span class="avb-label">Eyelashes</span>
+                      <div class="avb-chips" id="avbLashChips"></div>
+                    </div>
+                    <div class="avb-row">
+                      <span class="avb-label">Eyebrows</span>
+                      <div class="avb-chips" id="avbBrowChips"></div>
+                    </div>
+                  </div>
+                  <!-- Nose panel -->
+                  <div class="avb-panel" data-panel="nose">
+                    <div class="avb-row">
+                      <span class="avb-label">Nose Style</span>
+                      <div class="avb-chips" id="avbNoseChips"></div>
+                    </div>
+                  </div>
+                  <!-- Mouth panel -->
+                  <div class="avb-panel" data-panel="mouth">
+                    <div class="avb-row">
+                      <span class="avb-label">Expression</span>
+                      <div class="avb-chips" id="avbMouthChips"></div>
+                    </div>
+                    <div class="avb-row">
+                      <span class="avb-label">Lip Color</span>
+                      <div class="avb-swatches" id="avbLipSwatches"></div>
+                    </div>
+                  </div>
+                  <!-- Accessories panel -->
+                  <div class="avb-panel" data-panel="acc">
+                    <div class="avb-row">
+                      <span class="avb-label">Glasses</span>
+                      <div class="avb-chips" id="avbGlassesChips"></div>
+                    </div>
+                    <div class="avb-row">
+                      <span class="avb-label">Earrings</span>
+                      <div class="avb-chips" id="avbEarringsChips"></div>
+                    </div>
+                    <div class="avb-row">
+                      <span class="avb-label">Headwear</span>
+                      <div class="avb-chips" id="avbHatChips"></div>
+                    </div>
+                  </div>
+                  <!-- Background panel -->
+                  <div class="avb-panel" data-panel="bg">
+                    <div class="avb-row">
+                      <span class="avb-label">Background Gradient</span>
+                      <div class="avb-swatches avb-bg-swatches" id="avbBgSwatches"></div>
+                    </div>
                   </div>
                 </div>
               </div>
-              <button class="btn-primary w-full" id="saveBuiltBtn">Save Avatar</button>
             </div>
           </div>
 

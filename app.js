@@ -2521,109 +2521,607 @@ function filterExplicit(text) {
   }
 
   // ── Avatar editor ──
+  // ═══════════════════════════════════════════════════════════
+  //  AVATAR BUILDER v2 — Polished Memoji-quality SVG avatars
+  // ═══════════════════════════════════════════════════════════
   (function initAvatarEditor() {
-    // ── Constants ──
-    const AB_BG = ['#6c5ce7','#0984e3','#27ae60','#e17055','#e84393','#00cec9','#fdcb6e','#636e72'];
-    const AB_SKIN = ['#FDDBB4','#EAC38A','#D4956A','#B5774D','#8D5524','#4A2912'];
-    const AB_HAIR_C = ['#1A0A00','#3B2314','#7B4A2B','#B8860B','#CC4A2A','#E07020','#888888','#EEEEEE'];
-    const AB_HAIR_S = [
-      { name: 'Bald',          back: '', front: '' },
-      { name: 'Short',         back: `<ellipse cx="50" cy="28" rx="23" ry="16" fill="$h"/>`, front: `<rect x="27" y="28" width="4" height="10" rx="2" fill="$h"/><rect x="69" y="28" width="4" height="10" rx="2" fill="$h"/>` },
-      { name: 'Buzz',          back: `<ellipse cx="50" cy="27" rx="23" ry="12" fill="$h"/>`, front: `<rect x="27" y="27" width="4" height="7" rx="2" fill="$h"/><rect x="69" y="27" width="4" height="7" rx="2" fill="$h"/>` },
-      { name: 'Side Part',     back: `<ellipse cx="50" cy="28" rx="24" ry="17" fill="$h"/>`, front: `<path d="M28,36 C30,22 40,18 50,19 C62,18 72,25 73,36 C70,27 60,24 50,24 C40,24 30,27 28,36Z" fill="$h"/>` },
-      { name: 'Long Straight', back: `<path d="M27,52 C25,70 26,88 28,100 L72,100 C74,88 75,70 73,52 C67,32 56,26 50,26 C44,26 33,32 27,52Z" fill="$h"/>`, front: `<ellipse cx="50" cy="26" rx="23" ry="14" fill="$h"/>` },
-      { name: 'Long Wavy',     back: `<ellipse cx="50" cy="27" rx="24" ry="17" fill="$h"/><path d="M27,50 C23,68 25,88 29,100 L34,100 C30,86 29,66 32,50M73,50 C77,68 75,88 71,100 L66,100 C70,86 71,66 68,50" fill="$h"/>`, front: '' },
-      { name: 'Mohawk',        back: '', front: `<rect x="44" y="8" width="12" height="24" rx="6" fill="$h"/>` },
-      { name: 'Ponytail',      back: `<ellipse cx="50" cy="27" rx="23" ry="15" fill="$h"/><path d="M62,41 Q78,55 73,80 L68,82 Q72,58 60,46Z" fill="$h"/>`, front: `<ellipse cx="50" cy="26" rx="23" ry="13" fill="$h"/>` },
-      { name: 'Bob',           back: `<path d="M27,52 C26,64 28,74 34,82 C40,88 46,90 50,90 C54,90 60,88 66,82 C72,74 74,64 73,52 C67,34 56,26 50,26 C44,26 33,34 27,52Z" fill="$h"/>`, front: `<ellipse cx="50" cy="26" rx="23" ry="14" fill="$h"/>` },
+
+    // ── 12 radial gradient backgrounds ──
+    const AB_BG = [
+      {name:'Violet',  c1:'#a78bfa',c2:'#5b21b6'},
+      {name:'Azure',   c1:'#60a5fa',c2:'#1e40af'},
+      {name:'Mint',    c1:'#34d399',c2:'#064e3b'},
+      {name:'Coral',   c1:'#f87171',c2:'#991b1b'},
+      {name:'Rose',    c1:'#f472b6',c2:'#831843'},
+      {name:'Teal',    c1:'#2dd4bf',c2:'#134e4a'},
+      {name:'Gold',    c1:'#fcd34d',c2:'#92400e'},
+      {name:'Slate',   c1:'#94a3b8',c2:'#1e293b'},
+      {name:'Peach',   c1:'#fb923c',c2:'#7c2d12'},
+      {name:'Lilac',   c1:'#c084fc',c2:'#581c87'},
+      {name:'Night',   c1:'#475569',c2:'#020617'},
+      {name:'Sunrise', c1:'#fde68a',c2:'#dc2626'},
     ];
-    const AB_EYES = [
-      { name: 'Dots',   svg: `<circle cx="42" cy="50" r="3" fill="#1A0A00"/><circle cx="58" cy="50" r="3" fill="#1A0A00"/>` },
-      { name: 'Open',   svg: `<ellipse cx="42" cy="50" rx="5" ry="5.5" fill="white"/><circle cx="42" cy="50" r="3" fill="#1A0A00"/><ellipse cx="58" cy="50" rx="5" ry="5.5" fill="white"/><circle cx="58" cy="50" r="3" fill="#1A0A00"/>` },
-      { name: 'Squint', svg: `<path d="M38,51 Q42,46 46,51" stroke="#1A0A00" stroke-width="2.5" fill="none" stroke-linecap="round"/><path d="M54,51 Q58,46 62,51" stroke="#1A0A00" stroke-width="2.5" fill="none" stroke-linecap="round"/>` },
-      { name: 'Wide',   svg: `<ellipse cx="42" cy="50" rx="5.5" ry="6.5" fill="white"/><circle cx="42" cy="51" r="3.5" fill="#1A0A00"/><ellipse cx="58" cy="50" rx="5.5" ry="6.5" fill="white"/><circle cx="58" cy="51" r="3.5" fill="#1A0A00"/>` },
-      { name: 'Wink',   svg: `<ellipse cx="42" cy="50" rx="5" ry="5.5" fill="white"/><circle cx="42" cy="50" r="3" fill="#1A0A00"/><path d="M54,50 Q58,46 62,50" stroke="#1A0A00" stroke-width="2.5" fill="none" stroke-linecap="round"/>` },
-      { name: 'Stars',  svg: `<text x="38" y="55" font-size="10" fill="#1A0A00">★</text><text x="54" y="55" font-size="10" fill="#1A0A00">★</text>` },
+
+    // ── 8 skin tones with highlight / shadow for 3D gradient ──
+    const AB_SKIN = [
+      {name:'Very Fair',  base:'#FDE8D8',shd:'#ECC5A8',hi:'#FFF3ED'},
+      {name:'Fair',       base:'#F5C5A3',shd:'#D49878',hi:'#FDDBB4'},
+      {name:'Medium',     base:'#E0A882',shd:'#BA8060',hi:'#EEC298'},
+      {name:'Olive',      base:'#C68642',shd:'#9A6020',hi:'#D9A060'},
+      {name:'Tan',        base:'#B5724A',shd:'#8D5230',hi:'#C88A60'},
+      {name:'Brown',      base:'#8D5524',shd:'#6A3C10',hi:'#A06E38'},
+      {name:'Dark Brown', base:'#5C3210',shd:'#3E1F06',hi:'#734022'},
+      {name:'Deep',       base:'#3B1F0A',shd:'#1A0A02',hi:'#4D2A10'},
     ];
+
+    // ── 6 face shapes ──
+    const AB_FACE_SHAPES = [
+      {name:'Round',   face:`<ellipse cx="100" cy="115" rx="58" ry="62"/>`,  earY:112,earRy:14},
+      {name:'Oval',    face:`<ellipse cx="100" cy="118" rx="50" ry="70"/>`,  earY:116,earRy:14},
+      {name:'Square',  face:`<path d="M50,76 Q50,62 100,62 Q150,62 150,76 L150,158 Q150,172 100,172 Q50,172 50,158Z"/>`, earY:112,earRy:14},
+      {name:'Heart',   face:`<path d="M100,168 Q58,148 50,116 Q44,88 66,76 Q82,66 94,80 Q97,84 100,90 Q103,84 106,80 Q118,66 134,76 Q156,88 150,116 Q142,148 100,168Z"/>`, earY:104,earRy:12},
+      {name:'Diamond', face:`<path d="M100,62 L152,110 L100,168 L48,110Z"/>`, earY:110,earRy:11},
+      {name:'Oblong',  face:`<ellipse cx="100" cy="122" rx="45" ry="76"/>`,  earY:118,earRy:14},
+    ];
+
+    // ── 10 hair colors ──
+    const AB_HAIR_COLORS = [
+      {name:'Black',      hex:'#1C0800',dark:'#0A0400'},
+      {name:'Dark Brown', hex:'#3B2314',dark:'#201008'},
+      {name:'Brown',      hex:'#7B4A2B',dark:'#4E2C14'},
+      {name:'Blonde',     hex:'#D4AA70',dark:'#A07828'},
+      {name:'Red',        hex:'#CC4422',dark:'#8A2010'},
+      {name:'Auburn',     hex:'#7B2C1E',dark:'#4E1510'},
+      {name:'Gray',       hex:'#909090',dark:'#606060'},
+      {name:'White',      hex:'#E8E8E8',dark:'#AAAAAA'},
+      {name:'Blue',       hex:'#2563EB',dark:'#1E3A8A'},
+      {name:'Pink',       hex:'#EC4899',dark:'#9D174D'},
+    ];
+
+    // ── 12 hair styles ($h=color hex, $d=dark hex) ──
+    const AB_HAIR_STYLES = [
+      {name:'Bald', back:'', front:''},
+      {name:'Buzz Cut',
+       back:`<ellipse cx="100" cy="74" rx="56" ry="32" fill="$h" opacity="0.85"/>`,
+       front:`<path d="M44,88 C46,67 55,59 100,59 C145,59 154,67 156,88 C150,71 140,65 100,65 C60,65 50,71 44,88Z" fill="$h"/>
+<rect x="44" y="76" rx="5" width="10" height="20" fill="$h"/>
+<rect x="146" y="76" rx="5" width="10" height="20" fill="$h"/>`},
+      {name:'Short Crop',
+       back:`<ellipse cx="100" cy="70" rx="58" ry="37" fill="$h"/>`,
+       front:`<path d="M42,88 C42,63 54,54 100,54 C146,54 158,63 158,88 C152,69 140,62 100,62 C60,62 48,69 42,88Z" fill="$h"/>
+<rect x="42" y="76" rx="5" width="11" height="26" fill="$h"/>
+<rect x="147" y="76" rx="5" width="11" height="26" fill="$h"/>`},
+      {name:'Textured Top',
+       back:`<ellipse cx="100" cy="70" rx="58" ry="37" fill="$h"/>`,
+       front:`<path d="M42,88 C42,63 54,54 100,54 C146,54 158,63 158,88 C152,69 140,62 100,62 C60,62 48,69 42,88Z" fill="$h"/>
+<rect x="42" y="76" rx="5" width="11" height="26" fill="$h"/>
+<rect x="147" y="76" rx="5" width="11" height="26" fill="$h"/>
+<path d="M76,60 Q80,43 88,58 Q93,40 100,56 Q107,40 112,58 Q120,43 124,60" stroke="$h" stroke-width="8" fill="none" stroke-linecap="round"/>`},
+      {name:'Side Sweep',
+       back:`<ellipse cx="100" cy="70" rx="58" ry="37" fill="$h"/>`,
+       front:`<path d="M42,88 C48,65 63,57 100,57 C137,57 154,67 158,88 C150,69 138,63 100,63 C62,63 50,71 42,88Z" fill="$h"/>
+<rect x="42" y="76" rx="5" width="11" height="26" fill="$h"/>
+<rect x="147" y="76" rx="5" width="11" height="26" fill="$h"/>
+<path d="M56,63 C72,52 118,55 148,63" stroke="$h" stroke-width="9" fill="none" stroke-linecap="round"/>`},
+      {name:'Undercut',
+       back:`<ellipse cx="100" cy="70" rx="58" ry="37" fill="$d" opacity="0.9"/>`,
+       front:`<rect x="42" y="66" rx="4" width="12" height="42" fill="$d"/>
+<rect x="146" y="66" rx="4" width="12" height="42" fill="$d"/>
+<ellipse cx="100" cy="62" rx="44" ry="24" fill="$h"/>
+<path d="M56,68 C58,48 142,48 144,68 L144,72 C140,52 60,52 56,72Z" fill="$h"/>`},
+      {name:'Afro',
+       back:`<ellipse cx="100" cy="64" rx="72" ry="56" fill="$h"/>
+<circle cx="54" cy="72" r="26" fill="$h"/><circle cx="146" cy="72" r="26" fill="$h"/>
+<circle cx="76" cy="37" r="21" fill="$h"/><circle cx="124" cy="37" r="21" fill="$h"/>
+<circle cx="100" cy="29" r="24" fill="$h"/>`,
+       front:`<rect x="42" y="72" rx="5" width="12" height="28" fill="$h"/>
+<rect x="146" y="72" rx="5" width="12" height="28" fill="$h"/>`},
+      {name:'Curly',
+       back:`<ellipse cx="100" cy="67" rx="60" ry="43" fill="$h"/>
+<circle cx="47" cy="78" r="18" fill="$h"/><circle cx="153" cy="78" r="18" fill="$h"/>
+<circle cx="63" cy="50" r="15" fill="$h"/><circle cx="137" cy="50" r="15" fill="$h"/>
+<circle cx="100" cy="40" r="17" fill="$h"/>`,
+       front:`<rect x="42" y="76" rx="5" width="11" height="24" fill="$h"/>
+<rect x="147" y="76" rx="5" width="11" height="24" fill="$h"/>
+<circle cx="57" cy="84" r="10" fill="$h"/><circle cx="143" cy="84" r="10" fill="$h"/>`},
+      {name:'Long Straight',
+       back:`<path d="M42,82 C42,62 54,52 100,52 C146,52 158,62 158,82 L160,180 Q128,188 100,188 Q72,188 40,180Z" fill="$h"/>`,
+       front:`<path d="M42,82 C42,62 54,52 100,52 C146,52 158,62 158,82 C152,64 140,58 100,58 C60,58 48,64 42,82Z" fill="$h"/>
+<rect x="42" y="74" rx="5" width="11" height="24" fill="$h"/>
+<rect x="147" y="74" rx="5" width="11" height="24" fill="$h"/>`},
+      {name:'Long Wavy',
+       back:`<path d="M42,82 C42,60 54,52 100,52 C146,52 158,60 158,82 L164,154 Q156,176 148,184 Q145,170 153,154 L148,90 C145,72 138,64 100,64 C62,64 55,72 52,90 L47,154 Q55,170 52,184 Q44,176 36,154Z" fill="$h"/>`,
+       front:`<path d="M42,82 C42,60 54,52 100,52 C146,52 158,60 158,82 C150,62 140,58 100,58 C60,58 50,64 42,82Z" fill="$h"/>
+<rect x="42" y="74" rx="5" width="11" height="24" fill="$h"/>
+<rect x="147" y="74" rx="5" width="11" height="24" fill="$h"/>`},
+      {name:'Bun',
+       back:`<ellipse cx="100" cy="70" rx="58" ry="40" fill="$h"/>
+<circle cx="100" cy="36" r="21" fill="$h"/>
+<ellipse cx="100" cy="52" rx="15" ry="7" fill="$d" opacity="0.7"/>`,
+       front:`<path d="M42,84 C42,64 54,56 100,56 C146,56 158,64 158,84 C150,67 140,62 100,62 C60,62 50,68 42,84Z" fill="$h"/>
+<rect x="42" y="74" rx="5" width="11" height="24" fill="$h"/>
+<rect x="147" y="74" rx="5" width="11" height="24" fill="$h"/>`},
+      {name:'Braids',
+       back:`<path d="M42,82 C42,62 54,52 100,52 C146,52 158,62 158,82 L160,174 Q128,184 100,184 Q72,184 40,174Z" fill="$h"/>`,
+       front:`<path d="M42,82 C42,62 54,52 100,52 C146,52 158,62 158,82 C152,64 140,58 100,58 C60,58 48,66 42,82Z" fill="$h"/>
+<rect x="42" y="74" rx="5" width="11" height="24" fill="$h"/>
+<rect x="147" y="74" rx="5" width="11" height="24" fill="$h"/>
+<line x1="56" y1="112" x2="52" y2="174" stroke="$d" stroke-width="8" stroke-linecap="round"/>
+<line x1="144" y1="112" x2="148" y2="174" stroke="$d" stroke-width="8" stroke-linecap="round"/>
+<path d="M56,120 L61,126 L56,132 L61,138 L56,144 L61,150 L56,156 L61,162 L56,168" stroke="$d" stroke-width="4" fill="none" stroke-linecap="round"/>
+<path d="M144,120 L139,126 L144,132 L139,138 L144,144 L139,150 L144,156 L139,162 L144,168" stroke="$d" stroke-width="4" fill="none" stroke-linecap="round"/>`},
+    ];
+
+    // ── 8 eye colors ──
+    const AB_EYE_COLORS = [
+      {name:'Brown',  iris:'#6B3A2A',pupil:'#2A1008'},
+      {name:'Hazel',  iris:'#9B7A40',pupil:'#3A2808'},
+      {name:'Green',  iris:'#3D7A50',pupil:'#1A3A20'},
+      {name:'Blue',   iris:'#3D7EC9',pupil:'#1A3060'},
+      {name:'Gray',   iris:'#7F909A',pupil:'#384048'},
+      {name:'Amber',  iris:'#C87820',pupil:'#604000'},
+      {name:'Violet', iris:'#7B5EA7',pupil:'#3A2060'},
+      {name:'Black',  iris:'#2A1010',pupil:'#080404'},
+    ];
+
+    // 8 eye shape names (drawn by genEyes)
+    const AB_EYE_SHAPE_NAMES = ['Almond','Round','Hooded','Upturned','Downturned','Monolid','Wide','Narrow'];
+
+    // ── 6 eyebrow shapes ($b = brow color) ──
+    const AB_BROW_SHAPES = [
+      {name:'Arched',
+       svg:`<path d="M68,88 Q80,80 92,84" stroke="$b" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+<path d="M108,84 Q120,80 132,88" stroke="$b" stroke-width="3.5" fill="none" stroke-linecap="round"/>`},
+      {name:'Straight',
+       svg:`<line x1="68" y1="85" x2="92" y2="85" stroke="$b" stroke-width="3.5" stroke-linecap="round"/>
+<line x1="108" y1="85" x2="132" y2="85" stroke="$b" stroke-width="3.5" stroke-linecap="round"/>`},
+      {name:'Thick',
+       svg:`<path d="M67,88 Q80,79 93,84" stroke="$b" stroke-width="5.5" fill="none" stroke-linecap="round"/>
+<path d="M107,84 Q120,79 133,88" stroke="$b" stroke-width="5.5" fill="none" stroke-linecap="round"/>`},
+      {name:'Thin',
+       svg:`<path d="M69,86 Q80,82 92,84" stroke="$b" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+<path d="M108,84 Q120,82 131,86" stroke="$b" stroke-width="1.8" fill="none" stroke-linecap="round"/>`},
+      {name:'Bushy',
+       svg:`<path d="M65,89 Q80,78 94,83" stroke="$b" stroke-width="6.5" fill="none" stroke-linecap="round"/>
+<path d="M106,83 Q120,78 135,89" stroke="$b" stroke-width="6.5" fill="none" stroke-linecap="round"/>
+<path d="M66,86 Q80,80 92,83" stroke="$b" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.4"/>`},
+      {name:'None', svg:''},
+    ];
+
+    // ── 5 nose styles ──
+    const AB_NOSES = [
+      {name:'Button',
+       svg:`<ellipse cx="96" cy="120" rx="2.5" ry="2" fill="#00000020"/>
+<ellipse cx="104" cy="120" rx="2.5" ry="2" fill="#00000020"/>
+<path d="M96,120 Q100,125 104,120" stroke="#00000030" stroke-width="1.5" fill="none" stroke-linecap="round"/>`},
+      {name:'Wide',
+       svg:`<ellipse cx="92" cy="120" rx="3.5" ry="2.5" fill="#00000020"/>
+<ellipse cx="108" cy="120" rx="3.5" ry="2.5" fill="#00000020"/>
+<path d="M92,120 Q100,126 108,120" stroke="#00000030" stroke-width="1.5" fill="none" stroke-linecap="round"/>`},
+      {name:'Narrow',
+       svg:`<ellipse cx="97.5" cy="120" rx="2" ry="1.5" fill="#00000020"/>
+<ellipse cx="102.5" cy="120" rx="2" ry="1.5" fill="#00000020"/>
+<path d="M97.5,120 Q100,124 102.5,120" stroke="#00000030" stroke-width="1.5" fill="none" stroke-linecap="round"/>`},
+      {name:'Upturned',
+       svg:`<ellipse cx="94" cy="118" rx="3" ry="2.5" fill="#00000020"/>
+<ellipse cx="106" cy="118" rx="3" ry="2.5" fill="#00000020"/>
+<path d="M94,120 Q100,116 106,120" stroke="#00000030" stroke-width="1.5" fill="none" stroke-linecap="round"/>`},
+      {name:'Hooked',
+       svg:`<path d="M98,114 Q104,119 100,127 Q102,122 108,123" stroke="#00000030" stroke-width="1.8" fill="none" stroke-linecap="round"/>`},
+    ];
+
+    // ── 8 mouth expressions ($l = lip color) ──
     const AB_MOUTHS = [
-      { name: 'Smile',     svg: `<path d="M44,64 Q50,70 56,64" stroke="#1A0A00" stroke-width="2" fill="none" stroke-linecap="round"/>` },
-      { name: 'Big Smile', svg: `<path d="M41,63 Q50,73 59,63" stroke="#1A0A00" stroke-width="2.5" fill="none" stroke-linecap="round"/>` },
-      { name: 'Neutral',   svg: `<line x1="43" y1="65" x2="57" y2="65" stroke="#1A0A00" stroke-width="2" stroke-linecap="round"/>` },
-      { name: 'Grin',      svg: `<path d="M42,63 Q50,73 58,63 L57,66 Q50,72 43,66Z" fill="#1A0A00"/><rect x="43" y="63" width="14" height="3.5" fill="white" rx="0.5"/>` },
-      { name: 'Sad',       svg: `<path d="M44,67 Q50,62 56,67" stroke="#1A0A00" stroke-width="2" fill="none" stroke-linecap="round"/>` },
-      { name: 'Smirk',     svg: `<path d="M45,64 Q52,70 58,66" stroke="#1A0A00" stroke-width="2" fill="none" stroke-linecap="round"/>` },
+      {name:'Big Smile',
+       svg:`<path d="M81,140 Q100,160 119,140 L117,140 Q100,156 83,140Z" fill="$l"/>
+<rect x="83" y="140" width="34" height="10" rx="1" fill="white" opacity="0.88"/>
+<path d="M81,140 Q100,160 119,140" stroke="#00000030" stroke-width="1" fill="none"/>`},
+      {name:'Closed Smile',
+       svg:`<path d="M84,141 Q100,155 116,141" stroke="#00000040" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+<path d="M84,141 Q100,149 116,141 L116,144 Q100,153 84,144Z" fill="$l"/>`},
+      {name:'Smirk',
+       svg:`<path d="M86,142 Q98,151 114,144" stroke="#00000040" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+<path d="M86,142 Q98,148 114,144 L114,147 Q98,152 86,145Z" fill="$l"/>`},
+      {name:'Neutral',
+       svg:`<line x1="86" y1="143" x2="114" y2="143" stroke="#00000040" stroke-width="2" stroke-linecap="round"/>
+<path d="M86,141 L114,141 L114,145 L86,145Z" fill="$l"/>`},
+      {name:'Surprised',
+       svg:`<ellipse cx="100" cy="146" rx="9" ry="11" fill="$l"/>
+<ellipse cx="100" cy="147" rx="7" ry="8.5" fill="#1a0a00" opacity="0.85"/>`},
+      {name:'Tongue Out',
+       svg:`<path d="M84,140 Q100,156 116,140 L114,140 Q100,153 86,140Z" fill="$l"/>
+<rect x="86" y="140" width="28" height="7" fill="white" opacity="0.88"/>
+<ellipse cx="100" cy="153" rx="8" ry="7" fill="#F46A7A"/>
+<path d="M94,154 Q100,159 106,154" stroke="#E04060" stroke-width="1" fill="none" stroke-linecap="round"/>`},
+      {name:'Laughing',
+       svg:`<path d="M79,138 Q100,163 121,138 L119,138 Q100,160 81,138Z" fill="$l"/>
+<rect x="81" y="138" width="38" height="13" rx="1" fill="white" opacity="0.88"/>
+<path d="M79,138 Q100,163 121,138" stroke="#00000030" stroke-width="1" fill="none"/>`},
+      {name:'Sad',
+       svg:`<path d="M84,148 Q100,138 116,148" stroke="#00000040" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+<path d="M84,148 Q100,141 116,148 L116,145 Q100,137 84,145Z" fill="$l"/>`},
     ];
-    const GLASSES_SVG = `<circle cx="42" cy="50" r="7" stroke="#555" stroke-width="1.5" fill="rgba(200,220,255,0.15)"/><circle cx="58" cy="50" r="7" stroke="#555" stroke-width="1.5" fill="rgba(200,220,255,0.15)"/><line x1="49" y1="50" x2="51" y2="50" stroke="#555" stroke-width="1.5"/><line x1="35" y1="51" x2="30" y2="53" stroke="#555" stroke-width="1.5"/><line x1="65" y1="51" x2="70" y2="53" stroke="#555" stroke-width="1.5"/>`;
-    const HAT_SVG = `<path d="M24,30 C24,15 76,15 76,30Z" fill="#2a2a2a"/><ellipse cx="50" cy="30" rx="27" ry="7" fill="#333"/>`;
 
-    // Current builder state
-    const st = { bg: 0, skin: 1, hair: 1, hairC: 0, eye: 1, mouth: 0, glasses: false, hat: false };
+    // ── 6 lip colors ──
+    const AB_LIP_COLORS = [
+      {name:'Natural',hex:'#C8826A'},
+      {name:'Pink',   hex:'#E87AA0'},
+      {name:'Red',    hex:'#C0142A'},
+      {name:'Berry',  hex:'#8B1A6E'},
+      {name:'Nude',   hex:'#D4AA90'},
+      {name:'Coral',  hex:'#E86050'},
+    ];
 
+    // ── 4 cheek options ──
+    const AB_CHEEKS = [
+      {name:'None', svg:''},
+      {name:'Freckles',
+       svg:`<circle cx="71" cy="114" r="1.5" fill="#8B6050" opacity="0.55"/>
+<circle cx="77" cy="111" r="1.1" fill="#8B6050" opacity="0.5"/>
+<circle cx="75" cy="117" r="1.3" fill="#8B6050" opacity="0.52"/>
+<circle cx="129" cy="114" r="1.5" fill="#8B6050" opacity="0.55"/>
+<circle cx="123" cy="111" r="1.1" fill="#8B6050" opacity="0.5"/>
+<circle cx="125" cy="117" r="1.3" fill="#8B6050" opacity="0.52"/>`},
+      {name:'Rosy',
+       svg:`<circle cx="69" cy="118" r="17" fill="#FF6B8A" opacity="0.16"/>
+<circle cx="131" cy="118" r="17" fill="#FF6B8A" opacity="0.16"/>`},
+      {name:'Blush',
+       svg:`<ellipse cx="67" cy="118" rx="15" ry="9" fill="#E87090" opacity="0.2"/>
+<ellipse cx="133" cy="118" rx="15" ry="9" fill="#E87090" opacity="0.2"/>`},
+    ];
+
+    // ── 3 ear sizes ──
+    const AB_EAR_SIZES = [
+      {name:'Small',  rx:7,  ry:10},
+      {name:'Medium', rx:9,  ry:13},
+      {name:'Large',  rx:12, ry:17},
+    ];
+
+    // ── 6 glasses styles ──
+    const AB_GLASSES = [
+      {name:'None', svg:''},
+      {name:'Round',
+       svg:`<circle cx="80" cy="100" r="12" stroke="#4A4A4A" stroke-width="2.5" fill="rgba(180,220,255,0.12)"/>
+<circle cx="120" cy="100" r="12" stroke="#4A4A4A" stroke-width="2.5" fill="rgba(180,220,255,0.12)"/>
+<line x1="92" y1="100" x2="108" y2="100" stroke="#4A4A4A" stroke-width="2"/>
+<line x1="68" y1="101" x2="58" y2="104" stroke="#4A4A4A" stroke-width="2"/>
+<line x1="132" y1="101" x2="142" y2="104" stroke="#4A4A4A" stroke-width="2"/>`},
+      {name:'Rect.',
+       svg:`<rect x="67" y="92" width="26" height="17" rx="3" stroke="#4A4A4A" stroke-width="2.5" fill="rgba(180,220,255,0.12)"/>
+<rect x="107" y="92" width="26" height="17" rx="3" stroke="#4A4A4A" stroke-width="2.5" fill="rgba(180,220,255,0.12)"/>
+<line x1="93" y1="100" x2="107" y2="100" stroke="#4A4A4A" stroke-width="2"/>
+<line x1="67" y1="100" x2="57" y2="103" stroke="#4A4A4A" stroke-width="2"/>
+<line x1="133" y1="100" x2="143" y2="103" stroke="#4A4A4A" stroke-width="2"/>`},
+      {name:'Cat-Eye',
+       svg:`<path d="M67,97 L76,91 L91,94 L91,104 L67,106Z" stroke="#4A4A4A" stroke-width="2" fill="rgba(180,220,255,0.12)"/>
+<path d="M109,94 L124,91 L133,97 L133,106 L109,104Z" stroke="#4A4A4A" stroke-width="2" fill="rgba(180,220,255,0.12)"/>
+<line x1="91" y1="100" x2="109" y2="100" stroke="#4A4A4A" stroke-width="2"/>
+<line x1="67" y1="101" x2="57" y2="103" stroke="#4A4A4A" stroke-width="2"/>
+<line x1="133" y1="101" x2="143" y2="103" stroke="#4A4A4A" stroke-width="2"/>`},
+      {name:'Aviator',
+       svg:`<path d="M67,94 Q80,88 93,94 L93,107 Q80,113 67,107Z" stroke="#B8860B" stroke-width="2.5" fill="rgba(200,220,255,0.16)"/>
+<path d="M107,94 Q120,88 133,94 L133,107 Q120,113 107,107Z" stroke="#B8860B" stroke-width="2.5" fill="rgba(200,220,255,0.16)"/>
+<line x1="93" y1="100" x2="107" y2="100" stroke="#B8860B" stroke-width="2"/>
+<line x1="67" y1="100" x2="57" y2="103" stroke="#B8860B" stroke-width="2"/>
+<line x1="133" y1="100" x2="143" y2="103" stroke="#B8860B" stroke-width="2"/>`},
+      {name:'Thick',
+       svg:`<rect x="65" y="90" width="30" height="20" rx="4" stroke="#1A1A1A" stroke-width="5" fill="rgba(180,220,255,0.1)"/>
+<rect x="105" y="90" width="30" height="20" rx="4" stroke="#1A1A1A" stroke-width="5" fill="rgba(180,220,255,0.1)"/>
+<line x1="95" y1="100" x2="105" y2="100" stroke="#1A1A1A" stroke-width="4"/>
+<line x1="65" y1="100" x2="55" y2="103" stroke="#1A1A1A" stroke-width="4"/>
+<line x1="135" y1="100" x2="145" y2="103" stroke="#1A1A1A" stroke-width="4"/>`},
+    ];
+
+    // ── 4 earring styles ──
+    const AB_EARRINGS = [
+      {name:'None', svg:''},
+      {name:'Studs',
+       svg:`<circle cx="40" cy="115" r="3.5" fill="#FFD700"/>
+<circle cx="40" cy="115" r="2" fill="#FFA500" opacity="0.6"/>
+<circle cx="160" cy="115" r="3.5" fill="#FFD700"/>
+<circle cx="160" cy="115" r="2" fill="#FFA500" opacity="0.6"/>`},
+      {name:'Hoops',
+       svg:`<circle cx="40" cy="120" r="7" stroke="#FFD700" stroke-width="2.5" fill="none"/>
+<circle cx="160" cy="120" r="7" stroke="#FFD700" stroke-width="2.5" fill="none"/>`},
+      {name:'Drops',
+       svg:`<line x1="40" y1="114" x2="40" y2="124" stroke="#FFD700" stroke-width="2.5"/>
+<ellipse cx="40" cy="127" rx="3.5" ry="4.5" fill="#FFD700"/>
+<line x1="160" y1="114" x2="160" y2="124" stroke="#FFD700" stroke-width="2.5"/>
+<ellipse cx="160" cy="127" rx="3.5" ry="4.5" fill="#FFD700"/>`},
+    ];
+
+    // ── 5 facial hair styles ($h, $d) ──
+    const AB_FACIAL_HAIR = [
+      {name:'None', svg:''},
+      {name:'Stubble',
+       svg:`<path d="M83,136 Q100,146 117,136" stroke="$h" stroke-width="1.5" stroke-dasharray="2,2.5" fill="none" opacity="0.65"/>
+<path d="M78,144 Q100,155 122,144" stroke="$h" stroke-width="1.5" stroke-dasharray="2,3" fill="none" opacity="0.45"/>`},
+      {name:'Mustache',
+       svg:`<path d="M86,135 Q93,140 100,138 Q107,140 114,135 Q107,142 100,140 Q93,142 86,135Z" fill="$h"/>`},
+      {name:'Short Beard',
+       svg:`<path d="M80,136 Q100,162 120,136 Q116,152 100,158 Q84,152 80,136Z" fill="$h" opacity="0.88"/>
+<path d="M86,134 Q93,139 100,137 Q107,139 114,134 Q107,141 100,139 Q93,141 86,134Z" fill="$h"/>`},
+      {name:'Full Beard',
+       svg:`<path d="M73,128 Q100,170 127,128 Q122,160 100,168 Q78,160 73,128Z" fill="$h" opacity="0.88"/>
+<path d="M86,128 Q93,134 100,132 Q107,134 114,128 Q107,136 100,134 Q93,136 86,128Z" fill="$h"/>`},
+    ];
+
+    // ── 4 hats/headwear ($h, $d) ──
+    const AB_HATS = [
+      {name:'None', svg:''},
+      {name:'Cap',
+       svg:`<ellipse cx="100" cy="66" rx="60" ry="28" fill="$h"/>
+<path d="M40,66 Q40,46 100,46 Q160,46 160,66" fill="$h"/>
+<path d="M40,68 Q70,74 100,74 Q130,74 160,68" fill="$d" opacity="0.4"/>
+<path d="M155,70 Q178,76 175,82 Q166,77 155,74Z" fill="$h"/>`},
+      {name:'Beanie',
+       svg:`<path d="M40,78 Q40,45 100,45 Q160,45 160,78 L158,84 Q128,80 100,80 Q72,80 42,84Z" fill="$h"/>
+<path d="M42,84 Q70,88 100,88 Q130,88 158,84 L156,91 Q126,95 100,95 Q74,95 44,91Z" fill="$d" opacity="0.55"/>
+<circle cx="100" cy="39" r="9" fill="$h"/>`},
+      {name:'Crown',
+       svg:`<path d="M58,80 L58,55 L72,70 L100,48 L128,70 L142,55 L142,80Z" fill="#FFD700" stroke="#DAA520" stroke-width="1.5" stroke-linejoin="round"/>
+<ellipse cx="100" cy="80" rx="42" ry="7" fill="#E5B800"/>
+<circle cx="100" cy="50" r="5" fill="#FF4444"/>
+<circle cx="72" cy="69" r="4" fill="#4488FF"/>
+<circle cx="128" cy="69" r="4" fill="#44CC44"/>
+<circle cx="58" cy="80" r="3.5" fill="#FF4444"/>
+<circle cx="142" cy="80" r="3.5" fill="#FF4444"/>`},
+    ];
+
+    // ── Builder state ──
+    const st = {
+      bg:0, skin:1, faceShape:0, earSize:1, cheek:0,
+      hair:2, hairC:0, facialHair:0,
+      eyeShape:0, eyeC:3, lashes:false, brow:0,
+      nose:0, mouth:0, lipC:0,
+      glasses:0, earrings:0, hat:0,
+    };
+
+    let _uid = 0;
+
+    // ── Eye pair generator ──
+    function genEyes(shapeIdx, ic, pc, lashes) {
+      function drawEye(cx, cy) {
+        const lashSvg = lashes
+          ? `<path d="M${cx-8},${cy-3} Q${cx-7},${cy-9} ${cx-5},${cy-9} M${cx-2},${cy-7} Q${cx-1},${cy-12} ${cx+1},${cy-11} M${cx+4},${cy-6} Q${cx+5},${cy-11} ${cx+7},${cy-9}" stroke="#1C0800" stroke-width="1.2" fill="none" stroke-linecap="round"/>`
+          : '';
+        switch (shapeIdx) {
+          case 0: return `<path d="M${cx-11},${cy} Q${cx},${cy-9} ${cx+11},${cy} Q${cx},${cy+8} ${cx-11},${cy}Z" fill="white"/>
+<circle cx="${cx}" cy="${cy}" r="6" fill="${ic}"/><circle cx="${cx}" cy="${cy}" r="3.2" fill="${pc}"/>
+<circle cx="${cx+2}" cy="${cy-2}" r="1.8" fill="rgba(255,255,255,0.75)"/>
+${lashSvg}
+<path d="M${cx-11},${cy} Q${cx},${cy-9} ${cx+11},${cy}" stroke="#1C0800" stroke-width="1.2" fill="none" stroke-linecap="round"/>`;
+          case 1: return `<ellipse cx="${cx}" cy="${cy}" rx="9" ry="9" fill="white"/>
+<circle cx="${cx}" cy="${cy}" r="6.2" fill="${ic}"/><circle cx="${cx}" cy="${cy}" r="3.3" fill="${pc}"/>
+<circle cx="${cx+2}" cy="${cy-2}" r="1.8" fill="rgba(255,255,255,0.75)"/>
+${lashSvg}
+<path d="M${cx-9},${cy} a9,9 0 0,1 18,0" stroke="#1C0800" stroke-width="1.2" fill="none"/>`;
+          case 2: return `<path d="M${cx-9},${cy+1} Q${cx},${cy-7} ${cx+9},${cy+1} Q${cx},${cy+9} ${cx-9},${cy+1}Z" fill="white"/>
+<circle cx="${cx}" cy="${cy+2}" r="5" fill="${ic}"/><circle cx="${cx}" cy="${cy+2}" r="2.7" fill="${pc}"/>
+<circle cx="${cx+1.5}" cy="${cy}" r="1.4" fill="rgba(255,255,255,0.75)"/>
+<path d="M${cx-9},${cy+1} Q${cx},${cy-3} ${cx+9},${cy+1}" fill="${ic}" opacity="0.28"/>
+${lashSvg}
+<path d="M${cx-9},${cy+1} Q${cx},${cy-7} ${cx+9},${cy+1}" stroke="#1C0800" stroke-width="1.2" fill="none"/>`;
+          case 3: return `<path d="M${cx-11},${cy+1} Q${cx},${cy-9} ${cx+11},${cy-2} Q${cx+3},${cy+8} ${cx-11},${cy+1}Z" fill="white"/>
+<circle cx="${cx}" cy="${cy}" r="5.8" fill="${ic}"/><circle cx="${cx}" cy="${cy}" r="3.1" fill="${pc}"/>
+<circle cx="${cx+2}" cy="${cy-2}" r="1.6" fill="rgba(255,255,255,0.75)"/>
+${lashSvg}
+<path d="M${cx-11},${cy+1} Q${cx},${cy-9} ${cx+11},${cy-2}" stroke="#1C0800" stroke-width="1.2" fill="none"/>`;
+          case 4: return `<path d="M${cx-11},${cy-2} Q${cx},${cy-9} ${cx+11},${cy+1} Q${cx+3},${cy+8} ${cx-11},${cy-2}Z" fill="white"/>
+<circle cx="${cx}" cy="${cy}" r="5.8" fill="${ic}"/><circle cx="${cx}" cy="${cy}" r="3.1" fill="${pc}"/>
+<circle cx="${cx+2}" cy="${cy-2}" r="1.6" fill="rgba(255,255,255,0.75)"/>
+${lashSvg}
+<path d="M${cx-11},${cy-2} Q${cx},${cy-9} ${cx+11},${cy+1}" stroke="#1C0800" stroke-width="1.2" fill="none"/>`;
+          case 5: return `<path d="M${cx-9},${cy+2} Q${cx},${cy-5} ${cx+9},${cy+2} Q${cx},${cy+9} ${cx-9},${cy+2}Z" fill="white"/>
+<circle cx="${cx}" cy="${cy+2}" r="5" fill="${ic}"/><circle cx="${cx}" cy="${cy+2}" r="2.7" fill="${pc}"/>
+<circle cx="${cx+1.5}" cy="${cy}" r="1.3" fill="rgba(255,255,255,0.75)"/>
+${lashSvg}
+<path d="M${cx-9},${cy+2} Q${cx},${cy-5} ${cx+9},${cy+2}" stroke="#1C0800" stroke-width="1.2" fill="none"/>`;
+          case 6: return `<ellipse cx="${cx}" cy="${cy}" rx="11" ry="10" fill="white"/>
+<circle cx="${cx}" cy="${cy}" r="7.2" fill="${ic}"/><circle cx="${cx}" cy="${cy}" r="3.8" fill="${pc}"/>
+<circle cx="${cx+2.5}" cy="${cy-2.5}" r="2.2" fill="rgba(255,255,255,0.75)"/>
+${lashSvg}
+<path d="M${cx-11},${cy} a11,10 0 0,1 22,0" stroke="#1C0800" stroke-width="1.2" fill="none"/>`;
+          case 7: return `<path d="M${cx-9},${cy+1} Q${cx},${cy-4} ${cx+9},${cy+1} Q${cx},${cy+6} ${cx-9},${cy+1}Z" fill="white"/>
+<circle cx="${cx}" cy="${cy+1}" r="4" fill="${ic}"/><circle cx="${cx}" cy="${cy+1}" r="2.2" fill="${pc}"/>
+<circle cx="${cx+1.2}" cy="${cy-0.5}" r="1.1" fill="rgba(255,255,255,0.75)"/>
+${lashSvg}
+<path d="M${cx-9},${cy+1} Q${cx},${cy-4} ${cx+9},${cy+1}" stroke="#1C0800" stroke-width="1.2" fill="none"/>`;
+          default: return '';
+        }
+      }
+      return drawEye(80, 100) + drawEye(120, 100);
+    }
+
+    // ── Build the SVG ──
     function buildSvg(s) {
-      const bg = AB_BG[s.bg];
-      const skin = AB_SKIN[s.skin];
-      const hc = AB_HAIR_C[s.hairC];
-      const hs = AB_HAIR_S[s.hair];
-      const hairBack = hs.back.replace(/\$h/g, hc);
-      const hairFront = hs.front.replace(/\$h/g, hc);
-      return `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
-        <circle cx="50" cy="50" r="50" fill="${bg}"/>
-        ${s.hat ? HAT_SVG : ''}
-        <ellipse cx="50" cy="98" rx="28" ry="14" fill="${skin}"/>
-        <rect x="43" y="72" width="14" height="14" rx="4" fill="${skin}"/>
-        ${hairBack}
-        <ellipse cx="50" cy="52" rx="22" ry="26" fill="${skin}"/>
-        ${hairFront}
-        ${AB_EYES[s.eye].svg}
-        ${AB_MOUTHS[s.mouth].svg}
-        ${s.glasses ? GLASSES_SVG : ''}
-      </svg>`;
+      const bgD   = AB_BG[s.bg];
+      const skinD = AB_SKIN[s.skin];
+      const fs    = AB_FACE_SHAPES[s.faceShape];
+      const hs    = AB_HAIR_STYLES[s.hair];
+      const hcD   = AB_HAIR_COLORS[s.hairC];
+      const ecD   = AB_EYE_COLORS[s.eyeC];
+      const earD  = AB_EAR_SIZES[s.earSize];
+
+      const uid  = 'a' + (++_uid);
+      const hc   = hcD.hex, hd = hcD.dark;
+      const ic   = ecD.iris, pc = ecD.pupil;
+      const bc   = hc; // brows match hair
+
+      const hairBack      = hs.back.replace(/\$h/g, hc).replace(/\$d/g, hd);
+      const hairFront     = hs.front.replace(/\$h/g, hc).replace(/\$d/g, hd);
+      const browSvg       = AB_BROW_SHAPES[s.brow].svg.replace(/\$b/g, bc);
+      const noseSvg       = AB_NOSES[s.nose].svg;
+      const mouthSvg      = AB_MOUTHS[s.mouth].svg.replace(/\$l/g, AB_LIP_COLORS[s.lipC].hex);
+      const cheekSvg      = AB_CHEEKS[s.cheek].svg;
+      const glassesSvg    = AB_GLASSES[s.glasses].svg;
+      const earringsSvg   = AB_EARRINGS[s.earrings].svg;
+      const facialHairSvg = AB_FACIAL_HAIR[s.facialHair].svg.replace(/\$h/g, hc).replace(/\$d/g, hd);
+      const hatSvg        = AB_HATS[s.hat].svg.replace(/\$h/g, hc).replace(/\$d/g, hd);
+      const eyeSvg        = genEyes(s.eyeShape, ic, pc, s.lashes);
+
+      const earY = fs.earY, erx = earD.rx, ery = earD.ry;
+      const erxi = Math.round(erx * 0.55), eryi = Math.round(ery * 0.6);
+
+      return `<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+<defs>
+  <radialGradient id="bg${uid}" cx="40%" cy="35%" r="75%">
+    <stop offset="0%" stop-color="${bgD.c1}"/><stop offset="100%" stop-color="${bgD.c2}"/>
+  </radialGradient>
+  <radialGradient id="fc${uid}" cx="38%" cy="28%" r="72%">
+    <stop offset="0%" stop-color="${skinD.hi}"/>
+    <stop offset="55%" stop-color="${skinD.base}"/>
+    <stop offset="100%" stop-color="${skinD.shd}"/>
+  </radialGradient>
+  <radialGradient id="bd${uid}" cx="50%" cy="20%" r="70%">
+    <stop offset="0%" stop-color="${skinD.base}"/><stop offset="100%" stop-color="${skinD.shd}"/>
+  </radialGradient>
+</defs>
+<circle cx="100" cy="100" r="100" fill="url(#bg${uid})"/>
+<ellipse cx="100" cy="204" rx="55" ry="38" fill="url(#bd${uid})"/>
+<rect x="88" y="170" width="24" height="28" rx="6" fill="${skinD.base}"/>
+<ellipse cx="42" cy="${earY}" rx="${erx}" ry="${ery}" fill="${skinD.base}"/>
+<ellipse cx="42" cy="${earY}" rx="${erxi}" ry="${eryi}" fill="${skinD.shd}" opacity="0.35"/>
+<ellipse cx="158" cy="${earY}" rx="${erx}" ry="${ery}" fill="${skinD.base}"/>
+<ellipse cx="158" cy="${earY}" rx="${erxi}" ry="${eryi}" fill="${skinD.shd}" opacity="0.35"/>
+${hairBack}
+<g fill="url(#fc${uid})">${fs.face}</g>
+${facialHairSvg}
+${browSvg}
+${eyeSvg}
+${noseSvg}
+${mouthSvg}
+${cheekSvg}
+${hairFront}
+${glassesSvg}
+${earringsSvg}
+${hatSvg}
+</svg>`;
     }
 
     function refreshPreview() {
       const p = $('#avbPreview');
       if (p) p.innerHTML = buildSvg(st);
-      // Show/hide hair color row when bald
       const hr = $('#avbHairColorRow');
       if (hr) hr.style.display = st.hair === 0 ? 'none' : '';
     }
 
-    function populateSwatches(containerId, colors, stateKey) {
-      const el = $('#' + containerId);
-      if (!el) return;
-      el.innerHTML = colors.map((c, i) => `<button type="button" class="avb-swatch${st[stateKey] === i ? ' active' : ''}" data-idx="${i}" style="background:${c}" title="${c}"></button>`).join('');
-      el.addEventListener('click', (e) => {
-        const b = e.target.closest('.avb-swatch');
-        if (!b) return;
-        st[stateKey] = parseInt(b.dataset.idx);
-        el.querySelectorAll('.avb-swatch').forEach((s, i) => s.classList.toggle('active', i === st[stateKey]));
-        refreshPreview();
+    function activateChip(el, idx) {
+      el.querySelectorAll('.avb-chip').forEach((c, i) => c.classList.toggle('active', i === idx));
+    }
+    function activateSwatch(el, idx) {
+      el.querySelectorAll('.avb-swatch').forEach((s, i) => s.classList.toggle('active', i === idx));
+    }
+
+    function makeChips(id, items, key) {
+      const el = $('#' + id); if (!el) return;
+      el.innerHTML = items.map((it, i) =>
+        `<button type="button" class="avb-chip${st[key]===i?' active':''}" data-idx="${i}">${it.name||it}</button>`
+      ).join('');
+      el.addEventListener('click', e => {
+        const b = e.target.closest('.avb-chip'); if (!b) return;
+        st[key] = +b.dataset.idx; activateChip(el, st[key]); refreshPreview();
       });
     }
 
-    function populateChips(containerId, items, stateKey) {
-      const el = $('#' + containerId);
-      if (!el) return;
-      el.innerHTML = items.map((item, i) => `<button type="button" class="avb-chip${st[stateKey] === i ? ' active' : ''}" data-idx="${i}">${item.name}</button>`).join('');
-      el.addEventListener('click', (e) => {
-        const b = e.target.closest('.avb-chip');
-        if (!b) return;
-        st[stateKey] = parseInt(b.dataset.idx);
-        el.querySelectorAll('.avb-chip').forEach((c, i) => c.classList.toggle('active', i === st[stateKey]));
-        refreshPreview();
+    function makeSwatches(id, items, key, bgFn) {
+      const el = $('#' + id); if (!el) return;
+      el.innerHTML = items.map((it, i) =>
+        `<button type="button" class="avb-swatch${st[key]===i?' active':''}" data-idx="${i}" style="background:${bgFn(it)}" title="${it.name||it}"></button>`
+      ).join('');
+      el.addEventListener('click', e => {
+        const b = e.target.closest('.avb-swatch'); if (!b) return;
+        st[key] = +b.dataset.idx; activateSwatch(el, st[key]); refreshPreview();
       });
+    }
+
+    function refreshAllSelectors() {
+      const c = (id, k) => { const e=$('#'+id); if(e) activateChip(e, st[k]); };
+      const s = (id, k) => { const e=$('#'+id); if(e) activateSwatch(e, st[k]); };
+      s('avbBgSwatches','bg'); s('avbSkinSwatches','skin');
+      c('avbFaceChips','faceShape'); c('avbEarChips','earSize'); c('avbCheekChips','cheek');
+      c('avbHairStyleChips','hair'); s('avbHairColorSwatches','hairC'); c('avbFacialHairChips','facialHair');
+      c('avbEyeShapeChips','eyeShape'); s('avbEyeColorSwatches','eyeC');
+      c('avbBrowChips','brow'); c('avbNoseChips','nose');
+      c('avbMouthChips','mouth'); s('avbLipSwatches','lipC');
+      c('avbGlassesChips','glasses'); c('avbEarringsChips','earrings'); c('avbHatChips','hat');
+      const le = $('#avbLashChips');
+      if (le) le.querySelectorAll('.avb-chip').forEach(c2 =>
+        c2.classList.toggle('active', (c2.dataset.v==='1') === st.lashes));
+      const hr = $('#avbHairColorRow');
+      if (hr) hr.style.display = st.hair === 0 ? 'none' : '';
     }
 
     function initBuilder() {
-      populateSwatches('avbBgSwatches', AB_BG, 'bg');
-      populateSwatches('avbSkinSwatches', AB_SKIN, 'skin');
-      populateChips('avbHairStyleChips', AB_HAIR_S, 'hair');
-      populateSwatches('avbHairColorSwatches', AB_HAIR_C, 'hairC');
-      populateChips('avbEyeChips', AB_EYES, 'eye');
-      populateChips('avbMouthChips', AB_MOUTHS, 'mouth');
-      const gc = $('#avbGlassesChk'), hc = $('#avbHatChk');
-      if (gc) gc.addEventListener('change', () => { st.glasses = gc.checked; refreshPreview(); });
-      if (hc) hc.addEventListener('change', () => { st.hat = hc.checked; refreshPreview(); });
+      makeSwatches('avbBgSwatches',         AB_BG,          'bg',       c => `linear-gradient(135deg,${c.c1},${c.c2})`);
+      makeSwatches('avbSkinSwatches',       AB_SKIN,        'skin',     c => c.base);
+      makeChips   ('avbFaceChips',          AB_FACE_SHAPES, 'faceShape');
+      makeChips   ('avbEarChips',           AB_EAR_SIZES,   'earSize');
+      makeChips   ('avbCheekChips',         AB_CHEEKS,      'cheek');
+      makeChips   ('avbHairStyleChips',     AB_HAIR_STYLES, 'hair');
+      makeSwatches('avbHairColorSwatches',  AB_HAIR_COLORS, 'hairC',    c => c.hex);
+      makeChips   ('avbFacialHairChips',    AB_FACIAL_HAIR, 'facialHair');
+      makeChips   ('avbEyeShapeChips',      AB_EYE_SHAPE_NAMES.map(n=>({name:n})), 'eyeShape');
+      makeSwatches('avbEyeColorSwatches',   AB_EYE_COLORS,  'eyeC',     c => c.iris);
+      makeChips   ('avbBrowChips',          AB_BROW_SHAPES, 'brow');
+      makeChips   ('avbNoseChips',          AB_NOSES,       'nose');
+      makeChips   ('avbMouthChips',         AB_MOUTHS,      'mouth');
+      makeSwatches('avbLipSwatches',        AB_LIP_COLORS,  'lipC',     c => c.hex);
+      makeChips   ('avbGlassesChips',       AB_GLASSES,     'glasses');
+      makeChips   ('avbEarringsChips',      AB_EARRINGS,    'earrings');
+      makeChips   ('avbHatChips',           AB_HATS,        'hat');
+
+      // Lash toggle
+      const lashEl = $('#avbLashChips');
+      if (lashEl) {
+        lashEl.innerHTML = `<button type="button" class="avb-chip${!st.lashes?' active':''}" data-v="0">Off</button>
+<button type="button" class="avb-chip${st.lashes?' active':''}" data-v="1">On</button>`;
+        lashEl.addEventListener('click', e => {
+          const b = e.target.closest('.avb-chip'); if (!b) return;
+          st.lashes = b.dataset.v === '1';
+          lashEl.querySelectorAll('.avb-chip').forEach(c => c.classList.toggle('active', (c.dataset.v==='1')===st.lashes));
+          refreshPreview();
+        });
+      }
+
+      // Category tab switching
+      $$('.avb-cat-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          $$('.avb-cat-btn').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          const cat = btn.dataset.cat;
+          $$('.avb-panel').forEach(p => p.classList.toggle('active', p.dataset.panel === cat));
+        });
+      });
+
+      // Randomize
+      const randBtn = $('#avbRandomizeBtn');
+      if (randBtn) {
+        randBtn.addEventListener('click', () => {
+          const r = n => Math.floor(Math.random() * n);
+          st.bg         = r(AB_BG.length);
+          st.skin       = r(AB_SKIN.length);
+          st.faceShape  = r(AB_FACE_SHAPES.length);
+          st.earSize    = r(AB_EAR_SIZES.length);
+          st.cheek      = r(AB_CHEEKS.length);
+          st.hair       = r(AB_HAIR_STYLES.length);
+          st.hairC      = r(AB_HAIR_COLORS.length);
+          st.facialHair = r(AB_FACIAL_HAIR.length);
+          st.eyeShape   = r(AB_EYE_SHAPE_NAMES.length);
+          st.eyeC       = r(AB_EYE_COLORS.length);
+          st.lashes     = Math.random() > 0.5;
+          st.brow       = r(AB_BROW_SHAPES.length);
+          st.nose       = r(AB_NOSES.length);
+          st.mouth      = r(AB_MOUTHS.length);
+          st.lipC       = r(AB_LIP_COLORS.length);
+          st.glasses    = r(AB_GLASSES.length);
+          st.earrings   = r(AB_EARRINGS.length);
+          st.hat        = Math.random() > 0.72 ? r(AB_HATS.length) : 0;
+          refreshAllSelectors();
+          refreshPreview();
+        });
+      }
+
       refreshPreview();
     }
 
