@@ -2650,6 +2650,14 @@ function filterExplicit(text) {
 <line x1="144" y1="112" x2="148" y2="174" stroke="$d" stroke-width="8" stroke-linecap="round"/>
 <path d="M56,120 L61,126 L56,132 L61,138 L56,144 L61,150 L56,156 L61,162 L56,168" stroke="$d" stroke-width="4" fill="none" stroke-linecap="round"/>
 <path d="M144,120 L139,126 L144,132 L139,138 L144,144 L139,150 L144,156 L139,162 L144,168" stroke="$d" stroke-width="4" fill="none" stroke-linecap="round"/>`},
+      {name:'Swept Fringe',
+       back:`<ellipse cx="100" cy="67" rx="60" ry="44" fill="$h"/>`,
+       front:`<path d="M42,88 C42,63 54,54 100,54 C146,54 158,63 158,88 C152,69 140,62 100,62 C60,62 48,69 42,88Z" fill="$h"/>
+<rect x="42" y="76" rx="5" width="11" height="26" fill="$h"/>
+<rect x="147" y="76" rx="5" width="11" height="26" fill="$h"/>
+<path d="M56,76 C70,60 104,54 146,68 C148,82 140,94 124,93 C106,91 84,86 64,90 C54,86 50,82 56,76Z" fill="$h"/>
+<path d="M66,88 C84,84 106,88 124,91" stroke="$d" stroke-width="4.5" fill="none" stroke-linecap="round" opacity="0.5"/>
+<path d="M60,80 C76,64 108,58 144,70" stroke="rgba(255,255,255,0.15)" stroke-width="6" fill="none" stroke-linecap="round"/>`},
     ];
 
     // ── 8 eye colors ──
