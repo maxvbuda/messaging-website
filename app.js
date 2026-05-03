@@ -1096,9 +1096,16 @@
 
   function dmPeerUserId(channelId) {
     if (!channelId || !channelId.startsWith('dm_') || !currentUser) return null;
-    const parts = channelId.slice(3).split('_');
-    if (parts.length !== 2) return null;
-    return parts[0] === currentUser.id ? parts[1] : parts[0];
+    // Prefer the participants array stored on the channel document (most reliable).
+    const ch = channels.find(c => c.id === channelId);
+    if (ch && Array.isArray(ch.participants) && ch.participants.length === 2) {
+      return ch.participants.find(id => id !== currentUser.id) || null;
+    }
+    // Fallback: parse from channel ID. User IDs are "u_<hex>" so we match two such tokens.
+    const inner = channelId.slice(3);
+    const m = inner.match(/^(u_[0-9a-f]+)_(u_[0-9a-f]+)$/i);
+    if (!m) return null;
+    return m[1] === currentUser.id ? m[2] : m[1];
   }
 
   function icePayload(candidate) {

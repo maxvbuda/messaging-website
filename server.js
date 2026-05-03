@@ -344,6 +344,7 @@ function isBlockedName(username, displayName) {
 
 app.post('/api/register', async (req, res) => {
   const { username, password, name, inviteCode } = req.body;
+  const ip = getClientIp(req);
 
   if (!username || !password || !name) return res.status(400).json({ error: 'All fields are required.' });
   if (username.length < 2) return res.status(400).json({ error: 'Username must be at least 2 characters.' });
@@ -355,29 +356,43 @@ app.post('/api/register', async (req, res) => {
     if (!inviteCode) return res.status(403).json({ error: 'An invite code is required to register.' });
     const invite = await findInvite(inviteCode);
     if (!invite) return res.status(403).json({ error: 'Invalid or already-used invite code.' });
+
+    // Enforce per-IP account creation limit
+    if (await ipExceedsAccountLimit(ip)) {
+      console.warn(`[register] IP ${ip} blocked: already has ${MAX_ACCOUNTS_PER_IP}+ accounts`);
+      return res.status(429).json({ error: 'Too many accounts created from this network. Contact an admin.' });
+    }
   }
 
   const uname = username.trim().toLowerCase();
 
   if (isBlockedName(uname, name)) {
-    const ip = getClientIp(req);
     if (ip) BLOCKED_IPS.add(ip);
     return res.status(403).json({ error: 'This account cannot be created.' });
   }
   if (await findUser({ username: uname })) return res.status(409).json({ error: 'That username is already taken.' });
+
+  // Prevent display-name impersonation
+  const trimmedName = name.trim();
+  const allUsers = await getUsers();
+  if (allUsers.some(u => u.name.toLowerCase() === trimmedName.toLowerCase())) {
+    return res.status(409).json({ error: 'That display name is already in use. Please choose a different name.' });
+  }
 
   const hash = await bcrypt.hash(password, 10);
   const user = {
     id: 'u_' + uuidv4().slice(0, 8),
     username: uname,
     passwordHash: hash,
-    name: name.trim(),
+    name: trimmedName,
     status: 'online',
     role: 'Member',
     createdAt: Date.now(),
+    createdIp: ip || null,
   };
 
   await insertUser(user);
+  recordIpAccountCreation(ip);
   if (inviteCode) await markInviteUsed(inviteCode, user.id);
 
   const token = generateToken();
@@ -611,6 +626,32 @@ function rateLimitCheck(map, ip, max, windowMs) {
 
 const pendingRegAttempts = new Map();
 
+// Map: ip -> number of accounts created from this IP
+const ipAccountCreations = new Map();
+const MAX_ACCOUNTS_PER_IP = 3;
+
+/** Returns true if the IP has already created MAX_ACCOUNTS_PER_IP or more accounts. */
+async function ipExceedsAccountLimit(ip) {
+  if (!ip) return false;
+  // Check in-memory counter first (counts creations in this server process)
+  const memCount = ipAccountCreations.get(ip) || 0;
+  if (memCount >= MAX_ACCOUNTS_PER_IP) return true;
+  // For accuracy across restarts, also count from the database
+  if (db) {
+    const dbCount = await usersCol.countDocuments({ createdIp: ip });
+    if (dbCount >= MAX_ACCOUNTS_PER_IP) return true;
+  } else {
+    const dbCount = memData.users.filter(u => u.createdIp === ip).length;
+    if (dbCount >= MAX_ACCOUNTS_PER_IP) return true;
+  }
+  return false;
+}
+
+function recordIpAccountCreation(ip) {
+  if (!ip) return;
+  ipAccountCreations.set(ip, (ipAccountCreations.get(ip) || 0) + 1);
+}
+
 app.post('/api/register-request', async (req, res) => {
   const ip = getClientIp(req);
   if (rateLimitCheck(pendingRegAttempts, ip, 3, 60 * 60 * 1000)) {
@@ -627,6 +668,13 @@ app.post('/api/register-request', async (req, res) => {
   if (await findUser({ username: uname })) return res.status(409).json({ error: 'That username is already taken.' });
   if (await findPendingRegistrationByUsername(uname)) return res.status(409).json({ error: 'That username already has a pending request.' });
 
+  // Prevent display-name impersonation
+  const trimmedReqName = name.trim();
+  const existingForName = await getUsers();
+  if (existingForName.some(u => u.name.toLowerCase() === trimmedReqName.toLowerCase())) {
+    return res.status(409).json({ error: 'That display name is already in use. Please choose a different name.' });
+  }
+
   const hash = await bcrypt.hash(password, 10);
   const id = 'jr_' + uuidv4().slice(0, 12);
   const pendingToken = uuidv4();
@@ -634,12 +682,13 @@ app.post('/api/register-request', async (req, res) => {
   const req_ = {
     id,
     pendingToken,
-    name: name.trim(),
+    name: trimmedReqName,
     username: uname,
     passwordHash: hash,
     status: 'pending',
     createdAt: ts,
     updatedAt: ts,
+    submittedIp: ip || null,
   };
 
   if (db) await joinRequestsCol.insertOne(req_);
@@ -711,14 +760,20 @@ app.post('/api/admin/requests/:id/approve', requireAdmin, async (req, res) => {
     if (await findUser({ username: jr.username })) {
       return res.status(409).json({ error: 'That username is already registered. Deny this request.' });
     }
+    const approvedName = (jr.name || '').trim() || jr.username;
+    const approvedAllUsers = await getUsers();
+    if (approvedAllUsers.some(u => u.name.toLowerCase() === approvedName.toLowerCase())) {
+      return res.status(409).json({ error: 'That display name is already taken. Ask the applicant to choose a different name.' });
+    }
     const user = {
       id: 'u_' + uuidv4().slice(0, 10),
       username: jr.username,
       passwordHash: jr.passwordHash,
-      name: (jr.name || '').trim() || jr.username,
+      name: approvedName,
       status: 'online',
       role: 'Member',
       createdAt: Date.now(),
+      createdIp: jr.submittedIp || null,
     };
     await insertUser(user);
     const token = generateToken();
@@ -825,6 +880,23 @@ app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
   activeSocketByUser.delete(id);
   io.emit('user_status', { userId: id, status: 'offline' });
   res.json({ ok: true });
+});
+
+/** Admin: group users by creation IP to surface potential duplicate accounts. */
+app.get('/api/admin/users/by-ip', requireAdmin, async (req, res) => {
+  const users = await getUsers();
+  const byIp = {};
+  for (const u of users) {
+    const ip = u.createdIp || u.lastIp || 'unknown';
+    if (!byIp[ip]) byIp[ip] = [];
+    byIp[ip].push(publicUser(u));
+  }
+  // Return only IPs with more than one account (suspicious), sorted by count desc
+  const suspicious = Object.entries(byIp)
+    .filter(([, list]) => list.length > 1)
+    .sort((a, b) => b[1].length - a[1].length)
+    .map(([ip, accounts]) => ({ ip, count: accounts.length, accounts }));
+  res.json({ suspicious, total: users.length });
 });
 
 app.get('/api/admin/invites', requireAdmin, async (req, res) => {
@@ -1081,6 +1153,13 @@ app.patch('/api/profile/name', async (req, res) => {
   if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required' });
 
   const trimmed = name.trim();
+
+  // Prevent display-name impersonation: reject if another user already has this name
+  const allUsersForName = await getUsers();
+  if (allUsersForName.some(u => u.id !== user.id && u.name.toLowerCase() === trimmed.toLowerCase())) {
+    return res.status(409).json({ error: 'That display name is already in use.' });
+  }
+
   await updateUser(user.id, { name: trimmed });
   const updated = await findUser({ id: user.id });
   io.emit('user_updated', { user: publicUser(updated) });
@@ -1123,9 +1202,13 @@ const activeSocketByUser = new Map();
 
 function parseDmPair(dmChannelId) {
   if (!dmChannelId || typeof dmChannelId !== 'string' || !dmChannelId.startsWith('dm_')) return null;
-  const parts = dmChannelId.slice(3).split('_');
-  if (parts.length !== 2) return null;
-  return parts;
+  // User IDs are formatted as "u_<hex>" so they contain underscores.
+  // A simple split('_') produces more than 2 parts; use a regex that matches
+  // two "u_<hex>" tokens separated by exactly one underscore.
+  const inner = dmChannelId.slice(3);
+  const m = inner.match(/^(u_[0-9a-f]+)_(u_[0-9a-f]+)$/i);
+  if (!m) return null;
+  return [m[1], m[2]];
 }
 
 async function assertWebRtcRelay(channelId, fromUserId, toUserId) {
@@ -1133,11 +1216,13 @@ async function assertWebRtcRelay(channelId, fromUserId, toUserId) {
   const ch = await findChannel({ id: channelId });
   if (!ch) return false;
   if (ch.isDM) {
-    const parts = parseDmPair(channelId);
-    if (!parts || !parts.includes(fromUserId) || !parts.includes(toUserId)) return false;
+    // Prefer the authoritative participants array stored on the channel document.
     if (Array.isArray(ch.participants) && ch.participants.length) {
       return ch.participants.includes(fromUserId) && ch.participants.includes(toUserId);
     }
+    // Fallback: parse the two user IDs out of the channel ID.
+    const parts = parseDmPair(channelId);
+    if (!parts || !parts.includes(fromUserId) || !parts.includes(toUserId)) return false;
     return true;
   }
   const u1 = await findUser({ id: fromUserId });
@@ -1182,6 +1267,18 @@ io.on('connection', (socket) => {
 
   socket.on('send_message', async ({ channelId, text, file }) => {
     if (!currentUser || (!text?.trim() && !file)) return;
+
+    // For DM channels, verify the sender is actually a participant
+    if (channelId && channelId.startsWith('dm_')) {
+      try {
+        const dmCh = await findChannel({ id: channelId });
+        if (!dmCh) return;
+        if (Array.isArray(dmCh.participants) && !dmCh.participants.includes(currentUser.id)) {
+          console.warn(`[send_message] User ${currentUser.id} attempted to send to DM ${channelId} without membership`);
+          return;
+        }
+      } catch (e) { console.error('DB error (send_message DM check):', e.message); return; }
+    }
 
     const msg = {
       id: 'msg_' + uuidv4().slice(0, 12),
@@ -1337,7 +1434,17 @@ io.on('connection', (socket) => {
     if (!currentUser) return;
     try {
       const updates = {};
-      if (name?.trim()) updates.name = name.trim();
+      if (name?.trim()) {
+        const newName = name.trim();
+        // Prevent display-name impersonation
+        const allUsersProf = await getUsers();
+        const conflict = allUsersProf.find(u => u.id !== currentUser.id && u.name.toLowerCase() === newName.toLowerCase());
+        if (conflict) {
+          socket.emit('error_msg', 'That display name is already in use.');
+          return;
+        }
+        updates.name = newName;
+      }
       updates.statusMsg = (statusMsg || '').trim();
       await updateUser(currentUser.id, updates);
       Object.assign(currentUser, updates);
@@ -1574,10 +1681,7 @@ async function cleanupOrphanedMessages() {
 }
 
 // Admin endpoint — POST /api/admin/cleanup
-app.post('/api/admin/cleanup', async (req, res) => {
-  const token = req.headers.authorization?.replace('Bearer ', '');
-  const user = await getUserByToken(token);
-  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+app.post('/api/admin/cleanup', requireAdmin, async (req, res) => {
   const removed = await cleanupOrphanedMessages();
   res.json({ removed });
 });
