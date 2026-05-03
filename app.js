@@ -42,6 +42,31 @@
     return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
+  /** Resolve a stored avatar URL to a displayable src (prepend backend for /api/ paths). */
+  function resolveAvatarUrl(url) {
+    if (!url) return null;
+    if (url.startsWith('data:')) return url;
+    if (url.startsWith('/')) return backUrl() + url;
+    return url;
+  }
+
+  /**
+   * Returns an HTML string for an avatar element.
+   * Renders a circular/rounded image if the user has an avatarUrl, otherwise
+   * falls back to the coloured initials div.
+   * @param {object} user - user object with name, avatarUrl
+   * @param {string} cls  - CSS class to apply to the container div
+   * @param {string} [extraStyle] - optional inline style string for the container
+   */
+  function avatarEl(user, cls, extraStyle) {
+    const src = resolveAvatarUrl(user && user.avatarUrl);
+    if (src) {
+      return `<div class="${cls}"${extraStyle ? ` style="${extraStyle}"` : ''}><img src="${escHtml(src)}" alt="${escHtml((user && user.name) || '')}"></div>`;
+    }
+    const name = (user && user.name) || '?';
+    return `<div class="${cls}" style="background:${colorFor(name)}${extraStyle ? ';' + extraStyle : ''}">${initials(name)}</div>`;
+  }
+
   const EMOJIS = [
     '😀','😂','🥹','😍','🤩','😎','🥳','😤','🔥','💯',
     '❤️','👍','👎','👏','🙌','🤝','✅','❌','⭐','💡',
@@ -1331,7 +1356,7 @@
     } else {
       list.innerHTML = others.map(u => `
         <button type="button" class="video-pick-peer-btn" data-video-peer="${u.id.replace(/"/g, '')}">
-          <span class="dm-avatar" style="background:${colorFor(u.name)}">${initials(u.name)}</span>
+          ${avatarEl(u, 'dm-avatar')}
           <span class="video-pick-peer-name">${escHtml(u.name)}</span>
           <span class="dm-status ${u.status === 'online' ? 'online' : 'offline'}"></span>
         </button>`).join('');
@@ -1648,7 +1673,7 @@
     if (!others.length) { dmListEl.innerHTML = '<li style="color:var(--text-muted);font-size:12px;cursor:default;padding-left:26px">No other users yet</li>'; return; }
     dmListEl.innerHTML = others.map(u => `
       <li data-user="${u.id}">
-        <span class="dm-avatar" style="background:${colorFor(u.name)}">${initials(u.name)}</span>
+        ${avatarEl(u, 'dm-avatar')}
         <span>${escHtml(u.name)}</span>
         <span class="dm-status ${u.status === 'online' ? 'online' : 'offline'}"></span>
       </li>`).join('');
@@ -1706,7 +1731,7 @@
 
       const isOwn = msg.userId === currentUser.id;
       html += `<div class="message ${isCompact ? 'compact' : ''}" data-msg="${msg.id}">
-        <div class="message-avatar" style="background:${colorFor(user.name)}">${initials(user.name)}</div>
+        ${avatarEl(user, 'message-avatar')}
         <div class="message-body">
           <div class="message-meta"><span class="message-author">${escHtml(user.name)}</span><span class="message-time">${formatTime(msg.ts)}</span></div>
           ${msg.text ? `<div class="message-text">${formatText(msg.text)}</div>` : ''}${renderFileAttachment(msg.file)}${reactionsHtml}${threadHtml}
@@ -1739,13 +1764,13 @@
     const ch = channels.find(c => c.id === activeChannelId);
     threadChannel.textContent = ch ? `#${ch.name}` : '';
     const pu = resolveUser(pm.userId, pm.userName);
-    let html = `<div class="message"><div class="message-avatar" style="background:${colorFor(pu.name)}">${initials(pu.name)}</div>
+    let html = `<div class="message">${avatarEl(pu, 'message-avatar')}
       <div class="message-body"><div class="message-meta"><span class="message-author">${escHtml(pu.name)}</span><span class="message-time">${formatTime(pm.ts)}</span></div>
       <div class="message-text">${formatText(pm.text)}</div></div></div>
       <div class="date-divider"><span>${(pm.threadReplies||[]).length} ${(pm.threadReplies||[]).length===1?'reply':'replies'}</span></div>`;
     (pm.threadReplies || []).forEach(r => {
       const u = resolveUser(r.userId, r.userName);
-      html += `<div class="message"><div class="message-avatar" style="background:${colorFor(u.name)}">${initials(u.name)}</div>
+      html += `<div class="message">${avatarEl(u, 'message-avatar')}
         <div class="message-body"><div class="message-meta"><span class="message-author">${escHtml(u.name)}</span><span class="message-time">${formatTime(r.ts)}</span></div>
         <div class="message-text">${formatText(r.text)}</div></div></div>`;
     });
@@ -1765,7 +1790,9 @@
   function memberHTML(u) {
     const dot = u.status === 'online' ? 'var(--green)' : 'var(--text-muted)';
     const sub = u.statusMsg ? escHtml(u.statusMsg) : escHtml(u.role || 'Member');
-    return `<div class="member-item"><div class="member-avatar" style="background:${colorFor(u.name)}">${initials(u.name)}<span class="status-dot" style="background:${dot}"></span></div>
+    const avatarDiv = avatarEl(u, 'member-avatar');
+    const avatarWithDot = avatarDiv.replace('</div>', `<span class="status-dot" style="background:${dot}"></span></div>`);
+    return `<div class="member-item">${avatarWithDot}
       <div class="member-info"><div class="member-name">${escHtml(u.name)}${u.id===currentUser.id?' (you)':''}</div><div class="member-role">${sub}</div></div></div>`;
   }
 
@@ -1777,10 +1804,17 @@
       return;
     }
     r.style.visibility = 'visible';
-    r.style.background = colorFor(currentUser.name);
-    r.style.display = 'flex'; r.style.alignItems = 'center'; r.style.justifyContent = 'center';
-    r.style.fontSize = '13px'; r.style.fontWeight = '700'; r.style.color = '#fff';
-    r.textContent = initials(currentUser.name);
+    const src = resolveAvatarUrl(currentUser.avatarUrl);
+    if (src) {
+      r.style.background = '';
+      r.innerHTML = `<img src="${escHtml(src)}" alt="${escHtml(currentUser.name)}" style="width:100%;height:100%;object-fit:cover;display:block;border-radius:inherit">`;
+    } else {
+      r.innerHTML = '';
+      r.style.background = colorFor(currentUser.name);
+      r.style.display = 'flex'; r.style.alignItems = 'center'; r.style.justifyContent = 'center';
+      r.style.fontSize = '13px'; r.style.fontWeight = '700'; r.style.color = '#fff';
+      r.textContent = initials(currentUser.name);
+    }
   }
 
   function renderEmojis(filter = '') {
@@ -2395,9 +2429,21 @@ function filterExplicit(text) {
   });
 
   $('#railAvatar').addEventListener('click', () => {
-    const a = $('#profileAvatarLg'); a.style.background = colorFor(currentUser.name); a.textContent = initials(currentUser.name);
+    const a = $('#profileAvatarLg');
+    const src = resolveAvatarUrl(currentUser.avatarUrl);
+    if (src) {
+      a.style.background = '';
+      a.innerHTML = `<img src="${escHtml(src)}" alt="${escHtml(currentUser.name)}">`;
+    } else {
+      a.innerHTML = '';
+      a.style.background = colorFor(currentUser.name);
+      a.textContent = initials(currentUser.name);
+    }
     $('#profileName').value = currentUser.name;
     $('#profileStatus').value = currentUser.statusMsg || '';
+    // Hide editor on open
+    const ed = $('#avatarEditor');
+    if (ed) ed.style.display = 'none';
     applyTheme(localStorage.getItem('sf_theme') || 'dark');
     openModal('profileModal');
   });
@@ -2420,6 +2466,316 @@ function filterExplicit(text) {
     }
     closeModal('profileModal');
   });
+
+  document.getElementById('themePicker').addEventListener('click', (e) => {
+    const swatch = e.target.closest('.theme-swatch');
+    if (swatch) applyTheme(swatch.dataset.theme);
+  });
+  $('#saveProfileBtn').addEventListener('click', () => {
+    const name = $('#profileName').value.trim();
+    const statusMsg = $('#profileStatus').value.trim();
+    if (inServerMode() && socket) {
+      socket.emit('update_profile', { name: name || currentUser.name, statusMsg });
+    } else {
+      if (name) currentUser.name = name;
+      currentUser.statusMsg = statusMsg;
+      const u2 = lsGetUsers(), u = u2.find(x => x.id === currentUser.id);
+      if (u) { u.name = currentUser.name; u.statusMsg = statusMsg; lsSaveUsers(u2); users = u2; }
+      broadcast('user_joined', { userId: currentUser.id }); renderAll();
+    }
+    closeModal('profileModal');
+  });
+
+  // ── Avatar editor ──
+  (function initAvatarEditor() {
+    // ── Constants ──
+    const AB_BG = ['#6c5ce7','#0984e3','#27ae60','#e17055','#e84393','#00cec9','#fdcb6e','#636e72'];
+    const AB_SKIN = ['#FDDBB4','#EAC38A','#D4956A','#B5774D','#8D5524','#4A2912'];
+    const AB_HAIR_C = ['#1A0A00','#3B2314','#7B4A2B','#B8860B','#CC4A2A','#E07020','#888888','#EEEEEE'];
+    const AB_HAIR_S = [
+      { name: 'Bald',          back: '', front: '' },
+      { name: 'Short',         back: `<ellipse cx="50" cy="28" rx="23" ry="16" fill="$h"/>`, front: `<rect x="27" y="28" width="4" height="10" rx="2" fill="$h"/><rect x="69" y="28" width="4" height="10" rx="2" fill="$h"/>` },
+      { name: 'Buzz',          back: `<ellipse cx="50" cy="27" rx="23" ry="12" fill="$h"/>`, front: `<rect x="27" y="27" width="4" height="7" rx="2" fill="$h"/><rect x="69" y="27" width="4" height="7" rx="2" fill="$h"/>` },
+      { name: 'Side Part',     back: `<ellipse cx="50" cy="28" rx="24" ry="17" fill="$h"/>`, front: `<path d="M28,36 C30,22 40,18 50,19 C62,18 72,25 73,36 C70,27 60,24 50,24 C40,24 30,27 28,36Z" fill="$h"/>` },
+      { name: 'Long Straight', back: `<path d="M27,52 C25,70 26,88 28,100 L72,100 C74,88 75,70 73,52 C67,32 56,26 50,26 C44,26 33,32 27,52Z" fill="$h"/>`, front: `<ellipse cx="50" cy="26" rx="23" ry="14" fill="$h"/>` },
+      { name: 'Long Wavy',     back: `<ellipse cx="50" cy="27" rx="24" ry="17" fill="$h"/><path d="M27,50 C23,68 25,88 29,100 L34,100 C30,86 29,66 32,50M73,50 C77,68 75,88 71,100 L66,100 C70,86 71,66 68,50" fill="$h"/>`, front: '' },
+      { name: 'Mohawk',        back: '', front: `<rect x="44" y="8" width="12" height="24" rx="6" fill="$h"/>` },
+      { name: 'Ponytail',      back: `<ellipse cx="50" cy="27" rx="23" ry="15" fill="$h"/><path d="M62,41 Q78,55 73,80 L68,82 Q72,58 60,46Z" fill="$h"/>`, front: `<ellipse cx="50" cy="26" rx="23" ry="13" fill="$h"/>` },
+      { name: 'Bob',           back: `<path d="M27,52 C26,64 28,74 34,82 C40,88 46,90 50,90 C54,90 60,88 66,82 C72,74 74,64 73,52 C67,34 56,26 50,26 C44,26 33,34 27,52Z" fill="$h"/>`, front: `<ellipse cx="50" cy="26" rx="23" ry="14" fill="$h"/>` },
+    ];
+    const AB_EYES = [
+      { name: 'Dots',   svg: `<circle cx="42" cy="50" r="3" fill="#1A0A00"/><circle cx="58" cy="50" r="3" fill="#1A0A00"/>` },
+      { name: 'Open',   svg: `<ellipse cx="42" cy="50" rx="5" ry="5.5" fill="white"/><circle cx="42" cy="50" r="3" fill="#1A0A00"/><ellipse cx="58" cy="50" rx="5" ry="5.5" fill="white"/><circle cx="58" cy="50" r="3" fill="#1A0A00"/>` },
+      { name: 'Squint', svg: `<path d="M38,51 Q42,46 46,51" stroke="#1A0A00" stroke-width="2.5" fill="none" stroke-linecap="round"/><path d="M54,51 Q58,46 62,51" stroke="#1A0A00" stroke-width="2.5" fill="none" stroke-linecap="round"/>` },
+      { name: 'Wide',   svg: `<ellipse cx="42" cy="50" rx="5.5" ry="6.5" fill="white"/><circle cx="42" cy="51" r="3.5" fill="#1A0A00"/><ellipse cx="58" cy="50" rx="5.5" ry="6.5" fill="white"/><circle cx="58" cy="51" r="3.5" fill="#1A0A00"/>` },
+      { name: 'Wink',   svg: `<ellipse cx="42" cy="50" rx="5" ry="5.5" fill="white"/><circle cx="42" cy="50" r="3" fill="#1A0A00"/><path d="M54,50 Q58,46 62,50" stroke="#1A0A00" stroke-width="2.5" fill="none" stroke-linecap="round"/>` },
+      { name: 'Stars',  svg: `<text x="38" y="55" font-size="10" fill="#1A0A00">★</text><text x="54" y="55" font-size="10" fill="#1A0A00">★</text>` },
+    ];
+    const AB_MOUTHS = [
+      { name: 'Smile',     svg: `<path d="M44,64 Q50,70 56,64" stroke="#1A0A00" stroke-width="2" fill="none" stroke-linecap="round"/>` },
+      { name: 'Big Smile', svg: `<path d="M41,63 Q50,73 59,63" stroke="#1A0A00" stroke-width="2.5" fill="none" stroke-linecap="round"/>` },
+      { name: 'Neutral',   svg: `<line x1="43" y1="65" x2="57" y2="65" stroke="#1A0A00" stroke-width="2" stroke-linecap="round"/>` },
+      { name: 'Grin',      svg: `<path d="M42,63 Q50,73 58,63 L57,66 Q50,72 43,66Z" fill="#1A0A00"/><rect x="43" y="63" width="14" height="3.5" fill="white" rx="0.5"/>` },
+      { name: 'Sad',       svg: `<path d="M44,67 Q50,62 56,67" stroke="#1A0A00" stroke-width="2" fill="none" stroke-linecap="round"/>` },
+      { name: 'Smirk',     svg: `<path d="M45,64 Q52,70 58,66" stroke="#1A0A00" stroke-width="2" fill="none" stroke-linecap="round"/>` },
+    ];
+    const GLASSES_SVG = `<circle cx="42" cy="50" r="7" stroke="#555" stroke-width="1.5" fill="rgba(200,220,255,0.15)"/><circle cx="58" cy="50" r="7" stroke="#555" stroke-width="1.5" fill="rgba(200,220,255,0.15)"/><line x1="49" y1="50" x2="51" y2="50" stroke="#555" stroke-width="1.5"/><line x1="35" y1="51" x2="30" y2="53" stroke="#555" stroke-width="1.5"/><line x1="65" y1="51" x2="70" y2="53" stroke="#555" stroke-width="1.5"/>`;
+    const HAT_SVG = `<path d="M24,30 C24,15 76,15 76,30Z" fill="#2a2a2a"/><ellipse cx="50" cy="30" rx="27" ry="7" fill="#333"/>`;
+
+    // Current builder state
+    const st = { bg: 0, skin: 1, hair: 1, hairC: 0, eye: 1, mouth: 0, glasses: false, hat: false };
+
+    function buildSvg(s) {
+      const bg = AB_BG[s.bg];
+      const skin = AB_SKIN[s.skin];
+      const hc = AB_HAIR_C[s.hairC];
+      const hs = AB_HAIR_S[s.hair];
+      const hairBack = hs.back.replace(/\$h/g, hc);
+      const hairFront = hs.front.replace(/\$h/g, hc);
+      return `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="50" cy="50" r="50" fill="${bg}"/>
+        ${s.hat ? HAT_SVG : ''}
+        <ellipse cx="50" cy="98" rx="28" ry="14" fill="${skin}"/>
+        <rect x="43" y="72" width="14" height="14" rx="4" fill="${skin}"/>
+        ${hairBack}
+        <ellipse cx="50" cy="52" rx="22" ry="26" fill="${skin}"/>
+        ${hairFront}
+        ${AB_EYES[s.eye].svg}
+        ${AB_MOUTHS[s.mouth].svg}
+        ${s.glasses ? GLASSES_SVG : ''}
+      </svg>`;
+    }
+
+    function refreshPreview() {
+      const p = $('#avbPreview');
+      if (p) p.innerHTML = buildSvg(st);
+      // Show/hide hair color row when bald
+      const hr = $('#avbHairColorRow');
+      if (hr) hr.style.display = st.hair === 0 ? 'none' : '';
+    }
+
+    function populateSwatches(containerId, colors, stateKey) {
+      const el = $('#' + containerId);
+      if (!el) return;
+      el.innerHTML = colors.map((c, i) => `<button type="button" class="avb-swatch${st[stateKey] === i ? ' active' : ''}" data-idx="${i}" style="background:${c}" title="${c}"></button>`).join('');
+      el.addEventListener('click', (e) => {
+        const b = e.target.closest('.avb-swatch');
+        if (!b) return;
+        st[stateKey] = parseInt(b.dataset.idx);
+        el.querySelectorAll('.avb-swatch').forEach((s, i) => s.classList.toggle('active', i === st[stateKey]));
+        refreshPreview();
+      });
+    }
+
+    function populateChips(containerId, items, stateKey) {
+      const el = $('#' + containerId);
+      if (!el) return;
+      el.innerHTML = items.map((item, i) => `<button type="button" class="avb-chip${st[stateKey] === i ? ' active' : ''}" data-idx="${i}">${item.name}</button>`).join('');
+      el.addEventListener('click', (e) => {
+        const b = e.target.closest('.avb-chip');
+        if (!b) return;
+        st[stateKey] = parseInt(b.dataset.idx);
+        el.querySelectorAll('.avb-chip').forEach((c, i) => c.classList.toggle('active', i === st[stateKey]));
+        refreshPreview();
+      });
+    }
+
+    function initBuilder() {
+      populateSwatches('avbBgSwatches', AB_BG, 'bg');
+      populateSwatches('avbSkinSwatches', AB_SKIN, 'skin');
+      populateChips('avbHairStyleChips', AB_HAIR_S, 'hair');
+      populateSwatches('avbHairColorSwatches', AB_HAIR_C, 'hairC');
+      populateChips('avbEyeChips', AB_EYES, 'eye');
+      populateChips('avbMouthChips', AB_MOUTHS, 'mouth');
+      const gc = $('#avbGlassesChk'), hc = $('#avbHatChk');
+      if (gc) gc.addEventListener('change', () => { st.glasses = gc.checked; refreshPreview(); });
+      if (hc) hc.addEventListener('change', () => { st.hat = hc.checked; refreshPreview(); });
+      refreshPreview();
+    }
+
+    let builderInitialized = false;
+    function ensureBuilder() {
+      if (!builderInitialized) { builderInitialized = true; initBuilder(); }
+      else refreshPreview();
+    }
+
+    async function svgToDataUrl(svgString) {
+      return new Promise((resolve, reject) => {
+        const blob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const img = new Image();
+        img.onload = () => {
+          const c = document.createElement('canvas');
+          c.width = 256; c.height = 256;
+          c.getContext('2d').drawImage(img, 0, 0, 256, 256);
+          URL.revokeObjectURL(url);
+          resolve(c.toDataURL('image/png'));
+        };
+        img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('SVG render failed')); };
+        img.src = url;
+      });
+    }
+
+    async function applyAvatarUrl(url) {
+      currentUser.avatarUrl = url;
+      const u2 = users.find(x => x.id === currentUser.id);
+      if (u2) u2.avatarUrl = url;
+      if (!inServerMode()) {
+        const all = lsGetUsers();
+        const u = all.find(x => x.id === currentUser.id);
+        if (u) { u.avatarUrl = url; lsSaveUsers(all); }
+      }
+      // Update profile modal avatar display
+      const a = $('#profileAvatarLg');
+      if (a) {
+        a.style.background = '';
+        a.innerHTML = `<img src="${escHtml(url)}" alt="${escHtml(currentUser.name)}">`;
+      }
+      renderRailAvatar();
+      renderAll();
+    }
+
+    // Tab switching
+    function switchTab(tab) {
+      const isUpload = tab === 'upload';
+      $('#avtPaneUpload').style.display = isUpload ? '' : 'none';
+      $('#avtPaneBuild').style.display = isUpload ? 'none' : '';
+      $$('.avatar-tab').forEach(b => b.classList.toggle('active', b.id === (isUpload ? 'avtTabUpload' : 'avtTabBuild')));
+      if (!isUpload) { ensureBuilder(); }
+    }
+
+    const editBtn = $('#editAvatarBtn');
+    if (editBtn) {
+      editBtn.addEventListener('click', () => {
+        const ed = $('#avatarEditor');
+        if (!ed) return;
+        const open = ed.style.display !== 'none';
+        ed.style.display = open ? 'none' : '';
+        editBtn.textContent = open ? 'Edit photo' : 'Cancel';
+        if (!open) switchTab('upload');
+      });
+    }
+
+    // Tab click handlers
+    $$('.avatar-tab').forEach(btn => {
+      btn.addEventListener('click', () => switchTab(btn.dataset.avt));
+    });
+
+    // ── Upload Photo ──
+    let uploadedDataUrl = null;
+
+    const dropEl = $('#avtUploadDrop');
+    const fileInput = $('#avatarFileInput');
+
+    if (dropEl) {
+      dropEl.addEventListener('click', () => fileInput && fileInput.click());
+    }
+
+    if (fileInput) {
+      fileInput.addEventListener('change', () => {
+        const file = fileInput.files && fileInput.files[0];
+        if (!file) return;
+        if (file.size > 2 * 1024 * 1024) { alert('File is too large. Max 2 MB.'); fileInput.value = ''; return; }
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          uploadedDataUrl = ev.target.result;
+          if (dropEl) {
+            dropEl.classList.add('has-preview');
+            dropEl.innerHTML = `<img src="${escHtml(uploadedDataUrl)}" alt="preview">`;
+          }
+          const sb = $('#saveUploadBtn');
+          if (sb) sb.style.display = '';
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    const saveUploadBtn = $('#saveUploadBtn');
+    if (saveUploadBtn) {
+      saveUploadBtn.addEventListener('click', async () => {
+        if (!uploadedDataUrl) return;
+        saveUploadBtn.disabled = true;
+        saveUploadBtn.textContent = 'Saving…';
+        try {
+          if (inServerMode() && authToken) {
+            // Upload the actual file bytes for better storage
+            const fileInp = fileInput;
+            const file = fileInp && fileInp.files && fileInp.files[0];
+            if (file) {
+              const form = new FormData();
+              form.append('file', file);
+              const res = await fetch(backUrl() + '/api/profile/avatar', {
+                method: 'POST',
+                headers: { Authorization: 'Bearer ' + authToken },
+                body: form,
+              });
+              const d = await res.json();
+              if (!res.ok) { alert('Upload failed: ' + (d.error || 'unknown error')); return; }
+              // server will broadcast user_updated; also update locally immediately
+              await applyAvatarUrl(resolveAvatarUrl(d.avatarUrl) || uploadedDataUrl);
+            } else {
+              // Fallback: send data URL
+              const res = await fetch(backUrl() + '/api/profile/avatar/dataurl', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + authToken },
+                body: JSON.stringify({ dataUrl: uploadedDataUrl }),
+              });
+              const d = await res.json();
+              if (!res.ok) { alert('Upload failed: ' + (d.error || 'unknown error')); return; }
+              await applyAvatarUrl(resolveAvatarUrl(d.avatarUrl) || uploadedDataUrl);
+            }
+          } else {
+            await applyAvatarUrl(uploadedDataUrl);
+          }
+          // Reset editor
+          const ed = $('#avatarEditor');
+          if (ed) ed.style.display = 'none';
+          if (editBtn) editBtn.textContent = 'Edit photo';
+        } catch (err) {
+          alert('Save failed: ' + err.message);
+        } finally {
+          saveUploadBtn.disabled = false;
+          saveUploadBtn.textContent = 'Save Photo';
+        }
+      });
+    }
+
+    // ── Save built avatar ──
+    const saveBuiltBtn = $('#saveBuiltBtn');
+    if (saveBuiltBtn) {
+      saveBuiltBtn.addEventListener('click', async () => {
+        saveBuiltBtn.disabled = true;
+        saveBuiltBtn.textContent = 'Saving…';
+        try {
+          const svgStr = buildSvg(st);
+          let dataUrl;
+          try { dataUrl = await svgToDataUrl(svgStr); }
+          catch { dataUrl = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgStr))); }
+
+          if (inServerMode() && authToken) {
+            const res = await fetch(backUrl() + '/api/profile/avatar/dataurl', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + authToken },
+              body: JSON.stringify({ dataUrl }),
+            });
+            const d = await res.json();
+            if (!res.ok) { alert('Save failed: ' + (d.error || 'unknown error')); return; }
+            await applyAvatarUrl(resolveAvatarUrl(d.avatarUrl) || dataUrl);
+          } else {
+            await applyAvatarUrl(dataUrl);
+          }
+          const ed = $('#avatarEditor');
+          if (ed) ed.style.display = 'none';
+          if (editBtn) editBtn.textContent = 'Edit photo';
+        } catch (err) {
+          alert('Save failed: ' + err.message);
+        } finally {
+          saveBuiltBtn.disabled = false;
+          saveBuiltBtn.textContent = 'Save Avatar';
+        }
+      });
+    }
+  }());
 
   $('#mobileMenuBtn').addEventListener('click', openMobileSidebar);
   sidebarOverlay.addEventListener('click', closeMobileSidebar);

@@ -207,7 +207,7 @@ async function getUserByToken(token) {
 
 function publicUser(u) {
   if (!u) return null;
-  return { id: u.id, name: u.name, username: u.username, status: u.status, statusMsg: u.statusMsg || '', role: u.role, createdAt: u.createdAt };
+  return { id: u.id, name: u.name, username: u.username, status: u.status, statusMsg: u.statusMsg || '', role: u.role, createdAt: u.createdAt, avatarUrl: u.avatarUrl || null };
 }
 
 // ── Invite helpers ──
@@ -986,6 +986,89 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
   }
 
   res.json({ id: fileId, name: fileDoc.name, type: fileDoc.type, size: fileDoc.size });
+});
+
+// ── REST: Profile avatar upload (multipart photo) ──
+const avatarUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 2 * 1024 * 1024 },
+});
+
+app.post('/api/profile/avatar', avatarUpload.single('file'), async (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  const user = await getUserByToken(token);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+  if (!req.file) return res.status(400).json({ error: 'No file provided' });
+
+  const allowed = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+  if (!allowed.includes(req.file.mimetype)) {
+    return res.status(400).json({ error: 'Only JPEG, PNG, GIF, and WEBP are allowed' });
+  }
+
+  const fileId = 'av_' + uuidv4().slice(0, 16);
+  const ext = req.file.mimetype.split('/')[1] || 'jpg';
+  const fileDoc = {
+    id: fileId,
+    name: 'avatar.' + ext,
+    type: req.file.mimetype,
+    size: req.file.size,
+    data: req.file.buffer,
+    uploadedBy: user.id,
+    uploadedAt: Date.now(),
+    isAvatar: true,
+  };
+
+  if (db) await filesCol.insertOne(fileDoc);
+  else { if (!memData.files) memData.files = {}; memData.files[fileId] = fileDoc; }
+
+  const avatarUrl = '/api/files/' + fileId;
+  await updateUser(user.id, { avatarUrl });
+  const updated = await findUser({ id: user.id });
+  io.emit('user_updated', { user: publicUser({ ...updated, avatarUrl }) });
+  res.json({ avatarUrl });
+});
+
+// ── REST: Profile avatar from data URL (avatar builder) ──
+app.post('/api/profile/avatar/dataurl', async (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  const user = await getUserByToken(token);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+  const { dataUrl } = req.body;
+  if (!dataUrl || !dataUrl.startsWith('data:image/')) {
+    return res.status(400).json({ error: 'Invalid data URL' });
+  }
+
+  const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+  if (!match) return res.status(400).json({ error: 'Invalid data URL format' });
+
+  const mimeType = match[1];
+  let buffer;
+  try { buffer = Buffer.from(match[2], 'base64'); } catch { return res.status(400).json({ error: 'Invalid base64 data' }); }
+
+  if (buffer.length > 2 * 1024 * 1024) return res.status(413).json({ error: 'Image too large (max 2MB)' });
+
+  const fileId = 'av_' + uuidv4().slice(0, 16);
+  const ext = mimeType.split('/')[1] || 'png';
+  const fileDoc = {
+    id: fileId,
+    name: 'avatar.' + ext,
+    type: mimeType,
+    size: buffer.length,
+    data: buffer,
+    uploadedBy: user.id,
+    uploadedAt: Date.now(),
+    isAvatar: true,
+  };
+
+  if (db) await filesCol.insertOne(fileDoc);
+  else { if (!memData.files) memData.files = {}; memData.files[fileId] = fileDoc; }
+
+  const avatarUrl = '/api/files/' + fileId;
+  await updateUser(user.id, { avatarUrl });
+  const updated = await findUser({ id: user.id });
+  io.emit('user_updated', { user: publicUser({ ...updated, avatarUrl }) });
+  res.json({ avatarUrl });
 });
 
 // ── REST: File serve ──

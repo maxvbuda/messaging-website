@@ -552,6 +552,7 @@ body {
   width: 22px;
   height: 22px;
   border-radius: 5px;
+  overflow: hidden;
   flex-shrink: 0;
   font-size: 10px;
   font-weight: 700;
@@ -729,6 +730,7 @@ body {
   height: 36px;
   border-radius: 8px;
   flex-shrink: 0;
+  overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1188,6 +1190,13 @@ body {
   flex-shrink: 0;
   position: relative;
 }
+.member-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  border-radius: 8px;
+}
 .member-avatar .status-dot {
   position: absolute;
   bottom: -1px;
@@ -1340,7 +1349,8 @@ body {
   width: 80px;
   height: 80px;
   border-radius: 16px;
-  margin: 0 auto 16px;
+  overflow: hidden;
+  margin: 0 auto 4px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1799,3 +1809,179 @@ body {
   min-width: 0;
   font-weight: 700;
 }
+
+/* ============================================================
+   Avatar images inside existing avatar containers
+   ============================================================ */
+.message-avatar img,
+.dm-avatar img,
+.profile-avatar-lg img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  border-radius: inherit;
+}
+
+/* ============================================================
+   Profile modal — avatar wrap + edit link
+   ============================================================ */
+.profile-avatar-wrap {
+  text-align: center;
+  margin-bottom: 10px;
+}
+.btn-link {
+  background: none;
+  border: none;
+  color: var(--text-link);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 0;
+  font-family: var(--font);
+  text-decoration: underline;
+}
+.btn-link:hover { opacity: 0.75; }
+
+/* ============================================================
+   Avatar editor (inside profile modal)
+   ============================================================ */
+.avatar-editor {
+  background: var(--bg-medium);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  margin-bottom: 14px;
+  text-align: left;
+}
+.avatar-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+}
+.avatar-tab {
+  flex: 1;
+  padding: 7px 6px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  font-weight: 700;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.avatar-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* Upload tab */
+.avt-upload-drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 16px 12px;
+  border: 2px dashed var(--border-light);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+  text-align: center;
+}
+.avt-upload-drop:hover {
+  border-color: var(--accent);
+  background: var(--accent-muted);
+  color: var(--accent);
+}
+.avt-upload-drop.has-preview {
+  padding: 8px;
+  border-style: solid;
+  border-color: var(--border);
+}
+.avt-upload-drop img {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  object-fit: cover;
+  display: block;
+}
+.avt-hint { font-size: 11px; }
+.avt-upload-drop span { font-size: 13px; }
+
+/* Avatar builder tab */
+.avb-preview-row {
+  text-align: center;
+  margin-bottom: 10px;
+}
+#avbPreview svg {
+  width: 80px;
+  height: 80px;
+  display: inline-block;
+  border-radius: 50%;
+}
+.avb-options-scroll {
+  max-height: 220px;
+  overflow-y: auto;
+  padding-right: 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-bottom: 10px;
+}
+.avb-options-scroll::-webkit-scrollbar { width: 4px; }
+.avb-options-scroll::-webkit-scrollbar-thumb { background: var(--bg-active); border-radius: 2px; }
+.avb-row { display: flex; flex-direction: column; gap: 5px; }
+.avb-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.avb-swatches { display: flex; flex-wrap: wrap; gap: 5px; }
+.avb-swatch {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: transform 0.12s, border-color 0.12s;
+  outline: none;
+  flex-shrink: 0;
+}
+.avb-swatch.active {
+  border-color: var(--text-primary);
+  transform: scale(1.25);
+}
+.avb-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.avb-chip {
+  padding: 3px 7px;
+  border-radius: 4px;
+  background: var(--bg-light);
+  border: 1px solid var(--border);
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.12s;
+  font-family: var(--font);
+}
+.avb-chip.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.avb-toggles { display: flex; gap: 14px; }
+.avb-toggle-lbl {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.w-full { width: 100%; }

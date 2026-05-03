@@ -287,7 +287,72 @@
           </button>
         </div>
         <div class="modal-body profile-body">
-          <div class="profile-avatar-lg" id="profileAvatarLg"></div>
+          <!-- Avatar display -->
+          <div class="profile-avatar-wrap">
+            <div class="profile-avatar-lg" id="profileAvatarLg"></div>
+            <button class="btn-link" id="editAvatarBtn" type="button">Edit photo</button>
+          </div>
+
+          <!-- Avatar editor (hidden until "Edit photo" is clicked) -->
+          <div class="avatar-editor" id="avatarEditor" style="display:none">
+            <div class="avatar-tabs">
+              <button class="avatar-tab active" id="avtTabUpload" data-avt="upload">Upload Photo</button>
+              <button class="avatar-tab" id="avtTabBuild" data-avt="build">Build Avatar</button>
+            </div>
+
+            <!-- Upload tab -->
+            <div id="avtPaneUpload">
+              <div class="avt-upload-drop" id="avtUploadDrop">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                <span>Click to upload photo</span>
+                <span class="avt-hint">JPEG, PNG or GIF · Max 2 MB</span>
+              </div>
+              <input type="file" id="avatarFileInput" accept="image/jpeg,image/png,image/gif,image/webp" style="display:none">
+              <button class="btn-primary w-full" id="saveUploadBtn" style="display:none">Save Photo</button>
+            </div>
+
+            <!-- Build Avatar tab -->
+            <div id="avtPaneBuild" style="display:none">
+              <div class="avb-preview-row">
+                <div id="avbPreview"></div>
+              </div>
+              <div class="avb-options-scroll">
+                <div class="avb-row">
+                  <span class="avb-label">Background</span>
+                  <div class="avb-swatches" id="avbBgSwatches"></div>
+                </div>
+                <div class="avb-row">
+                  <span class="avb-label">Skin Tone</span>
+                  <div class="avb-swatches" id="avbSkinSwatches"></div>
+                </div>
+                <div class="avb-row">
+                  <span class="avb-label">Hair Style</span>
+                  <div class="avb-chips" id="avbHairStyleChips"></div>
+                </div>
+                <div class="avb-row" id="avbHairColorRow">
+                  <span class="avb-label">Hair Color</span>
+                  <div class="avb-swatches" id="avbHairColorSwatches"></div>
+                </div>
+                <div class="avb-row">
+                  <span class="avb-label">Eyes</span>
+                  <div class="avb-chips" id="avbEyeChips"></div>
+                </div>
+                <div class="avb-row">
+                  <span class="avb-label">Expression</span>
+                  <div class="avb-chips" id="avbMouthChips"></div>
+                </div>
+                <div class="avb-row">
+                  <span class="avb-label">Accessories</span>
+                  <div class="avb-toggles">
+                    <label class="avb-toggle-lbl"><input type="checkbox" id="avbGlassesChk"> Glasses</label>
+                    <label class="avb-toggle-lbl"><input type="checkbox" id="avbHatChk"> Hat</label>
+                  </div>
+                </div>
+              </div>
+              <button class="btn-primary w-full" id="saveBuiltBtn">Save Avatar</button>
+            </div>
+          </div>
+
           <label class="form-label">Display Name</label>
           <input type="text" id="profileName" class="form-input" placeholder="Your name">
           <label class="form-label">Status</label>
