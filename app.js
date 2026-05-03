@@ -2651,13 +2651,17 @@ function filterExplicit(text) {
 <path d="M56,120 L61,126 L56,132 L61,138 L56,144 L61,150 L56,156 L61,162 L56,168" stroke="$d" stroke-width="4" fill="none" stroke-linecap="round"/>
 <path d="M144,120 L139,126 L144,132 L139,138 L144,144 L139,150 L144,156 L139,162 L144,168" stroke="$d" stroke-width="4" fill="none" stroke-linecap="round"/>`},
       {name:'Swept Fringe',
-       back:`<ellipse cx="100" cy="67" rx="60" ry="44" fill="$h"/>`,
-       front:`<path d="M42,88 C42,63 54,54 100,54 C146,54 158,63 158,88 C152,69 140,62 100,62 C60,62 48,69 42,88Z" fill="$h"/>
-<rect x="42" y="76" rx="5" width="11" height="26" fill="$h"/>
-<rect x="147" y="76" rx="5" width="11" height="26" fill="$h"/>
-<path d="M56,76 C70,60 104,54 146,68 C148,82 140,94 124,93 C106,91 84,86 64,90 C54,86 50,82 56,76Z" fill="$h"/>
-<path d="M66,88 C84,84 106,88 124,91" stroke="$d" stroke-width="4.5" fill="none" stroke-linecap="round" opacity="0.5"/>
-<path d="M60,80 C76,64 108,58 144,70" stroke="rgba(255,255,255,0.15)" stroke-width="6" fill="none" stroke-linecap="round"/>`},
+       back:`<ellipse cx="103" cy="66" rx="61" ry="46" fill="$h"/>`,
+       front:`<path d="M44,93 C43,64 58,52 100,52 C144,52 157,64 157,88 C151,67 139,59 106,57 C70,55 51,67 45,87Z" fill="$h"/>
+<path d="M45,87 C41,87 39,97 39,106 C39,112 44,115 48,111 C52,106 51,97 49,89Z" fill="$h"/>
+<path d="M155,87 C159,87 161,97 161,106 C161,112 156,115 152,111 C148,106 149,97 151,89Z" fill="$h"/>
+<path d="M115,66 C106,58 88,60 72,70 C60,78 58,87 65,92 C74,96 94,91 112,87 C126,82 132,72 115,66Z" fill="$h"/>
+<path d="M112,68 C100,65 81,69 68,78" stroke="$d" stroke-width="1.3" fill="none" stroke-linecap="round" opacity="0.45"/>
+<path d="M116,73 C104,70 86,74 73,83" stroke="$d" stroke-width="1.3" fill="none" stroke-linecap="round" opacity="0.45"/>
+<path d="M112,78 C101,75 84,79 72,87" stroke="$d" stroke-width="1.2" fill="none" stroke-linecap="round" opacity="0.35"/>
+<path d="M109,82 C97,79 81,83 70,89" stroke="$d" stroke-width="1.1" fill="none" stroke-linecap="round" opacity="0.25"/>
+<path d="M118,70 C108,67 92,71 80,79" stroke="rgba(255,255,255,0.15)" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+<path d="M116,63 C104,57 86,57 72,65" stroke="rgba(255,255,255,0.22)" stroke-width="4" fill="none" stroke-linecap="round"/>`},
     ];
 
     // ── 8 eye colors ──
