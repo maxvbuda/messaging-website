@@ -1638,7 +1638,10 @@
     socket.on('user_updated', ({ user }) => {
       const ex = users.find(u => u.id === user.id);
       if (ex) Object.assign(ex, user);
-      if (user.id === currentUser.id) currentUser = user;
+      if (user.id === currentUser.id) {
+        currentUser = { ...currentUser, ...user };
+        refreshProfileModalAvatar();
+      }
       renderAll();
     });
     socket.on('user_typing', ({ channelId, userName }) => {
@@ -2428,8 +2431,10 @@ function filterExplicit(text) {
     });
   });
 
-  $('#railAvatar').addEventListener('click', () => {
+  function refreshProfileModalAvatar() {
+    if (!currentUser) return;
     const a = $('#profileAvatarLg');
+    if (!a) return;
     const src = resolveAvatarUrl(currentUser.avatarUrl);
     if (src) {
       a.style.background = '';
@@ -2439,11 +2444,19 @@ function filterExplicit(text) {
       a.style.background = colorFor(currentUser.name);
       a.textContent = initials(currentUser.name);
     }
+    const useInitialsBtn = $('#useInitialsBtn');
+    if (useInitialsBtn) useInitialsBtn.style.display = src ? '' : 'none';
+  }
+
+  $('#railAvatar').addEventListener('click', () => {
+    refreshProfileModalAvatar();
     $('#profileName').value = currentUser.name;
     $('#profileStatus').value = currentUser.statusMsg || '';
     // Hide editor on open
     const ed = $('#avatarEditor');
-    if (ed) ed.style.display = 'none';
+    if (ed) { ed.style.display = 'none'; }
+    const editBtn = $('#editAvatarBtn');
+    if (editBtn) editBtn.textContent = 'Edit photo';
     applyTheme(localStorage.getItem('sf_theme') || 'dark');
     openModal('profileModal');
   });
@@ -2452,11 +2465,22 @@ function filterExplicit(text) {
     const swatch = e.target.closest('.theme-swatch');
     if (swatch) applyTheme(swatch.dataset.theme);
   });
-  $('#saveProfileBtn').addEventListener('click', () => {
-    const name = $('#profileName').value.trim();
-    const statusMsg = $('#profileStatus').value.trim();
-    if (inServerMode() && socket) {
-      socket.emit('update_profile', { name: name || currentUser.name, statusMsg });
+
+  $('#saveProfileBtn').addEventListener('click', async () => {
+    const name = ($('#profileName').value || '').trim();
+    const statusMsg = ($('#profileStatus').value || '').trim();
+    if (inServerMode() && authToken) {
+      const effectiveName = name || currentUser.name;
+      if (name && name !== currentUser.name) {
+        try {
+          await fetch(backUrl() + '/api/profile/name', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + authToken },
+            body: JSON.stringify({ name: effectiveName }),
+          });
+        } catch { /* socket fallback below */ }
+      }
+      if (socket) socket.emit('update_profile', { name: effectiveName, statusMsg });
     } else {
       if (name) currentUser.name = name;
       currentUser.statusMsg = statusMsg;
@@ -2467,24 +2491,34 @@ function filterExplicit(text) {
     closeModal('profileModal');
   });
 
-  document.getElementById('themePicker').addEventListener('click', (e) => {
-    const swatch = e.target.closest('.theme-swatch');
-    if (swatch) applyTheme(swatch.dataset.theme);
-  });
-  $('#saveProfileBtn').addEventListener('click', () => {
-    const name = $('#profileName').value.trim();
-    const statusMsg = $('#profileStatus').value.trim();
-    if (inServerMode() && socket) {
-      socket.emit('update_profile', { name: name || currentUser.name, statusMsg });
-    } else {
-      if (name) currentUser.name = name;
-      currentUser.statusMsg = statusMsg;
-      const u2 = lsGetUsers(), u = u2.find(x => x.id === currentUser.id);
-      if (u) { u.name = currentUser.name; u.statusMsg = statusMsg; lsSaveUsers(u2); users = u2; }
-      broadcast('user_joined', { userId: currentUser.id }); renderAll();
-    }
-    closeModal('profileModal');
-  });
+  const useInitialsBtn = $('#useInitialsBtn');
+  if (useInitialsBtn) {
+    useInitialsBtn.addEventListener('click', async () => {
+      if (inServerMode() && authToken) {
+        try {
+          await fetch(backUrl() + '/api/profile/avatar', {
+            method: 'DELETE',
+            headers: { Authorization: 'Bearer ' + authToken },
+          });
+          // Server will broadcast user_updated; update locally too
+          currentUser.avatarUrl = null;
+          const u2 = users.find(x => x.id === currentUser.id);
+          if (u2) u2.avatarUrl = null;
+          refreshProfileModalAvatar();
+          renderRailAvatar();
+          renderAll();
+        } catch (e) { console.error('Failed to reset avatar:', e); }
+      } else {
+        currentUser.avatarUrl = null;
+        const all = lsGetUsers();
+        const u = all.find(x => x.id === currentUser.id);
+        if (u) { u.avatarUrl = null; lsSaveUsers(all); users = all; }
+        refreshProfileModalAvatar();
+        renderRailAvatar();
+        renderAll();
+      }
+    });
+  }
 
   // ── Avatar editor ──
   (function initAvatarEditor() {
@@ -2625,12 +2659,7 @@ function filterExplicit(text) {
         const u = all.find(x => x.id === currentUser.id);
         if (u) { u.avatarUrl = url; lsSaveUsers(all); }
       }
-      // Update profile modal avatar display
-      const a = $('#profileAvatarLg');
-      if (a) {
-        a.style.background = '';
-        a.innerHTML = `<img src="${escHtml(url)}" alt="${escHtml(currentUser.name)}">`;
-      }
+      refreshProfileModalAvatar();
       renderRailAvatar();
       renderAll();
     }

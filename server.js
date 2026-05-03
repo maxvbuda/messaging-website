@@ -46,7 +46,7 @@ app.use((req, res, next) => {
   if (isAllowedOrigin(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin || '*');
   }
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
@@ -1069,6 +1069,34 @@ app.post('/api/profile/avatar/dataurl', async (req, res) => {
   const updated = await findUser({ id: user.id });
   io.emit('user_updated', { user: publicUser({ ...updated, avatarUrl }) });
   res.json({ avatarUrl });
+});
+
+// ── REST: Profile name update ──
+app.patch('/api/profile/name', async (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  const user = await getUserByToken(token);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+  const { name } = req.body;
+  if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required' });
+
+  const trimmed = name.trim();
+  await updateUser(user.id, { name: trimmed });
+  const updated = await findUser({ id: user.id });
+  io.emit('user_updated', { user: publicUser(updated) });
+  res.json({ user: publicUser(updated) });
+});
+
+// ── REST: Profile avatar reset (back to initials) ──
+app.delete('/api/profile/avatar', async (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  const user = await getUserByToken(token);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+  await updateUser(user.id, { avatarUrl: null });
+  const updated = await findUser({ id: user.id });
+  io.emit('user_updated', { user: publicUser(updated) });
+  res.json({ user: publicUser(updated) });
 });
 
 // ── REST: File serve ──

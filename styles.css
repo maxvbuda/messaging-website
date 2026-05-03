@@ -1841,6 +1841,8 @@ body {
   text-decoration: underline;
 }
 .btn-link:hover { opacity: 0.75; }
+.btn-link-muted { color: var(--text-muted); }
+.profile-avatar-actions { display: flex; gap: 12px; justify-content: center; align-items: center; margin-top: 4px; }
 
 /* ============================================================
    Avatar editor (inside profile modal)
