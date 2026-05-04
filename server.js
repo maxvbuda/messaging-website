@@ -69,6 +69,28 @@ const DEFAULT_CHANNELS = [
   { id: 'c_random', name: 'random', topic: 'Non-work banter and water cooler conversation', createdBy: 'system' },
 ];
 
+/** Synthetic Dungeon Master participant (not persisted in Mongo). */
+const ROBOT_DM_ID = 'u_sf_robot_dm';
+
+function getRobotDmDocument() {
+  return {
+    id: ROBOT_DM_ID,
+    username: 'robot_dm',
+    name: 'Robot DM',
+    status: 'online',
+    statusMsg: '',
+    role: 'bot',
+    createdAt: 0,
+    avatarUrl: null,
+  };
+}
+
+function withRobotDmUserList(users) {
+  const list = Array.isArray(users) ? users.slice() : [];
+  if (!list.some((u) => u && u.id === ROBOT_DM_ID)) list.push(getRobotDmDocument());
+  return list;
+}
+
 async function connectDB() {
   if (!MONGODB_URI) {
     console.warn('No MONGODB_URI set — data will not persist across restarts.');
@@ -111,6 +133,7 @@ async function getUsers() {
 }
 
 async function findUser(query) {
+  if (query && query.id === ROBOT_DM_ID) return getRobotDmDocument();
   if (db) return usersCol.findOne(query);
   if (query.username) return memData.users.find(u => u.username === query.username) || null;
   if (query.id) return memData.users.find(u => u.id === query.id) || null;
@@ -540,7 +563,8 @@ app.get('/api/data', async (req, res) => {
   const user = await getUserByToken(token);
   if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
-  const [users, rawChannels, allMessages] = await Promise.all([getUsers(), getChannels(), getAllMessages()]);
+  const [usersRaw, rawChannels, allMessages] = await Promise.all([getUsers(), getChannels(), getAllMessages()]);
+  const users = withRobotDmUserList(usersRaw);
 
   const channels = rawChannels.filter((ch) => userCanSeeChannel(user.id, ch));
   const visibleIds = new Set(channels.map((c) => c.id));
@@ -553,7 +577,8 @@ app.get('/api/data', async (req, res) => {
     const pub = publicUser(u);
     const sockets = activeSocketByUser.get(u.id) || 0;
     const live = sockets > 0;
-    const status = u.id === user.id ? 'online' : (live ? 'online' : 'offline');
+    let status = u.id === user.id ? 'online' : (live ? 'online' : 'offline');
+    if (u.id === ROBOT_DM_ID) status = 'online';
     return { ...pub, status };
   });
 
@@ -1537,6 +1562,7 @@ io.on('connection', (socket) => {
     // Emit immediately so real-time always works, then persist
     io.to(channelId).emit('new_message', { channelId, message: msg });
     try { await appendMessage(channelId, msg); } catch (e) { console.error('DB write error (send_message):', e.message); }
+    scheduleRobotDmReply(io, channelId, currentUser.id, text || '');
   });
 
   socket.on('thread_reply', async ({ channelId, parentMsgId, text }) => {
@@ -1617,7 +1643,7 @@ io.on('connection', (socket) => {
       const isPrivate = visibility === 'private';
       let mids = [];
       if (isPrivate) {
-        const allU = await getUsers();
+        const allU = withRobotDmUserList(await getUsers());
         const ok = new Set(allU.map((u) => u.id));
         mids = (Array.isArray(memberIds) ? memberIds : []).filter((id) => typeof id === 'string' && ok.has(id));
         if (!mids.includes(currentUser.id)) mids.push(currentUser.id);
@@ -1645,7 +1671,7 @@ io.on('connection', (socket) => {
         socket.emit('error_msg', 'Could not find that DM.');
         return;
       }
-      const allU = await getUsers();
+      const allU = withRobotDmUserList(await getUsers());
       const validIds = new Set(allU.map((u) => u.id));
 
       const members = new Set([currentUser.id, dmUserId]);
@@ -1673,6 +1699,9 @@ io.on('connection', (socket) => {
 
       await insertChannel(channel);
       broadcastChannelCreated(io, channel);
+      if (dmUserId === ROBOT_DM_ID) {
+        setTimeout(() => { void emitRobotDmWelcome(io, channel.id); }, 400);
+      }
     } catch (e) {
       console.error('DB error (start_dd_session):', e.message);
     }
@@ -1715,7 +1744,7 @@ io.on('connection', (socket) => {
       const isPrivate = visibility === 'private';
       let mids = [];
       if (isPrivate) {
-        const allU = await getUsers();
+        const allU = withRobotDmUserList(await getUsers());
         const ok = new Set(allU.map((u) => u.id));
         mids = (Array.isArray(memberIds) ? memberIds : []).filter((id) => typeof id === 'string' && ok.has(id));
         if (!mids.includes(currentUser.id)) mids.push(currentUser.id);
@@ -1747,6 +1776,10 @@ io.on('connection', (socket) => {
 
   socket.on('open_dm', async ({ targetUserId }) => {
     if (!currentUser) return;
+    if (targetUserId === ROBOT_DM_ID) {
+      socket.emit('error_msg', 'Robot DM is for D&D channels only, not direct messages.');
+      return;
+    }
 
     try {
       const target = await findUser({ id: targetUserId });
@@ -2059,6 +2092,82 @@ function expandPolyhedralRollEasterEgg(rawTrimmed) {
   return core + tag;
 }
 
+const ROBOT_DM_WELCOME_TEXT = "🤖 **Robot DM** is online. Type **/robot** for prompts, mention **Robot DM** for a nudge, or ask the table a question—I'll chime in sometimes. Have fun!";
+const ROBOT_DM_PROMPTS = [
+  'What does your character notice first in this beat?',
+  'Does the party press forward, flank, negotiate, or improvise?',
+  'Name one sense-smell sound texture-and build the room from there.',
+  'Who speaks first—and what stakes are they protecting?',
+];
+const ROBOT_DM_NUDGES = [
+  'Still here—keep scenes moving with “what do you try?” followed by narration.',
+  'If someone stalls, bounce to another PC: What would you sacrifice to succeed here?',
+];
+const ROBOT_DM_QUESTION_RSP = [
+  'Good question—the table chooses; anchor the answer to a flaw, bond, or goal.',
+  'Let dice or consensus decide—then describe how it bends the fiction.',
+];
+
+function robotDmPick(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+async function emitRobotDmWelcome(io, channelId) {
+  if (!channelId) return;
+  const botMsg = {
+    id: 'msg_' + uuidv4().slice(0, 12),
+    userId: ROBOT_DM_ID,
+    userName: 'Robot DM',
+    text: ROBOT_DM_WELCOME_TEXT,
+    file: null,
+    ts: Date.now(),
+    reactions: {},
+    threadReplies: [],
+  };
+  io.to(channelId).emit('new_message', { channelId, message: botMsg });
+  try {
+    await appendMessage(channelId, botMsg);
+  } catch (e) {
+    console.error('robot_dm_welcome:', e.message);
+  }
+}
+
+function scheduleRobotDmReply(io, channelId, fromUserId, rawText) {
+  if (!channelId || !fromUserId || fromUserId === ROBOT_DM_ID) return;
+
+  const t = (rawText || '').trim();
+  const lowered = t.toLowerCase();
+  let reply = null;
+  if (/^\/robot\b/i.test(t)) reply = robotDmPick(ROBOT_DM_PROMPTS);
+  else if (lowered.includes('robot dm')) reply = robotDmPick(ROBOT_DM_NUDGES);
+  else if (/\?\s*$/.test(t) && Math.random() < 0.32) reply = robotDmPick(ROBOT_DM_QUESTION_RSP);
+
+  if (!reply) return;
+
+  const delayMs = 480 + Math.floor(Math.random() * 720);
+  setTimeout(async () => {
+    try {
+      const ch = await findChannel({ id: channelId });
+      if (!ch || !ch.ddGame || ch.ddDmUserId !== ROBOT_DM_ID) return;
+
+      const botMsg = {
+        id: 'msg_' + uuidv4().slice(0, 12),
+        userId: ROBOT_DM_ID,
+        userName: 'Robot DM',
+        text: reply,
+        file: null,
+        ts: Date.now(),
+        reactions: {},
+        threadReplies: [],
+      };
+      io.to(channelId).emit('new_message', { channelId, message: botMsg });
+      await appendMessage(channelId, botMsg);
+    } catch (e) {
+      console.error('robot_dm_reply:', e.message);
+    }
+  }, delayMs);
+}
+
 function processOutgoingChatText(raw) {
   const t = (raw || '').trim();
   if (!t) return t;
@@ -2086,6 +2195,7 @@ async function cleanupOrphanedMessages() {
   if (!db) return 0;
   const allUsers = await getUsers();
   const validIds = new Set(allUsers.map(u => u.id));
+  validIds.add(ROBOT_DM_ID);
 
   const msgDocs = await messagesCol.find().toArray();
   let removed = 0;

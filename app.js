@@ -81,6 +81,73 @@
       : [];
   let dmHandbookSelectedStoryId = '';
 
+  /** Synthetic DM user (offline/local + server payloads). Mirrors server `ROBOT_DM_ID`. */
+  const ROBOT_DM_ID = 'u_sf_robot_dm';
+  function robotDmUserStub() {
+    return {
+      id: ROBOT_DM_ID,
+      username: 'robot_dm',
+      name: 'Robot DM',
+      status: 'online',
+      statusMsg: '',
+      role: 'bot',
+      avatarUrl: null,
+    };
+  }
+  function ensureRobotDmInUsers() {
+    if (!users.some((u) => u.id === ROBOT_DM_ID)) users.push(robotDmUserStub());
+  }
+
+  const ROBOT_DM_WELCOME_CLIENT = "🤖 **Robot DM** is online. Type **/robot** for prompts, mention **Robot DM** for a nudge, or ask the table a question—I'll chime in sometimes. Have fun!";
+  const ROBOT_DM_PROMPTS_CLIENT = [
+    'What does your character notice first in this beat?',
+    'Does the party press forward, flank, negotiate, or improvise?',
+    'Name one sense—smell, sound, texture—and build the room from there.',
+    'Who speaks first—and what stakes are they protecting?',
+  ];
+  const ROBOT_DM_NUDGES_CLIENT = [
+    'Still here—keep scenes moving with “what do you try?” followed by narration.',
+    'If someone stalls, bounce to another PC: what would you sacrifice to succeed here?',
+  ];
+  const ROBOT_DM_QUESTION_RSP_CLIENT = [
+    'Good question—the table chooses; anchor the answer to a flaw, bond, or goal.',
+    'Let dice or consensus decide—then describe how it bends the fiction.',
+  ];
+  function pickRobotDm(arr) {
+    return arr[Math.floor(Math.random() * arr.length)];
+  }
+  function scheduleLocalRobotDmReply(channelId, rawText) {
+    const ch = channels.find((c) => c.id === channelId);
+    if (!ch || !ch.ddGame || ch.ddDmUserId !== ROBOT_DM_ID) return;
+    if (!currentUser || currentUser.id === ROBOT_DM_ID) return;
+    const t = (rawText || '').trim();
+    const lowered = t.toLowerCase();
+    let reply = null;
+    if (/^\/robot\b/i.test(t)) reply = pickRobotDm(ROBOT_DM_PROMPTS_CLIENT);
+    else if (lowered.includes('robot dm')) reply = pickRobotDm(ROBOT_DM_NUDGES_CLIENT);
+    else if (/\?\s*$/.test(t) && Math.random() < 0.32) reply = pickRobotDm(ROBOT_DM_QUESTION_RSP_CLIENT);
+    if (!reply) return;
+    const delayMs = 480 + Math.floor(Math.random() * 720);
+    setTimeout(() => {
+      const ch2 = lsGetChannels().find((c) => c.id === channelId);
+      if (!ch2 || !ch2.ddGame || ch2.ddDmUserId !== ROBOT_DM_ID) return;
+      channels = lsGetChannels();
+      const botMsg = {
+        id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+        userId: ROBOT_DM_ID,
+        userName: 'Robot DM',
+        text: reply,
+        ts: Date.now(),
+        reactions: {},
+        threadReplies: [],
+      };
+      lsAppendMessage(channelId, botMsg);
+      messages = lsGetAllMessages();
+      broadcast('new_message', { channelId, msgId: botMsg.id });
+      if (channelId === activeChannelId) renderMessages();
+    }, delayMs);
+  }
+
   // ── In-memory data ──
   let currentUser = null;
   let users = [];
@@ -803,7 +870,7 @@
   function reflowChannelInviteList(wrapEl, presetSelectedIds) {
     if (!wrapEl || !currentUser) return;
     const preset = presetSelectedIds instanceof Set ? presetSelectedIds : new Set(presetSelectedIds || []);
-    const others = users.filter((u) => u.id !== currentUser.id);
+    const others = users.filter((u) => u.id !== currentUser.id && u.id !== ROBOT_DM_ID);
     wrapEl.innerHTML = others.map((u) => {
       const on = preset.has(u.id) ? ' checked' : '';
       return `<label class="channel-invite-row"><input type="checkbox" data-invite="${escHtml(u.id)}"${on}><span>${escHtml(u.name)}</span></label>`;
@@ -827,7 +894,7 @@
     const sel = $('#ddSessionDmSelect');
     if (!wrap || !sel || !currentUser) return;
     const dmId = sel.value || '';
-    const others = users.filter((u) => u.id !== currentUser.id);
+    const others = users.filter((u) => u.id !== currentUser.id && u.id !== ROBOT_DM_ID);
     wrap.innerHTML = others.map((u) => {
       const disabled = dmId && u.id === dmId ? ' disabled' : '';
       return `<label class="channel-invite-row"><input type="checkbox" data-dd-adv="${escHtml(u.id)}"${disabled}><span>${escHtml(u.name)}</span></label>`;
@@ -835,6 +902,7 @@
   }
 
   function openDdSessionModal() {
+    ensureRobotDmInUsers();
     const sel = $('#ddSessionDmSelect');
     if (!sel || !currentUser) return;
     if (!users.length) return;
@@ -1279,12 +1347,14 @@
       }
       currentUser = d.currentUser || currentUser;
       users = d.users; channels = d.channels; messages = d.messages;
+      ensureRobotDmInUsers();
       await refreshWebRtcIceConfig();
       connectSocket();
     } else {
       users = lsGetUsers();
       channels = lsGetChannels();
       messages = lsGetAllMessages();
+      ensureRobotDmInUsers();
       const u = users.find(x => x.id === currentUser.id);
       if (u) { u.status = 'online'; u.lastSeen = Date.now(); lsSaveUsers(users); }
       startLocalHeartbeat();
@@ -1321,7 +1391,7 @@
       if (!currentUser) return;
       const cur = JSON.stringify(lsGetAllMessages());
       if (cur !== lastSnap) { lastSnap = cur; messages = lsGetAllMessages(); renderMessages(); if (activeThreadMsgId) renderThread(activeThreadMsgId); }
-      users = lsGetUsers(); renderDMList();
+      users = lsGetUsers(); ensureRobotDmInUsers(); renderDMList();
     }, 2000);
   }
 
@@ -1389,7 +1459,7 @@
           }
         } else renderAll();
       }
-      if (['user_joined','user_online','user_offline'].includes(type)) { users = lsGetUsers(); renderDMList(); if (memberPanel.classList.contains('open')) renderMembers(); }
+      if (['user_joined','user_online','user_offline'].includes(type)) { users = lsGetUsers(); ensureRobotDmInUsers(); renderDMList(); if (memberPanel.classList.contains('open')) renderMembers(); }
       if (type === 'typing' && payload.channelId === activeChannelId && payload.userName) showTyping(payload.userName);
       if (type === 'webrtc_signal') {
         if (!currentUser || !payload || payload.toUserId !== currentUser.id) return;
@@ -1672,7 +1742,7 @@
   function openVideoPeerPicker() {
     const list = $('#videoPickPeerList');
     if (!list) return;
-    const others = users.filter(u => u.id !== currentUser.id);
+    const others = users.filter(u => u.id !== currentUser.id && u.id !== ROBOT_DM_ID);
     if (!others.length) {
       list.innerHTML = '<p style="margin:0;color:var(--text-muted);font-size:13px;text-align:center">No one else is in this workspace.</p>';
     } else {
@@ -2054,7 +2124,7 @@
   }
 
   function renderDMList() {
-    const others = users.filter(u => u.id !== currentUser.id);
+    const others = users.filter(u => u.id !== currentUser.id && u.id !== ROBOT_DM_ID);
     if (!others.length) { dmListEl.innerHTML = '<li style="color:var(--text-muted);font-size:12px;cursor:default;padding-left:26px">No other users yet</li>'; return; }
     dmListEl.innerHTML = others.map(u => `
       <li data-user="${u.id}">
@@ -2540,7 +2610,7 @@ function applyComposerNormalize(el) {
       const normFn = chatNormalizeTyping();
       const filteredText =
         rollTxt != null ? rollTxt : filterExplicit(normFn ? normFn(trimmed) : trimmed);
-      const msg = { id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2,6), userId: currentUser.id, text: filteredText, ts: Date.now(), reactions: {}, threadReplies: [] };
+      const msg = { id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6), userId: currentUser.id, userName: currentUser.name, text: filteredText, ts: Date.now(), reactions: {}, threadReplies: [] };
       if (isThread && activeThreadMsgId) {
         const allMsgs = lsGetAllMessages();
         const chMsgs = allMsgs[activeChannelId] || [];
@@ -2558,6 +2628,7 @@ function applyComposerNormalize(el) {
         messages = lsGetAllMessages();
         broadcast('new_message', { channelId: activeChannelId, msgId: msg.id });
         renderMessages();
+        scheduleLocalRobotDmReply(activeChannelId, trimmed);
       }
     }
   }
@@ -3083,6 +3154,21 @@ function applyComposerNormalize(el) {
     broadcast('new_channel', { channelId: id });
     renderChannelList();
     switchChannel(id);
+    if (dmUserId === ROBOT_DM_ID) {
+      const botMsg = {
+        id: 'msg_' + Date.now() + '_robot',
+        userId: ROBOT_DM_ID,
+        userName: 'Robot DM',
+        text: ROBOT_DM_WELCOME_CLIENT,
+        ts: Date.now(),
+        reactions: {},
+        threadReplies: [],
+      };
+      lsAppendMessage(id, botMsg);
+      messages = lsGetAllMessages();
+      broadcast('new_message', { channelId: id, msgId: botMsg.id });
+      renderMessages();
+    }
   });
 
   $('#endDdSessionBtn')?.addEventListener('click', () => {
