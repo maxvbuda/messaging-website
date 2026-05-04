@@ -1823,6 +1823,7 @@ function normalizeChatText(text) {
   }
   s = s.replace(/\blo+l\b/gi, (m) => slangReplaceCase(m, 'laughing out loud'));
   s = s.replace(/\bl+m+a+o+\b/gi, (m) => slangReplaceCase(m, 'laughing my butt off'));
+  s = s.replace(/\br\s+n\b/gi, (m) => slangReplaceCase(m.replace(/\s+/g, ''), 'right now'));
   return s;
 }
 

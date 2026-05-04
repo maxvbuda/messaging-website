@@ -2107,6 +2107,23 @@ function filterExplicit(text) {
   return text.replace(_EXPLICIT_REGEX, (match) => '*'.repeat(match.length));
 }
 
+  /** Lightweight chat normalize for offline mode (matches server slang for `rn`). */
+  function slangReplaceCaseLocal(orig, phrase) {
+    const letters = orig.replace(/[^A-Za-z]/g, '');
+    if (!letters) return phrase;
+    if (letters === letters.toUpperCase() && letters.length > 1) return phrase.toUpperCase();
+    if (/^[a-z]+$/.test(orig)) return phrase;
+    return phrase.charAt(0).toUpperCase() + phrase.slice(1).toLowerCase();
+  }
+
+  function normalizeLocalChat(text) {
+    if (!text) return '';
+    let s = text;
+    s = s.replace(/\br\s+n\b/gi, (m) => slangReplaceCaseLocal(m.replace(/\s+/g, ''), 'right now'));
+    s = s.replace(/\brn\b/gi, (m) => slangReplaceCaseLocal(m, 'right now'));
+    return s;
+  }
+
   async function sendMessage(text, isThread = false) {
     if (!text.trim() && !pendingFile) return;
     if (!currentUser) return;
@@ -2128,7 +2145,7 @@ function filterExplicit(text) {
         socket.emit('send_message', { channelId: activeChannelId, text: text.trim(), file });
       }
     } else {
-      const filteredText = filterExplicit(text.trim());
+      const filteredText = filterExplicit(normalizeLocalChat(text.trim()));
       const msg = { id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2,6), userId: currentUser.id, text: filteredText, ts: Date.now(), reactions: {}, threadReplies: [] };
       if (isThread && activeThreadMsgId) {
         const allMsgs = lsGetAllMessages();
