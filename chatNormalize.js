@@ -1,6 +1,7 @@
 /**
- * Shared typo + slang normalization (same behavior as server `processOutgoingChatText` minus profanity masking).
- * Does not expand "dm" / "dms" so Dungeon Master stays readable in tabletop chat.
+ * Shared typo + slang normalization for normal channels. The server skips this
+ * step in D&D (`ddGame`) channels so “DM” / tabletop phrasing is not rewritten.
+ * Does not expand "dm" / "dms" (still used when normalizing non-D&D text).
  * Exposed globally as `slackflowChatNormalize(text)` when loaded via <script>; also `require`-able by Node.
  */
 (function (factory) {
@@ -22,7 +23,7 @@
       ['accross', 'across'], ['actualy', 'actually'], ['addional', 'additional'], ['adn', 'and'],
       ['alot', 'a lot'], ['amke', 'make'], ['annoint', 'anoint'], ['beleive', 'believe'],
       ['buisness', 'business'], ['calender', 'calendar'], ['cant', "can't"], ['comming', 'coming'],
-      ['definately', 'definitely'], ['defiantly', 'definitely'], ['dependant', 'dependent'],
+      ['definately', 'definitely'], ['dependant', 'dependent'],
       ['disapear', 'disappear'], ["doesn't", "doesn't"], ['doesnt', "doesn't"], ['dont', "don't"],
       ["dosen't", "doesn't"], ['finaly', 'finally'], ['familar', 'familiar'], ['freind', 'friend'],
       ['giong', 'going'], ['happend', 'happened'], ['havent', "haven't"], ['heigth', 'height'],

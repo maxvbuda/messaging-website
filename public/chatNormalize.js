@@ -1,6 +1,7 @@
 /**
- * Shared typo + slang normalization (same behavior as server `processOutgoingChatText` minus profanity masking).
- * Does not expand "dm" / "dms" so Dungeon Master and similar stay readable in tabletop chat.
+ * Shared typo + slang normalization for normal channels. The server skips this
+ * step in D&D (`ddGame`) channels so “DM” / tabletop phrasing is not rewritten.
+ * Does not expand "dm" / "dms" (still used when normalizing non-D&D text).
  * Exposed globally as `slackflowChatNormalize(text)` when loaded via <script>; also `require`-able by Node.
  */
 (function (factory) {

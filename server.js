@@ -1548,11 +1548,17 @@ io.on('connection', (socket) => {
       if (!(await ensureChannelParticipantAccess(channelId, currentUser.id))) return;
     } catch (e) { console.error('DB error (send_message access):', e.message); return; }
 
+    let skipChatNormalize = false;
+    try {
+      const chSnap = await findChannel({ id: channelId });
+      skipChatNormalize = !!(chSnap && chSnap.ddGame);
+    } catch (_) { /* non-fatal */ }
+
     const msg = {
       id: 'msg_' + uuidv4().slice(0, 12),
       userId: currentUser.id,
       userName: currentUser.name,
-      text: processOutgoingChatText(text || ''),
+      text: processOutgoingChatText(text || '', { skipChatNormalize }),
       file: file || null,
       ts: Date.now(),
       reactions: {},
@@ -1575,11 +1581,17 @@ io.on('connection', (socket) => {
       const parent = msgs.find(m => m.id === parentMsgId);
       if (!parent) return;
 
+      let skipChatNormalize = false;
+      try {
+        const chSnap = await findChannel({ id: channelId });
+        skipChatNormalize = !!(chSnap && chSnap.ddGame);
+      } catch (_) { /* non-fatal */ }
+
       const reply = {
         id: 'reply_' + uuidv4().slice(0, 12),
         userId: currentUser.id,
         userName: currentUser.name,
-        text: processOutgoingChatText(text),
+        text: processOutgoingChatText(text, { skipChatNormalize }),
         ts: Date.now(),
       };
 
@@ -2168,12 +2180,14 @@ function scheduleRobotDmReply(io, channelId, fromUserId, rawText) {
   }, delayMs);
 }
 
-function processOutgoingChatText(raw) {
+function processOutgoingChatText(raw, options) {
   const t = (raw || '').trim();
   if (!t) return t;
   const rolled = expandPolyhedralRollEasterEgg(t);
   if (rolled) return rolled;
-  return filterExplicit(normalizeChatText(t));
+  const skipNorm = options && options.skipChatNormalize;
+  const body = skipNorm ? t : normalizeChatText(t);
+  return filterExplicit(body);
 }
 
 // ── Cleanup orphaned messages (from deleted users) ──

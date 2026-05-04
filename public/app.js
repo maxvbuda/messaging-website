@@ -2560,6 +2560,9 @@ function mapCaretAfterChatNormalize(prev, next, caret) {
 function applyComposerNormalize(el) {
   const normalize = chatNormalizeTyping();
   if (!normalize || !el || el.disabled || el.readOnly) return;
+  const ch = channels.find((c) => c.id === activeChannelId);
+  if (ch && ch.ddGame) return;
+
   const before = el.value;
   const after = normalize(before);
   if (after === before) return;
@@ -2606,10 +2609,14 @@ function applyComposerNormalize(el) {
       }
     } else {
       const trimmed = text.trim();
+      const chLocal = channels.find((c) => c.id === activeChannelId);
+      const skipNorm = !!(chLocal && chLocal.ddGame);
       const rollTxt = expandPolyhedralRollEasterEgg(trimmed);
       const normFn = chatNormalizeTyping();
+      let body = trimmed;
+      if (rollTxt == null && normFn && !skipNorm) body = normFn(trimmed);
       const filteredText =
-        rollTxt != null ? rollTxt : filterExplicit(normFn ? normFn(trimmed) : trimmed);
+        rollTxt != null ? rollTxt : filterExplicit(body);
       const msg = { id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6), userId: currentUser.id, userName: currentUser.name, text: filteredText, ts: Date.now(), reactions: {}, threadReplies: [] };
       if (isThread && activeThreadMsgId) {
         const allMsgs = lsGetAllMessages();
