@@ -1183,8 +1183,9 @@ app.delete('/api/admin/files/:id', requireAdmin, async (req, res) => {
   }
 });
 
-// Serve admin panel
+// Serve admin panel (avoid stale tab markup in browsers/CDNs)
 app.get('/admin', (req, res) => {
+  res.set('Cache-Control', 'private, no-store, max-age=0');
   res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
 
