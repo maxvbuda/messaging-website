@@ -1,5 +1,6 @@
 /**
  * Shared typo + slang normalization (same behavior as server `processOutgoingChatText` minus profanity masking).
+ * Does not expand "dm" / "dms" so Dungeon Master stays readable in tabletop chat.
  * Exposed globally as `slackflowChatNormalize(text)` when loaded via <script>; also `require`-able by Node.
  */
 (function (factory) {
@@ -59,7 +60,6 @@
     bruh: 'bro',
     btwn: 'between',
     defo: 'definitely',
-    dms: 'direct messages',
     finna: 'fixing to',
     frfr: 'for real for real',
     fwiw: 'for what it is worth',
@@ -133,7 +133,6 @@
     cuz: 'because',
     cya: 'see you',
     dk: 'do not know',
-    dm: 'direct message',
     dw: 'do not worry',
     fmk: 'freaking heck',
     fml: 'freak my life',

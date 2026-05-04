@@ -1,5 +1,6 @@
 /**
  * Shared typo + slang normalization (same behavior as server `processOutgoingChatText` minus profanity masking).
+ * Does not expand "dm" / "dms" so Dungeon Master and similar stay readable in tabletop chat.
  * Exposed globally as `slackflowChatNormalize(text)` when loaded via <script>; also `require`-able by Node.
  */
 (function (factory) {
@@ -21,7 +22,7 @@
       ['accross', 'across'], ['actualy', 'actually'], ['addional', 'additional'], ['adn', 'and'],
       ['alot', 'a lot'], ['amke', 'make'], ['annoint', 'anoint'], ['beleive', 'believe'],
       ['buisness', 'business'], ['calender', 'calendar'], ['cant', "can't"], ['comming', 'coming'],
-      ['definately', 'definitely'], ['defiantly', 'definitely'], ['dependant', 'dependent'],
+      ['definately', 'definitely'], ['dependant', 'dependent'],
       ['disapear', 'disappear'], ["doesn't", "doesn't"], ['doesnt', "doesn't"], ['dont', "don't"],
       ["dosen't", "doesn't"], ['finaly', 'finally'], ['familar', 'familiar'], ['freind', 'friend'],
       ['giong', 'going'], ['happend', 'happened'], ['havent', "haven't"], ['heigth', 'height'],
@@ -59,7 +60,6 @@
     bruh: 'bro',
     btwn: 'between',
     defo: 'definitely',
-    dms: 'direct messages',
     finna: 'fixing to',
     frfr: 'for real for real',
     fwiw: 'for what it is worth',
@@ -133,7 +133,6 @@
     cuz: 'because',
     cya: 'see you',
     dk: 'do not know',
-    dm: 'direct message',
     dw: 'do not worry',
     fmk: 'freaking heck',
     fml: 'freak my life',
