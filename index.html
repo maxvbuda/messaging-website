@@ -150,6 +150,9 @@
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
           </button>
           <span class="header-hash">#</span>
+          <button type="button" class="btn-icon chat-header-lock" id="channelAccessBtn" title="Who can see this channel" style="display:none" aria-label="Channel visibility">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M6 21v-1a6 6 0 0112 0v1"/><rect x="4" y="11" width="16" height="10" rx="2"/></svg>
+          </button>
           <h2 class="header-channel-name" id="headerChannelName">general</h2>
           <span class="header-topic" id="headerTopic"></span>
         </div>
@@ -269,10 +272,44 @@
           <input type="text" id="newChannelName" class="form-input" placeholder="e.g. marketing">
           <label class="form-label">Description <span class="optional">(optional)</span></label>
           <input type="text" id="newChannelDesc" class="form-input" placeholder="What's this channel about?">
+          <label class="form-label">Who can see it</label>
+          <div class="channel-vis-options">
+            <label class="channel-vis-radio"><input type="radio" name="createChVis" value="workspace" checked> Everyone in the workspace</label>
+            <label class="channel-vis-radio"><input type="radio" name="createChVis" value="private"> Only people you choose (private)</label>
+          </div>
+          <p class="modal-hint" id="channelCreateInviteHint" style="display:none;margin:8px 0 6px;font-size:12px">You are always included. Pick others who should see this channel.</p>
+          <div id="channelCreateInviteWrap" class="channel-invite-scroll" style="display:none"></div>
         </div>
         <div class="modal-footer">
           <button class="btn-secondary" data-modal="addChannelModal">Cancel</button>
           <button class="btn-primary" id="createChannelBtn">Create</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Edit channel visibility (creator only, server mode) -->
+    <div class="modal-overlay" id="channelAccessModal">
+      <div class="modal">
+        <div class="modal-header">
+          <h3>Channel visibility</h3>
+          <button type="button" class="btn-icon modal-close" data-modal="channelAccessModal">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="editAccessChannelId" value="">
+          <p class="modal-hint" style="margin:0 0 12px;font-size:13px">Private channels stay out of everyone else&apos;s sidebar. You can widen access anytime.</p>
+          <label class="form-label">Who can see it</label>
+          <div class="channel-vis-options">
+            <label class="channel-vis-radio"><input type="radio" name="editChVis" value="workspace"> Everyone in the workspace</label>
+            <label class="channel-vis-radio"><input type="radio" name="editChVis" value="private"> Only selected people</label>
+          </div>
+          <p class="modal-hint" id="channelEditInviteHint" style="display:none;margin:8px 0 6px;font-size:12px">Creator is always included.</p>
+          <div id="channelEditInviteWrap" class="channel-invite-scroll" style="display:none"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn-secondary" data-modal="channelAccessModal">Cancel</button>
+          <button type="button" class="btn-primary" id="saveChannelAccessBtn">Save</button>
         </div>
       </div>
     </div>
@@ -457,7 +494,7 @@
         </div>
         <div class="modal-footer">
           <button class="btn-primary" id="saveProfileBtn">Save</button>
-        </div> 
+        </div>
       </div>
     </div>
 

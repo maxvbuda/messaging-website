@@ -745,6 +745,83 @@
   let isRegisterMode = false;
   let pendingFile = null; // file waiting to be sent with next message
 
+  function uidInDmChannel(dmId, uid) {
+    if (!dmId || typeof dmId !== 'string' || !dmId.startsWith('dm_') || !uid) return false;
+    const inner = dmId.slice(3);
+    const m = inner.match(/^(u_[0-9a-f]+)_(u_[0-9a-f]+)$/i);
+    if (!m) return false;
+    return m[1] === uid || m[2] === uid;
+  }
+
+  /** @returns {Set|null} — null means whole workspace */
+  function viewerIdsForNonDmChannel(ch) {
+    if (!ch || ch.isDM || String(ch.id).startsWith('dm_')) return null;
+    if (!ch.visibility || ch.visibility !== 'private') return null;
+    const ids = new Set((Array.isArray(ch.memberIds) ? ch.memberIds : []).filter(Boolean));
+    if (ch.createdBy) ids.add(ch.createdBy);
+    return ids;
+  }
+
+  function userCanSeeChannelLocal(ch, uid) {
+    if (!ch || !uid) return false;
+    if (String(ch.id).startsWith('dm_')) {
+      if (Array.isArray(ch.participants) && ch.participants.length) return ch.participants.includes(uid);
+      return uidInDmChannel(ch.id, uid);
+    }
+    const viewers = viewerIdsForNonDmChannel(ch);
+    if (!viewers) return true;
+    return viewers.has(uid);
+  }
+
+  function visibleNonDmChannels() {
+    if (!currentUser) return [];
+    return channels.filter((c) => !String(c.id).startsWith('dm_') && userCanSeeChannelLocal(c, currentUser.id));
+  }
+
+  function firstNavigableChannelId() {
+    const vis = visibleNonDmChannels();
+    if (vis.length) return vis[0].id;
+    const dm = channels.find((c) => String(c.id).startsWith('dm_') && userCanSeeChannelLocal(c, currentUser.id));
+    return dm ? dm.id : '';
+  }
+
+  function ensureActiveChannelAccessible() {
+    if (!currentUser || !channels.length) return;
+    const ch = channels.find((c) => c.id === activeChannelId);
+    if (!ch || !userCanSeeChannelLocal(ch, currentUser.id)) {
+      const next = firstNavigableChannelId();
+      activeChannelId = next || '';
+    }
+  }
+
+  function reflowChannelInviteList(wrapEl, presetSelectedIds) {
+    if (!wrapEl || !currentUser) return;
+    const preset = presetSelectedIds instanceof Set ? presetSelectedIds : new Set(presetSelectedIds || []);
+    const others = users.filter((u) => u.id !== currentUser.id);
+    wrapEl.innerHTML = others.map((u) => {
+      const on = preset.has(u.id) ? ' checked' : '';
+      return `<label class="channel-invite-row"><input type="checkbox" data-invite="${escHtml(u.id)}"${on}><span>${escHtml(u.name)}</span></label>`;
+    }).join('');
+  }
+
+  function readInviteIdsFromWrap(wrapEl) {
+    if (!wrapEl) return [];
+    return [...wrapEl.querySelectorAll('input[data-invite]:checked')].map((el) => el.getAttribute('data-invite')).filter(Boolean);
+  }
+
+  function updateChannelAccessButton() {
+    const btn = $('#channelAccessBtn');
+    if (!btn) return;
+    const ch = channels.find((c) => c.id === activeChannelId);
+    const isDm = activeChannelId && String(activeChannelId).startsWith('dm_');
+    if (!currentUser || isDm || !ch || !inServerMode()) {
+      btn.style.display = 'none';
+      return;
+    }
+    const isCreator = ch.createdBy === currentUser.id && String(ch.createdBy || '') !== 'system';
+    btn.style.display = isCreator ? 'flex' : 'none';
+  }
+
   // ── File upload ──
   function formatFileSize(bytes) {
     if (bytes < 1024) return bytes + ' B';
@@ -1091,6 +1168,7 @@
 
     authScreen.style.display = 'none';
     appWrapper.style.display = 'flex';
+    ensureActiveChannelAccessible();
     renderAll();
     maybeWelcomeMayaOnJoin();
     messageInput.focus();
@@ -1474,7 +1552,7 @@
   function openVideoCallEntry() {
     if (!currentUser) return;
     if (inServerMode() && (!socket || !socket.connected)) return;
-    if (activeChannelId.startsWith('dm_')) {
+    if (String(activeChannelId || '').startsWith('dm_')) {
       const peer = dmPeerUserId(activeChannelId);
       if (peer) void startVideoCallWithPeer(peer);
       return;
@@ -1668,10 +1746,12 @@
 
     socket.on('connect', () => { socket.emit('authenticate', authToken); });
     socket.on('authenticated', () => {
+      ensureActiveChannelAccessible();
       socket.emit('join_channel', activeChannelId);
       renderMessages();
     });
     socket.on('auth_error', () => { logout(); showAuthError('Session expired.'); });
+    socket.on('error_msg', (msg) => { alert(typeof msg === 'string' ? msg : String(msg || 'Something went wrong.')); });
 
     socket.on('new_message', ({ channelId, message }) => {
       if (!messages[channelId]) messages[channelId] = [];
@@ -1736,9 +1816,35 @@
       }
     });
     socket.on('channel_created', ({ channel }) => {
-      if (!channels.find(c => c.id === channel.id)) channels.push(channel);
+      if (!channel || !currentUser || !userCanSeeChannelLocal(channel, currentUser.id)) return;
+      if (!channels.find((c) => c.id === channel.id)) channels.push(channel);
       if (!messages[channel.id]) messages[channel.id] = [];
       renderChannelList();
+    });
+    socket.on('channel_updated', ({ channel }) => {
+      if (!channel || !channel.id) return;
+      const i = channels.findIndex((c) => c.id === channel.id);
+      if (i >= 0) channels[i] = { ...channels[i], ...channel };
+      else channels.push(channel);
+      ensureActiveChannelAccessible();
+      renderChannelList();
+      if (channel.id === activeChannelId) renderMessages();
+      updateChannelAccessButton();
+    });
+    socket.on('channel_access_revoked', ({ channelId }) => {
+      channels = channels.filter((c) => c.id !== channelId);
+      if (messages[channelId]) delete messages[channelId];
+      if (inServerMode() && socket) socket.emit('leave_channel', channelId);
+      if (channelId === activeChannelId) {
+        const next = firstNavigableChannelId();
+        if (next) switchChannel(next);
+        else {
+          activeChannelId = '';
+          renderAll();
+        }
+      } else {
+        renderChannelList();
+      }
     });
     socket.on('dm_opened', ({ channelId }) => {
       if (!messages[channelId]) messages[channelId] = [];
@@ -1784,7 +1890,7 @@
   }
 
   function renderChannelList() {
-    channelListEl.innerHTML = channels.filter(c => !c.id.startsWith('dm_')).map(ch => `
+    channelListEl.innerHTML = visibleNonDmChannels().map(ch => `
       <li class="${ch.id === activeChannelId ? 'active' : ''}" data-channel="${ch.id}">
         <span class="channel-hash">#</span><span>${escHtml(ch.name)}</span>
       </li>`).join('');
@@ -1821,12 +1927,13 @@
   function renderMessages() {
     const ch = channels.find(c => c.id === activeChannelId);
     const msgs = messages[activeChannelId] || [];
-    const isDM = activeChannelId.startsWith('dm_');
+    const isDM = String(activeChannelId || '').startsWith('dm_');
 
     headerChannelName.textContent = ch ? ch.name : 'unknown';
     headerTopic.textContent = ch ? (ch.topic || '') : '';
     messageInput.placeholder = ch ? `Message ${isDM ? '' : '#'}${ch.name}` : 'Message';
     document.querySelector('.header-hash').textContent = isDM ? '💬' : '#';
+    updateChannelAccessButton();
 
     let html = '';
     if (ch) {
@@ -2266,6 +2373,9 @@ function applyComposerNormalize(el) {
     if (videoSignalChannelId && videoSignalChannelId !== chId) {
       endVideoCall(true);
     }
+    const isDmTarget = String(chId).startsWith('dm_');
+    const targetCh = channels.find((c) => c.id === chId);
+    if (currentUser && !isDmTarget && targetCh && !userCanSeeChannelLocal(targetCh, currentUser.id)) return;
     if (inServerMode() && socket) { socket.emit('leave_channel', activeChannelId); }
     activeChannelId = chId;
     if (inServerMode() && socket) { socket.emit('join_channel', chId); }
@@ -2278,6 +2388,7 @@ function applyComposerNormalize(el) {
     const q = query.toLowerCase(), results = [];
     Object.entries(messages).forEach(([chId, msgs]) => {
       const ch = channels.find(c => c.id === chId); if (!ch) return;
+      if (currentUser && !userCanSeeChannelLocal(ch, currentUser.id)) return;
       msgs.forEach(msg => {
         if (msg.text.toLowerCase().includes(q)) results.push({ channel: ch.name, channelId: chId, msg });
         (msg.threadReplies||[]).forEach(r => { if (r.text.toLowerCase().includes(q)) results.push({ channel: ch.name+' (thread)', channelId: chId, msg: r }); });
@@ -2299,6 +2410,51 @@ function applyComposerNormalize(el) {
   function closeMobileSidebar() { sidebarEl.classList.remove('mobile-open'); sidebarOverlay.classList.remove('visible'); }
   function openModal(id) { document.getElementById(id).classList.add('open'); }
   function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+  function syncCreateChannelInviteUI() {
+    const hint = $('#channelCreateInviteHint');
+    const wrap = $('#channelCreateInviteWrap');
+    if (!hint || !wrap || !currentUser) return;
+    const privEl = document.querySelector('input[name="createChVis"]:checked');
+    const priv = privEl && privEl.value === 'private';
+    hint.style.display = priv ? 'block' : 'none';
+    wrap.style.display = priv ? 'block' : 'none';
+    if (priv) {
+      if (!wrap.querySelector('input[data-invite]')) reflowChannelInviteList(wrap, new Set());
+    } else {
+      wrap.innerHTML = '';
+    }
+  }
+
+  function syncEditChannelInviteUI() {
+    const hint = $('#channelEditInviteHint');
+    const wrap = $('#channelEditInviteWrap');
+    if (!hint || !wrap || !currentUser) return;
+    const privEl = document.querySelector('input[name="editChVis"]:checked');
+    const priv = privEl && privEl.value === 'private';
+    hint.style.display = priv ? 'block' : 'none';
+    wrap.style.display = priv ? 'block' : 'none';
+    if (priv) {
+      const chId = (($('#editAccessChannelId') && $('#editAccessChannelId').value) || '').trim();
+      const ch = channels.find((c) => c.id === chId);
+      const preset = new Set(Array.isArray(ch && ch.memberIds) ? ch.memberIds : []);
+      reflowChannelInviteList(wrap, preset);
+    } else wrap.innerHTML = '';
+  }
+
+  function openChannelAccessModal() {
+    const ch = channels.find((c) => c.id === activeChannelId);
+    if (!ch || String(ch.id).startsWith('dm_') || !inServerMode() || !currentUser) return;
+    if (ch.createdBy !== currentUser.id || String(ch.createdBy || '') === 'system') return;
+    const hid = $('#editAccessChannelId');
+    if (hid) hid.value = ch.id;
+    const isPriv = ch.visibility === 'private';
+    const w = $('input[name="editChVis"][value="workspace"]');
+    const p = $('input[name="editChVis"][value="private"]');
+    if (w && p) { w.checked = !isPriv; p.checked = isPriv; }
+    syncEditChannelInviteUI();
+    openModal('channelAccessModal');
+  }
 
   let emojiTargetMsgId = null, emojiInsertMode = 'input';
   function openEmojiPicker(anchor, mode, msgId) {
@@ -2593,25 +2749,67 @@ function applyComposerNormalize(el) {
   document.addEventListener('click', (e) => { if (searchResults.classList.contains('open') && !searchResults.contains(e.target) && !e.target.closest('.sidebar-search')) searchResults.classList.remove('open'); });
 
   $('#confirmAddWorkspaceBtn').addEventListener('click', confirmAddWorkspace);
-  $('#addChannelBtn').addEventListener('click', (e) => { e.stopPropagation(); openModal('addChannelModal'); });
+  $('#addChannelBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const w = $('input[name="createChVis"][value="workspace"]');
+    const p = $('input[name="createChVis"][value="private"]');
+    if (w && p) { w.checked = true; p.checked = false; }
+    const cw = $('#channelCreateInviteWrap');
+    if (cw) cw.innerHTML = '';
+    syncCreateChannelInviteUI();
+    openModal('addChannelModal');
+  });
+  document.querySelectorAll('input[name="createChVis"]').forEach((r) => { r.addEventListener('change', syncCreateChannelInviteUI); });
+  document.querySelectorAll('input[name="editChVis"]').forEach((r) => { r.addEventListener('change', syncEditChannelInviteUI); });
+
+  const channelAccessBtn = $('#channelAccessBtn');
+  if (channelAccessBtn) channelAccessBtn.addEventListener('click', () => openChannelAccessModal());
+
   $('#createChannelBtn').addEventListener('click', () => {
     const name = $('#newChannelName').value.trim();
     const desc = $('#newChannelDesc').value.trim();
     if (!name) return;
-    if (inServerMode() && socket) { socket.emit('create_channel', { name, topic: desc }); }
+    const visEl = document.querySelector('input[name="createChVis"]:checked');
+    const visibility = visEl && visEl.value === 'private' ? 'private' : 'workspace';
+    const memberIds = visibility === 'private' ? readInviteIdsFromWrap($('#channelCreateInviteWrap')) : [];
+    if (inServerMode() && socket) { socket.emit('create_channel', { name, topic: desc, visibility, memberIds }); }
     else {
       const slug = name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
       if (!slug) return;
       const chs = lsGetChannels();
       if (chs.find(c => c.name === slug)) { alert('Channel already exists!'); return; }
       const id = 'c_' + Date.now();
-      chs.push({ id, name: slug, topic: desc || '', createdBy: currentUser.id });
+      const doc = {
+        id, name: slug, topic: desc || '', createdBy: currentUser.id,
+        visibility, memberIds: visibility === 'private' ? [...memberIds] : [],
+      };
+      chs.push(doc);
       lsSaveChannels(chs); channels = chs;
       broadcast('new_channel', { channelId: id });
       renderChannelList(); switchChannel(id);
     }
-    closeModal('addChannelModal'); $('#newChannelName').value = ''; $('#newChannelDesc').value = '';
+    closeModal('addChannelModal');
+    $('#newChannelName').value = '';
+    $('#newChannelDesc').value = '';
+    const w = $('input[name="createChVis"][value="workspace"]');
+    const p = $('input[name="createChVis"][value="private"]');
+    if (w && p) { w.checked = true; p.checked = false; }
+    const cw = $('#channelCreateInviteWrap');
+    if (cw) cw.innerHTML = '';
   });
+
+  const saveChannelAccessBtn = $('#saveChannelAccessBtn');
+  if (saveChannelAccessBtn) {
+    saveChannelAccessBtn.addEventListener('click', () => {
+      const channelId = (($('#editAccessChannelId') && $('#editAccessChannelId').value) || '').trim();
+      if (!channelId || !inServerMode() || !socket) return;
+      const vEl = document.querySelector('input[name="editChVis"]:checked');
+      const visibility = vEl && vEl.value === 'private' ? 'private' : 'workspace';
+      const memberIds = visibility === 'private' ? readInviteIdsFromWrap($('#channelEditInviteWrap')) : [];
+      socket.emit('update_channel_visibility', { channelId, visibility, memberIds });
+      closeModal('channelAccessModal');
+    });
+  }
 
   $('#channelsToggle').addEventListener('click', (e) => { if (e.target.closest('.btn-tiny')) return; e.currentTarget.classList.toggle('collapsed'); channelListEl.style.display = e.currentTarget.classList.contains('collapsed') ? 'none' : ''; });
   $('#usersToggle').addEventListener('click', () => { $('#usersToggle').classList.toggle('collapsed'); dmListEl.style.display = $('#usersToggle').classList.contains('collapsed') ? 'none' : ''; });

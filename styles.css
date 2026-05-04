@@ -643,6 +643,68 @@ body {
   flex-shrink: 0;
 }
 
+.chat-header-lock {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.chat-header-lock:hover {
+  color: var(--text-primary);
+  background: rgba(255,255,255,0.06);
+}
+
+.channel-vis-options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 6px 0 10px;
+}
+
+.channel-vis-radio {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 14px;
+  line-height: 1.35;
+  cursor: pointer;
+}
+
+.channel-vis-radio input {
+  margin-top: 3px;
+  accent-color: var(--accent);
+}
+
+.channel-invite-scroll {
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 8px;
+  margin-top: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: rgba(0,0,0,0.08);
+}
+
+.channel-invite-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.channel-invite-row input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
 .member-count {
   font-size: 12px;
   margin-left: 3px;

@@ -145,6 +145,15 @@ async function insertChannel(channel) {
   memData.channels.push(channel);
 }
 
+async function patchChannel(channelId, updates) {
+  if (db) {
+    await channelsCol.updateOne({ id: channelId }, { $set: updates });
+    return;
+  }
+  const c = memData.channels.find((x) => x.id === channelId);
+  if (c) Object.assign(c, updates);
+}
+
 async function getMessages(channelId) {
   if (db) {
     const doc = await messagesCol.findOne({ channelId });
@@ -520,7 +529,14 @@ app.get('/api/data', async (req, res) => {
   const user = await getUserByToken(token);
   if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
-  const [users, channels, messages] = await Promise.all([getUsers(), getChannels(), getAllMessages()]);
+  const [users, rawChannels, allMessages] = await Promise.all([getUsers(), getChannels(), getAllMessages()]);
+
+  const channels = rawChannels.filter((ch) => userCanSeeChannel(user.id, ch));
+  const visibleIds = new Set(channels.map((c) => c.id));
+  const messages = {};
+  visibleIds.forEach((cid) => {
+    if (allMessages[cid]) messages[cid] = allMessages[cid];
+  });
 
   const liveUsers = users.map(u => {
     const pub = publicUser(u);
@@ -1355,20 +1371,75 @@ app.get('/api/files/:id', async (req, res) => {
   res.send(buf);
 });
 
-// ── Socket.IO ──
-/** Live socket count per userId (authenticated connections). DB status can go stale; this is source of truth for "online". */
-const activeSocketByUser = new Map();
-
 function parseDmPair(dmChannelId) {
   if (!dmChannelId || typeof dmChannelId !== 'string' || !dmChannelId.startsWith('dm_')) return null;
-  // User IDs are formatted as "u_<hex>" so they contain underscores.
-  // A simple split('_') produces more than 2 parts; use a regex that matches
-  // two "u_<hex>" tokens separated by exactly one underscore.
   const inner = dmChannelId.slice(3);
   const m = inner.match(/^(u_[0-9a-f]+)_(u_[0-9a-f]+)$/i);
   if (!m) return null;
   return [m[1], m[2]];
 }
+
+// ── Channel visibility (non-DM) ──
+
+/** Workspace-wide channel: everyone logged in sees it; private lists explicit member ids + creator. */
+function channelViewerIds(channel) {
+  if (!channel || channel.isDM) return null;
+  if (!channel.visibility || channel.visibility !== 'private') return null;
+  const ids = new Set((Array.isArray(channel.memberIds) ? channel.memberIds : []).filter(Boolean));
+  if (channel.createdBy) ids.add(channel.createdBy);
+  return ids;
+}
+
+function userCanSeeChannel(userId, channel) {
+  if (!userId || !channel) return false;
+  if (channel.isDM) {
+    if (Array.isArray(channel.participants) && channel.participants.length) return channel.participants.includes(userId);
+    const parts = parseDmPair(channel.id);
+    return !!(parts && parts.includes(userId));
+  }
+  const viewers = channelViewerIds(channel);
+  if (!viewers) return true;
+  return viewers.has(userId);
+}
+
+async function enumerateUserIdsPreviouslyCouldSee(nonDmChannelDoc) {
+  if (!nonDmChannelDoc || nonDmChannelDoc.isDM) return new Set();
+  const viewers = channelViewerIds(nonDmChannelDoc);
+  if (!viewers) return new Set((await getUsers()).map((u) => u.id));
+  return viewers;
+}
+
+async function userIdsLostChannelAccess(previousNonDmDoc, updatedChannelDoc) {
+  const had = await enumerateUserIdsPreviouslyCouldSee(previousNonDmDoc);
+  const now = updatedChannelDoc && !updatedChannelDoc.isDM
+    ? channelViewerIds(updatedChannelDoc)
+    : null;
+  const nowSet = now || new Set((await getUsers()).map((u) => u.id));
+  return [...had].filter((id) => !nowSet.has(id));
+}
+
+function broadcastChannelCreated(io, channel) {
+  const payload = { channel };
+  const viewers = channelViewerIds(channel);
+  if (!viewers) io.emit('channel_created', payload);
+  else [...viewers].forEach((uid) => io.to('uid_' + uid).emit('channel_created', payload));
+}
+
+async function ensureChannelParticipantAccess(channelId, userId) {
+  if (!channelId || !userId) return false;
+  if (channelId.startsWith('dm_')) {
+    const dmCh = await findChannel({ id: channelId });
+    if (!dmCh) return false;
+    if (Array.isArray(dmCh.participants) && !dmCh.participants.includes(userId)) return false;
+    return true;
+  }
+  const ch = await findChannel({ id: channelId });
+  return !!(ch && userCanSeeChannel(userId, ch));
+}
+
+// ── Socket.IO ──
+/** Live socket count per userId (authenticated connections). DB status can go stale; this is source of truth for "online". */
+const activeSocketByUser = new Map();
 
 async function assertWebRtcRelay(channelId, fromUserId, toUserId) {
   if (!fromUserId || !toUserId || fromUserId === toUserId) return false;
@@ -1386,7 +1457,7 @@ async function assertWebRtcRelay(channelId, fromUserId, toUserId) {
   }
   const u1 = await findUser({ id: fromUserId });
   const u2 = await findUser({ id: toUserId });
-  return !!(u1 && u2);
+  return !!(u1 && u2 && userCanSeeChannel(fromUserId, ch) && userCanSeeChannel(toUserId, ch));
 }
 
 io.on('connection', (socket) => {
@@ -1409,11 +1480,15 @@ io.on('connection', (socket) => {
 
     socket.join('uid_' + uid);
 
-    // Auto-join all non-DM channels so messages are always received
+    // Join channel rooms user is allowed to read (respects private channels).
     try {
       const allChannels = await getChannels();
-      allChannels.forEach(ch => { if (!ch.isDM) socket.join(ch.id); });
+      allChannels.forEach((ch) => {
+        if (userCanSeeChannel(uid, ch)) socket.join(ch.id);
+      });
     } catch (e) { /* non-fatal */ }
+
+    socket.sfUserId = uid;
 
     socket.emit('authenticated', { user: publicUser(currentUser) });
     if (prevSockets === 0) {
@@ -1421,23 +1496,21 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('join_channel', (channelId) => { if (currentUser) socket.join(channelId); });
+  socket.on('join_channel', async (channelId) => {
+    if (!currentUser || !channelId) return;
+    try {
+      if (!(await ensureChannelParticipantAccess(channelId, currentUser.id))) return;
+    } catch (e) { return; }
+    socket.join(channelId);
+  });
   socket.on('leave_channel', (channelId) => { socket.leave(channelId); });
 
   socket.on('send_message', async ({ channelId, text, file }) => {
-    if (!currentUser || (!text?.trim() && !file)) return;
+    if (!currentUser || (!text?.trim() && !file) || !channelId) return;
 
-    // For DM channels, verify the sender is actually a participant
-    if (channelId && channelId.startsWith('dm_')) {
-      try {
-        const dmCh = await findChannel({ id: channelId });
-        if (!dmCh) return;
-        if (Array.isArray(dmCh.participants) && !dmCh.participants.includes(currentUser.id)) {
-          console.warn(`[send_message] User ${currentUser.id} attempted to send to DM ${channelId} without membership`);
-          return;
-        }
-      } catch (e) { console.error('DB error (send_message DM check):', e.message); return; }
-    }
+    try {
+      if (!(await ensureChannelParticipantAccess(channelId, currentUser.id))) return;
+    } catch (e) { console.error('DB error (send_message access):', e.message); return; }
 
     const msg = {
       id: 'msg_' + uuidv4().slice(0, 12),
@@ -1456,9 +1529,11 @@ io.on('connection', (socket) => {
   });
 
   socket.on('thread_reply', async ({ channelId, parentMsgId, text }) => {
-    if (!currentUser || !text?.trim()) return;
+    if (!currentUser || !text?.trim() || !channelId) return;
 
     try {
+      if (!(await ensureChannelParticipantAccess(channelId, currentUser.id))) return;
+
       const msgs = await getMessages(channelId);
       const parent = msgs.find(m => m.id === parentMsgId);
       if (!parent) return;
@@ -1479,9 +1554,11 @@ io.on('connection', (socket) => {
   });
 
   socket.on('reaction', async ({ channelId, msgId, emoji }) => {
-    if (!currentUser) return;
+    if (!currentUser || !channelId) return;
 
     try {
+      if (!(await ensureChannelParticipantAccess(channelId, currentUser.id))) return;
+
       const msgs = await getMessages(channelId);
       const msg = msgs.find(m => m.id === msgId);
       if (!msg) return;
@@ -1503,9 +1580,11 @@ io.on('connection', (socket) => {
   });
 
   socket.on('delete_message', async ({ channelId, msgId }) => {
-    if (!currentUser) return;
+    if (!currentUser || !channelId) return;
 
     try {
+      if (!(await ensureChannelParticipantAccess(channelId, currentUser.id))) return;
+
       const msgs = await getMessages(channelId);
       const idx = msgs.findIndex(m => m.id === msgId && m.userId === currentUser.id);
       if (idx === -1) return;
@@ -1516,7 +1595,7 @@ io.on('connection', (socket) => {
     } catch (e) { console.error('DB error (delete_message):', e.message); }
   });
 
-  socket.on('create_channel', async ({ name, topic }) => {
+  socket.on('create_channel', async ({ name, topic, visibility, memberIds }) => {
     if (!currentUser || !name?.trim()) return;
 
     try {
@@ -1524,16 +1603,70 @@ io.on('connection', (socket) => {
       if (!slug) return;
       if (await findChannel({ name: slug })) { socket.emit('error_msg', 'Channel already exists'); return; }
 
+      const isPrivate = visibility === 'private';
+      let mids = [];
+      if (isPrivate) {
+        const allU = await getUsers();
+        const ok = new Set(allU.map((u) => u.id));
+        mids = (Array.isArray(memberIds) ? memberIds : []).filter((id) => typeof id === 'string' && ok.has(id));
+        if (!mids.includes(currentUser.id)) mids.push(currentUser.id);
+      }
+
       const channel = {
         id: 'c_' + uuidv4().slice(0, 8),
         name: slug,
         topic: (topic || '').trim(),
         createdBy: currentUser.id,
+        visibility: isPrivate ? 'private' : 'workspace',
+        memberIds: isPrivate ? mids : [],
       };
 
       await insertChannel(channel);
-      io.emit('channel_created', { channel });
+      broadcastChannelCreated(io, channel);
     } catch (e) { console.error('DB error (create_channel):', e.message); }
+  });
+
+  socket.on('update_channel_visibility', async ({ channelId, visibility, memberIds }) => {
+    if (!currentUser || !channelId) return;
+    try {
+      const prev = await findChannel({ id: channelId });
+      if (!prev || prev.isDM) return;
+      if (prev.createdBy !== currentUser.id) {
+        socket.emit('error_msg', 'Only the channel creator can change visibility.');
+        return;
+      }
+
+      const isPrivate = visibility === 'private';
+      let mids = [];
+      if (isPrivate) {
+        const allU = await getUsers();
+        const ok = new Set(allU.map((u) => u.id));
+        mids = (Array.isArray(memberIds) ? memberIds : []).filter((id) => typeof id === 'string' && ok.has(id));
+        if (!mids.includes(currentUser.id)) mids.push(currentUser.id);
+      }
+
+      const updates = {
+        visibility: isPrivate ? 'private' : 'workspace',
+        memberIds: isPrivate ? mids : [],
+      };
+      await patchChannel(channelId, updates);
+      const next = { ...prev, ...updates };
+
+      const revoked = await userIdsLostChannelAccess(prev, next);
+      for (const rid of revoked) {
+        io.to('uid_' + rid).emit('channel_access_revoked', { channelId });
+        try {
+          const socks = await io.in(channelId).fetchSockets();
+          for (const s of socks) {
+            if (s.sfUserId === rid) s.leave(channelId);
+          }
+        } catch (_) { /* non-fatal */ }
+      }
+
+      const viewers = channelViewerIds(next);
+      if (!viewers) io.emit('channel_updated', { channel: next });
+      else [...viewers].forEach((uid2) => io.to('uid_' + uid2).emit('channel_updated', { channel: next }));
+    } catch (e) { console.error('DB error (update_channel_visibility):', e.message); }
   });
 
   socket.on('open_dm', async ({ targetUserId }) => {
@@ -1563,8 +1696,11 @@ io.on('connection', (socket) => {
     } catch (e) { console.error('DB error (open_dm):', e.message); }
   });
 
-  socket.on('typing', ({ channelId }) => {
-    if (!currentUser) return;
+  socket.on('typing', async ({ channelId }) => {
+    if (!currentUser || !channelId) return;
+    try {
+      if (!(await ensureChannelParticipantAccess(channelId, currentUser.id))) return;
+    } catch (e) { return; }
     socket.to(channelId).emit('user_typing', { channelId, userId: currentUser.id, userName: currentUser.name });
   });
 
