@@ -157,6 +157,9 @@
           <span class="header-topic" id="headerTopic"></span>
         </div>
         <div class="chat-header-right">
+          <button type="button" class="btn-end-dd-session" id="endDdSessionBtn" title="End D&amp;D session (removes this channel for everyone)" style="display:none">
+            End game
+          </button>
           <button class="btn-icon" id="videoCallBtn" title="Video call" type="button">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
           </button>
@@ -310,6 +313,30 @@
         <div class="modal-footer">
           <button type="button" class="btn-secondary" data-modal="channelAccessModal">Cancel</button>
           <button type="button" class="btn-primary" id="saveChannelAccessBtn">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Dungeons & Dragons ephemeral session -->
+    <div class="modal-overlay" id="ddSessionModal">
+      <div class="modal">
+        <div class="modal-header">
+          <h3>D&amp;D session</h3>
+          <button type="button" class="btn-icon modal-close" data-modal="ddSessionModal">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <p class="modal-hint" style="margin:0 0 14px;font-size:13px;line-height:1.45">Creates a private channel only you and your party can see. It disappears for everyone when the host or DM ends the game.</p>
+          <label class="form-label" for="ddSessionDmSelect">Dungeon Master</label>
+          <select id="ddSessionDmSelect" class="form-input"></select>
+          <label class="form-label" style="margin-top:14px">Adventurers</label>
+          <p class="modal-hint" style="margin:0 0 8px;font-size:12px">You are always at the table. Choose the DM, then select other players.</p>
+          <div id="ddSessionAdventurersWrap" class="channel-invite-scroll"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn-secondary" data-modal="ddSessionModal">Cancel</button>
+          <button type="button" class="btn-primary" id="ddSessionStartBtn">Start session</button>
         </div>
       </div>
     </div>

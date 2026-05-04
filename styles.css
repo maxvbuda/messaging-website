@@ -661,6 +661,37 @@ body {
   background: rgba(255,255,255,0.06);
 }
 
+.btn-end-dd-session {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--accent);
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  margin-right: 4px;
+  white-space: nowrap;
+}
+
+.btn-end-dd-session:hover {
+  background: var(--accent-muted);
+}
+
+.channel-dd-tag {
+  font-weight: 800;
+}
+
+.channel-dd-sub {
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0.88;
+}
+
+li.channel-dd-game {
+  opacity: 0.98;
+}
+
 .channel-vis-options {
   display: flex;
   flex-direction: column;

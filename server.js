@@ -154,6 +154,17 @@ async function patchChannel(channelId, updates) {
   if (c) Object.assign(c, updates);
 }
 
+async function removeChannel(channelId) {
+  if (!channelId) return;
+  if (db) {
+    await messagesCol.deleteOne({ channelId });
+    await channelsCol.deleteOne({ id: channelId });
+    return;
+  }
+  delete memData.messages[channelId];
+  memData.channels = memData.channels.filter((c) => c.id !== channelId);
+}
+
 async function getMessages(channelId) {
   if (db) {
     const doc = await messagesCol.findOne({ channelId });
@@ -1626,11 +1637,76 @@ io.on('connection', (socket) => {
     } catch (e) { console.error('DB error (create_channel):', e.message); }
   });
 
+  socket.on('start_dd_session', async ({ dmUserId, adventurerIds }) => {
+    if (!currentUser || !dmUserId) return;
+    try {
+      const dm = await findUser({ id: dmUserId });
+      if (!dm) {
+        socket.emit('error_msg', 'Could not find that DM.');
+        return;
+      }
+      const allU = await getUsers();
+      const validIds = new Set(allU.map((u) => u.id));
+
+      const members = new Set([currentUser.id, dmUserId]);
+      const advList = Array.isArray(adventurerIds) ? adventurerIds : [];
+      for (const id of advList) {
+        if (typeof id === 'string' && validIds.has(id)) members.add(id);
+      }
+
+      const slugBase = uuidv4().replace(/-/g, '').slice(0, 10);
+      const slug = `dungeons-dragons-${slugBase}`;
+      if (await findChannel({ name: slug })) return;
+
+      const channel = {
+        id: 'c_' + uuidv4().slice(0, 12),
+        name: slug,
+        topic:
+          `D&D tabletop — DM: ${dm.name}. Invite-only session; host or DM can end it to remove this channel.`,
+        createdBy: currentUser.id,
+        visibility: 'private',
+        memberIds: [...members],
+        ddGame: true,
+        ddDmUserId: dmUserId,
+        ddStartedByUserId: currentUser.id,
+      };
+
+      await insertChannel(channel);
+      broadcastChannelCreated(io, channel);
+    } catch (e) {
+      console.error('DB error (start_dd_session):', e.message);
+    }
+  });
+
+  socket.on('end_dd_session', async ({ channelId }) => {
+    if (!currentUser || !channelId) return;
+    try {
+      const ch = await findChannel({ id: channelId });
+      if (!ch || !ch.ddGame || ch.isDM) return;
+      const uid = currentUser.id;
+      if (uid !== ch.ddStartedByUserId && uid !== ch.ddDmUserId) {
+        socket.emit('error_msg', 'Only the session host or the DM can end the game.');
+        return;
+      }
+      const viewers = channelViewerIds(ch);
+      await removeChannel(channelId);
+      try {
+        const socks = await io.in(channelId).fetchSockets();
+        for (const s of socks) s.leave(channelId);
+      } catch (_) { /* non-fatal */ }
+
+      const notify = viewers || new Set();
+      [...notify].forEach((rid) => io.to('uid_' + rid).emit('channel_access_revoked', { channelId }));
+    } catch (e) {
+      console.error('DB error (end_dd_session):', e.message);
+    }
+  });
+
   socket.on('update_channel_visibility', async ({ channelId, visibility, memberIds }) => {
     if (!currentUser || !channelId) return;
     try {
       const prev = await findChannel({ id: channelId });
-      if (!prev || prev.isDM) return;
+      if (!prev || prev.isDM || prev.ddGame) return;
       if (prev.createdBy !== currentUser.id) {
         socket.emit('error_msg', 'Only the channel creator can change visibility.');
         return;

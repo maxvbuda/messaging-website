@@ -809,17 +809,54 @@
     return [...wrapEl.querySelectorAll('input[data-invite]:checked')].map((el) => el.getAttribute('data-invite')).filter(Boolean);
   }
 
+  const DD_PLAY_CMD_RE = /^\/play-dungeons-and-dragons$/i;
+
+  function userCanEndDdSession(ch) {
+    if (!ch || !ch.ddGame || !currentUser) return false;
+    return ch.ddStartedByUserId === currentUser.id || ch.ddDmUserId === currentUser.id;
+  }
+
+  function reflowDdAdventurerCheckboxes() {
+    const wrap = $('#ddSessionAdventurersWrap');
+    const sel = $('#ddSessionDmSelect');
+    if (!wrap || !sel || !currentUser) return;
+    const dmId = sel.value || '';
+    const others = users.filter((u) => u.id !== currentUser.id);
+    wrap.innerHTML = others.map((u) => {
+      const disabled = dmId && u.id === dmId ? ' disabled' : '';
+      return `<label class="channel-invite-row"><input type="checkbox" data-dd-adv="${escHtml(u.id)}"${disabled}><span>${escHtml(u.name)}</span></label>`;
+    }).join('');
+  }
+
+  function openDdSessionModal() {
+    const sel = $('#ddSessionDmSelect');
+    if (!sel || !currentUser) return;
+    if (!users.length) return;
+    sel.innerHTML = users.map((u) => `<option value="${escHtml(u.id)}">${escHtml(u.name)}</option>`).join('');
+    sel.value = currentUser.id;
+    reflowDdAdventurerCheckboxes();
+    openModal('ddSessionModal');
+  }
+
   function updateChannelAccessButton() {
     const btn = $('#channelAccessBtn');
     if (!btn) return;
     const ch = channels.find((c) => c.id === activeChannelId);
     const isDm = activeChannelId && String(activeChannelId).startsWith('dm_');
-    if (!currentUser || isDm || !ch || !inServerMode()) {
+    if (!currentUser || isDm || !ch || !inServerMode() || ch.ddGame) {
       btn.style.display = 'none';
       return;
     }
     const isCreator = ch.createdBy === currentUser.id && String(ch.createdBy || '') !== 'system';
     btn.style.display = isCreator ? 'flex' : 'none';
+  }
+
+  function updateEndDdSessionButton() {
+    const btn = $('#endDdSessionBtn');
+    if (!btn || !currentUser) return;
+    const ch = channels.find((c) => c.id === activeChannelId);
+    if (ch && ch.ddGame && userCanEndDdSession(ch)) btn.style.display = 'inline-block';
+    else btn.style.display = 'none';
   }
 
   // ── File upload ──
@@ -1204,7 +1241,7 @@
     bc.onmessage = (e) => {
       if (inServerMode()) return;
       const { type, payload, senderId } = e.data;
-      if (senderId === (currentUser && currentUser.id)) return;
+      if (senderId === (currentUser && currentUser.id) && type !== 'dd_session_end') return;
       if (type === 'new_message') {
         messages = lsGetAllMessages();
         const cid = payload.channelId;
@@ -1245,6 +1282,24 @@
       if (type === 'message_deleted' && payload.channelId === activeChannelId) { messages = lsGetAllMessages(); renderMessages(); }
       if (type === 'reaction' && payload.channelId === activeChannelId) { messages = lsGetAllMessages(); renderMessages(); }
       if (type === 'new_channel') { channels = lsGetChannels(); renderChannelList(); }
+      if (type === 'dd_session_end') {
+        const cid = payload && payload.channelId;
+        if (!cid) return;
+        channels = lsGetChannels().filter((c) => c.id !== cid);
+        lsSaveChannels(channels);
+        const loaded = lsGetAllMessages();
+        delete loaded[cid];
+        lsSaveAllMessages(loaded);
+        messages = loaded;
+        if (cid === activeChannelId) {
+          const next = firstNavigableChannelId();
+          if (next) switchChannel(next);
+          else {
+            activeChannelId = '';
+            renderAll();
+          }
+        } else renderAll();
+      }
       if (['user_joined','user_online','user_offline'].includes(type)) { users = lsGetUsers(); renderDMList(); if (memberPanel.classList.contains('open')) renderMembers(); }
       if (type === 'typing' && payload.channelId === activeChannelId && payload.userName) showTyping(payload.userName);
       if (type === 'webrtc_signal') {
@@ -1819,7 +1874,9 @@
       if (!channel || !currentUser || !userCanSeeChannelLocal(channel, currentUser.id)) return;
       if (!channels.find((c) => c.id === channel.id)) channels.push(channel);
       if (!messages[channel.id]) messages[channel.id] = [];
+      if (socket && socket.connected) socket.emit('join_channel', channel.id);
       renderChannelList();
+      if (channel.ddGame && channel.ddStartedByUserId === currentUser.id) switchChannel(channel.id);
     });
     socket.on('channel_updated', ({ channel }) => {
       if (!channel || !channel.id) return;
@@ -1830,6 +1887,7 @@
       renderChannelList();
       if (channel.id === activeChannelId) renderMessages();
       updateChannelAccessButton();
+      updateEndDdSessionButton();
     });
     socket.on('channel_access_revoked', ({ channelId }) => {
       channels = channels.filter((c) => c.id !== channelId);
@@ -1890,10 +1948,20 @@
   }
 
   function renderChannelList() {
-    channelListEl.innerHTML = visibleNonDmChannels().map(ch => `
-      <li class="${ch.id === activeChannelId ? 'active' : ''}" data-channel="${ch.id}">
-        <span class="channel-hash">#</span><span>${escHtml(ch.name)}</span>
-      </li>`).join('');
+    channelListEl.innerHTML = visibleNonDmChannels().map((ch) => {
+      let inner;
+      if (ch.ddGame) {
+        const dm = users.find((u) => u.id === ch.ddDmUserId);
+        const dmName = dm ? dm.name : 'DM';
+        inner = `🎲 <span class="channel-dd-tag">D&amp;D</span><span class="channel-dd-sub"> · ${escHtml(dmName)}</span>`;
+      } else {
+        inner = `<span>${escHtml(ch.name)}</span>`;
+      }
+      return `
+      <li class="${ch.id === activeChannelId ? 'active' : ''}${ch.ddGame ? ' channel-dd-game' : ''}" data-channel="${ch.id}">
+        <span class="channel-hash">#</span>${inner}
+      </li>`;
+    }).join('');
   }
 
   function renderDMList() {
@@ -1929,17 +1997,32 @@
     const msgs = messages[activeChannelId] || [];
     const isDM = String(activeChannelId || '').startsWith('dm_');
 
-    headerChannelName.textContent = ch ? ch.name : 'unknown';
-    headerTopic.textContent = ch ? (ch.topic || '') : '';
-    messageInput.placeholder = ch ? `Message ${isDM ? '' : '#'}${ch.name}` : 'Message';
-    document.querySelector('.header-hash').textContent = isDM ? '💬' : '#';
+    if (ch && ch.ddGame) {
+      headerChannelName.textContent = `${resolveUser(ch.ddDmUserId).name} (DM)`;
+      headerTopic.textContent = ch.topic || '';
+      messageInput.placeholder = 'Message the party…';
+      document.querySelector('.header-hash').textContent = '🎲';
+    } else {
+      headerChannelName.textContent = ch ? ch.name : 'unknown';
+      headerTopic.textContent = ch ? (ch.topic || '') : '';
+      messageInput.placeholder = ch ? `Message ${isDM ? '' : '#'}${ch.name}` : 'Message';
+      document.querySelector('.header-hash').textContent = isDM ? '💬' : '#';
+    }
     updateChannelAccessButton();
+    updateEndDdSessionButton();
 
     let html = '';
     if (ch) {
-      html += `<div class="channel-intro"><div class="channel-intro-icon">${isDM ? '💬' : '#'}</div>
+      if (ch.ddGame) {
+        const dm = resolveUser(ch.ddDmUserId);
+        html += `<div class="channel-intro"><div class="channel-intro-icon">🎲</div>
+          <h2>D&amp;D session</h2>
+          <p><strong>${escHtml(dm.name)}</strong> is the DM.${ch.topic ? ' ' + escHtml(ch.topic) : ''} Tap <strong>End game</strong> in the header when the session wraps (host or DM).</p></div>`;
+      } else {
+        html += `<div class="channel-intro"><div class="channel-intro-icon">${isDM ? '💬' : '#'}</div>
         <h2>${isDM ? '' : '#'}${escHtml(ch.name)}</h2>
         <p>${ch.topic ? escHtml(ch.topic) + '. ' : ''}This is the very beginning of ${isDM ? 'your conversation' : `the <strong>#${escHtml(ch.name)}</strong> channel`}.</p></div>`;
+      }
     }
 
     let lastDate = '', lastUserId = '', lastTs = 0;
@@ -2338,6 +2421,12 @@ function applyComposerNormalize(el) {
   async function sendMessage(text, isThread = false) {
     if (!text.trim() && !pendingFile) return;
     if (!currentUser) return;
+
+    const trimmedLead = text.trim();
+    if (!isThread && DD_PLAY_CMD_RE.test(trimmedLead) && !pendingFile) {
+      openDdSessionModal();
+      return;
+    }
 
     let file = null;
     if (pendingFile && inServerMode()) {
@@ -2861,6 +2950,79 @@ function applyComposerNormalize(el) {
       closeModal('channelAccessModal');
     });
   }
+
+  const ddDmSel = $('#ddSessionDmSelect');
+  if (ddDmSel) ddDmSel.addEventListener('change', reflowDdAdventurerCheckboxes);
+
+  $('#ddSessionStartBtn')?.addEventListener('click', () => {
+    const dmUserId = (($('#ddSessionDmSelect') && $('#ddSessionDmSelect').value) || '').trim();
+    if (!dmUserId || !currentUser) return;
+    const wrap = $('#ddSessionAdventurersWrap');
+    const adventurerIds = wrap ? [...wrap.querySelectorAll('input[data-dd-adv]:checked')].map((el) => el.getAttribute('data-dd-adv')).filter(Boolean) : [];
+    closeModal('ddSessionModal');
+
+    if (inServerMode() && socket) {
+      socket.emit('start_dd_session', { dmUserId, adventurerIds });
+      return;
+    }
+
+    const dm = users.find((u) => u.id === dmUserId);
+    if (!dm) return;
+    const members = new Set([currentUser.id, dmUserId, ...adventurerIds]);
+    const slug = `dungeons-dragons-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const id = 'c_' + Date.now();
+    const doc = {
+      id,
+      name: slug,
+      topic: `D&D tabletop — DM: ${dm.name}. Tap End game when the session is over.`,
+      createdBy: currentUser.id,
+      visibility: 'private',
+      memberIds: [...members],
+      ddGame: true,
+      ddDmUserId: dmUserId,
+      ddStartedByUserId: currentUser.id,
+    };
+    const chs = lsGetChannels();
+    chs.push(doc);
+    lsSaveChannels(chs);
+    channels = chs;
+    const allMsgs = lsGetAllMessages();
+    allMsgs[id] = [];
+    lsSaveAllMessages(allMsgs);
+    messages = allMsgs;
+    broadcast('new_channel', { channelId: id });
+    renderChannelList();
+    switchChannel(id);
+  });
+
+  $('#endDdSessionBtn')?.addEventListener('click', () => {
+    const ch = channels.find((c) => c.id === activeChannelId);
+    if (!ch || !ch.ddGame || !userCanEndDdSession(ch)) return;
+    if (!confirm('End this D&D session and remove the channel for everyone?')) return;
+
+    if (inServerMode() && socket) {
+      socket.emit('end_dd_session', { channelId: activeChannelId });
+      return;
+    }
+
+    const cid = activeChannelId;
+    channels = lsGetChannels().filter((c) => c.id !== cid);
+    lsSaveChannels(channels);
+    const allMsgs = lsGetAllMessages();
+    delete allMsgs[cid];
+    lsSaveAllMessages(allMsgs);
+    messages = allMsgs;
+    broadcast('dd_session_end', { channelId: cid });
+
+    if (cid === activeChannelId) {
+      const next = firstNavigableChannelId();
+      if (next) switchChannel(next);
+      else {
+        activeChannelId = '';
+        renderAll();
+      }
+    } else renderChannelList();
+  });
 
   $('#channelsToggle').addEventListener('click', (e) => { if (e.target.closest('.btn-tiny')) return; e.currentTarget.classList.toggle('collapsed'); channelListEl.style.display = e.currentTarget.classList.contains('collapsed') ? 'none' : ''; });
   $('#usersToggle').addEventListener('click', () => { $('#usersToggle').classList.toggle('collapsed'); dmListEl.style.display = $('#usersToggle').classList.contains('collapsed') ? 'none' : ''; });
