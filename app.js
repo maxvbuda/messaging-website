@@ -2126,22 +2126,58 @@ function filterExplicit(text) {
   return text.replace(_EXPLICIT_REGEX, (match) => '*'.repeat(match.length));
 }
 
-  /** Lightweight chat normalize for offline mode (matches server slang for `rn`). */
-  function slangReplaceCaseLocal(orig, phrase) {
-    const letters = orig.replace(/[^A-Za-z]/g, '');
-    if (!letters) return phrase;
-    if (letters === letters.toUpperCase() && letters.length > 1) return phrase.toUpperCase();
-    if (/^[a-z]+$/.test(orig)) return phrase;
-    return phrase.charAt(0).toUpperCase() + phrase.slice(1).toLowerCase();
-  }
+function chatNormalizeTyping() {
+  return typeof globalThis !== 'undefined' && typeof globalThis.slackflowChatNormalize === 'function'
+    ? globalThis.slackflowChatNormalize : null;
+}
 
-  function normalizeLocalChat(text) {
-    if (!text) return '';
-    let s = text;
-    s = s.replace(/\br\s+n\b/gi, (m) => slangReplaceCaseLocal(m.replace(/\s+/g, ''), 'right now'));
-    s = s.replace(/\brn\b/gi, (m) => slangReplaceCaseLocal(m, 'right now'));
-    return s;
+/** Map textarea caret indices after normalize(), assuming one contiguous edited region mid-string. */
+function mapCaretAfterChatNormalize(prev, next, caret) {
+  if (prev === next) return Math.min(Math.max(0, caret), next.length);
+  const pl = prev.length;
+  const nl = next.length;
+  if (!pl) return Math.min(Math.max(0, caret), nl);
+  if (!nl) return 0;
+  caret = typeof caret !== 'number' || caret < 0 ? 0 : caret;
+  if (caret >= pl) return nl;
+
+  let l = 0;
+  while (l < pl && l < nl && prev[l] === next[l]) l++;
+  if (caret <= l) return Math.min(nl, caret);
+
+  let r = 0;
+  while (
+    r < pl - l &&
+    r < nl - l &&
+    prev[pl - 1 - r] === next[nl - 1 - r]
+  ) r++;
+
+  const midEndPrev = pl - r;
+  const midEndNext = nl - r;
+  if (caret < midEndPrev) return Math.min(nl, midEndNext);
+  return Math.min(nl, caret + (nl - pl));
+}
+
+function applyComposerNormalize(el) {
+  const normalize = chatNormalizeTyping();
+  if (!normalize || !el || el.disabled || el.readOnly) return;
+  const before = el.value;
+  const after = normalize(before);
+  if (after === before) return;
+
+  let start = el.selectionStart;
+  let end = el.selectionEnd;
+  if (typeof start !== 'number') start = after.length;
+  if (typeof end !== 'number') end = after.length;
+
+  el.value = after;
+
+  try {
+    el.selectionStart = mapCaretAfterChatNormalize(before, after, start);
+    el.selectionEnd = mapCaretAfterChatNormalize(before, after, end);
+  } catch (_) { /* DOM may not expose selection */
   }
+}
 
   async function sendMessage(text, isThread = false) {
     if (!text.trim() && !pendingFile) return;
@@ -2164,7 +2200,9 @@ function filterExplicit(text) {
         socket.emit('send_message', { channelId: activeChannelId, text: text.trim(), file });
       }
     } else {
-      const filteredText = filterExplicit(normalizeLocalChat(text.trim()));
+      const trimmed = text.trim();
+      const normFn = chatNormalizeTyping();
+      const filteredText = filterExplicit(normFn ? normFn(trimmed) : trimmed);
       const msg = { id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2,6), userId: currentUser.id, text: filteredText, ts: Date.now(), reactions: {}, threadReplies: [] };
       if (isThread && activeThreadMsgId) {
         const allMsgs = lsGetAllMessages();
@@ -2515,6 +2553,7 @@ function filterExplicit(text) {
   });
   let typBcTO;
   messageInput.addEventListener('input', () => {
+    applyComposerNormalize(messageInput);
     autoResize(messageInput);
     clearTimeout(typBcTO);
     typBcTO = setTimeout(() => {
@@ -2526,7 +2565,10 @@ function filterExplicit(text) {
 
   $('#threadSendBtn').addEventListener('click', () => { sendMessage(threadInput.value, true); threadInput.value = ''; autoResize(threadInput); });
   threadInput.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(threadInput.value, true); threadInput.value = ''; autoResize(threadInput); } });
-  threadInput.addEventListener('input', () => autoResize(threadInput));
+  threadInput.addEventListener('input', () => {
+    applyComposerNormalize(threadInput);
+    autoResize(threadInput);
+  });
   $('#threadClose').addEventListener('click', () => { threadPanel.classList.remove('open'); activeThreadMsgId = null; });
 
   messagesListEl.addEventListener('click', (e) => {
@@ -2537,7 +2579,7 @@ function filterExplicit(text) {
   });
 
   $('#emojiBtn').addEventListener('click', (e) => { if (emojiPicker.classList.contains('open')) closeEmojiPicker(); else openEmojiPicker(e.currentTarget, 'input'); });
-  emojiGrid.addEventListener('click', (e) => { if (e.target.tagName === 'SPAN') { const em = e.target.textContent; if (emojiInsertMode === 'reaction' && emojiTargetMsgId) toggleReaction(emojiTargetMsgId, em); else { messageInput.value += em; messageInput.focus(); } closeEmojiPicker(); } });
+  emojiGrid.addEventListener('click', (e) => { if (e.target.tagName === 'SPAN') { const em = e.target.textContent; if (emojiInsertMode === 'reaction' && emojiTargetMsgId) toggleReaction(emojiTargetMsgId, em); else { messageInput.value += em; applyComposerNormalize(messageInput); messageInput.focus(); } closeEmojiPicker(); } });
   emojiSearchEl.addEventListener('input', () => renderEmojis(emojiSearchEl.value));
   document.addEventListener('click', (e) => { if (emojiPicker.classList.contains('open') && !emojiPicker.contains(e.target) && !e.target.closest('#emojiBtn') && !e.target.closest('[data-action="react"]')) closeEmojiPicker(); });
 
