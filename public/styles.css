@@ -906,10 +906,13 @@ body {
 .file-name:hover { text-decoration: underline; }
 .file-size { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
 
-/* File upload preview pill */
+/* File upload preview pill (JS toggles visibility; avoids clearing inline display to blank — that loses to default display:none below) */
 .file-preview {
   padding: 0 4px 6px;
   display: none;
+}
+.file-preview:not(:empty) {
+  display: block;
 }
 .file-pill {
   display: inline-flex;

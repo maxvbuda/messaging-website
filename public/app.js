@@ -797,13 +797,13 @@
       const reader = new FileReader();
       reader.onload = (ev) => {
         preview.innerHTML = `<div class="img-preview-strip"><div class="img-preview-thumb"><img src="${ev.target.result}" alt="${escHtml(file.name)}"><button class="img-preview-remove" id="filePillRemove" title="Remove attachment">✕</button></div><span class="img-preview-name">${escHtml(file.name)} <span class="file-pill-size">${formatFileSize(file.size)}</span></span></div>`;
-        preview.style.display = '';
+        preview.style.display = 'block';
         attachRemoveHandler();
       };
       reader.readAsDataURL(file);
     } else {
       preview.innerHTML = `<span class="file-pill">📎 ${escHtml(file.name)} <span class="file-pill-size">${formatFileSize(file.size)}</span><button class="file-pill-remove" id="filePillRemove">✕</button></span>`;
-      preview.style.display = '';
+      preview.style.display = 'block';
       attachRemoveHandler();
     }
   }
