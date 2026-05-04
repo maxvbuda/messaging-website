@@ -118,9 +118,14 @@
   }
   function scheduleLocalRobotDmReply(channelId, rawText) {
     const ch = channels.find((c) => c.id === channelId);
-    if (!ch || !ch.ddGame || ch.ddDmUserId !== ROBOT_DM_ID) return;
+    if (!ch || !ch.ddGame || String(ch.ddDmUserId) !== ROBOT_DM_ID) return;
     if (!currentUser || currentUser.id === ROBOT_DM_ID) return;
-    const t = (rawText || '').replace(/\uFEFF/g, '').trim();
+    const t = (rawText || '')
+      .replace(/\uFEFF/g, '')
+      .replace(/\u200B/g, '')
+      .replace(/\u2060/g, '')
+      .replace(/\uFF0F/g, '/')
+      .trim();
     const lowered = t.toLowerCase();
     let reply = null;
     if (/^\s*\/robot\b/i.test(t)) reply = pickRobotDm(ROBOT_DM_PROMPTS_CLIENT);
@@ -130,7 +135,7 @@
     const delayMs = 480 + Math.floor(Math.random() * 720);
     setTimeout(() => {
       const ch2 = lsGetChannels().find((c) => c.id === channelId);
-      if (!ch2 || !ch2.ddGame || ch2.ddDmUserId !== ROBOT_DM_ID) return;
+      if (!ch2 || !ch2.ddGame || String(ch2.ddDmUserId) !== ROBOT_DM_ID) return;
       channels = lsGetChannels();
       const botMsg = {
         id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),

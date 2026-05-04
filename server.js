@@ -1461,6 +1461,30 @@ function broadcastChannelCreated(io, channel) {
   else [...viewers].forEach((uid) => io.to('uid_' + uid).emit('channel_created', payload));
 }
 
+/**
+ * Delivers new_message to the channel room and, for private channels, each viewer's
+ * uid_* room so clients still receive if they momentarily miss the channel room.
+ * Client dedups by message id if both paths arrive.
+ */
+async function emitNewMessagePayload(io, channelId, payload, channelDocMaybe) {
+  io.to(channelId).emit('new_message', payload);
+  let ch = channelDocMaybe;
+  if (!ch) {
+    try {
+      ch = await findChannel({ id: channelId });
+    } catch (_) {
+      ch = null;
+    }
+  }
+  const viewers = ch ? channelViewerIds(ch) : null;
+  if (viewers && viewers.size) {
+    for (const uid of viewers) {
+      if (uid === ROBOT_DM_ID) continue;
+      io.to('uid_' + uid).emit('new_message', payload);
+    }
+  }
+}
+
 async function ensureChannelParticipantAccess(channelId, userId) {
   if (!channelId || !userId) return false;
   if (channelId.startsWith('dm_')) {
@@ -1519,9 +1543,8 @@ io.on('connection', (socket) => {
     // Join channel rooms user is allowed to read (respects private channels).
     try {
       const allChannels = await getChannels();
-      allChannels.forEach((ch) => {
-        if (userCanSeeChannel(uid, ch)) socket.join(ch.id);
-      });
+      const ok = allChannels.filter((ch) => userCanSeeChannel(uid, ch));
+      await Promise.all(ok.map((ch) => socket.join(ch.id)));
     } catch (e) { /* non-fatal */ }
 
     socket.sfUserId = uid;
@@ -1537,7 +1560,11 @@ io.on('connection', (socket) => {
     try {
       if (!(await ensureChannelParticipantAccess(channelId, currentUser.id))) return;
     } catch (e) { return; }
-    socket.join(channelId);
+    try {
+      await socket.join(channelId);
+    } catch (e) {
+      console.error('join_channel:', e.message);
+    }
   });
   socket.on('leave_channel', (channelId) => { socket.leave(channelId); });
 
@@ -1555,11 +1582,11 @@ io.on('connection', (socket) => {
       skipChatNormalize = !!(chSnap && chSnap.ddGame);
     } catch (_) { /* non-fatal */ }
 
-    // Ensure sender is in the Socket.IO channel room before broadcast (fixes race after
-    // channel_created vs first message — without this, io.to(channelId) can miss the client).
     try {
-      socket.join(channelId);
-    } catch (_) { /* non-fatal */ }
+      await socket.join(channelId);
+    } catch (e) {
+      console.error('socket.join(channel):', e.message);
+    }
 
     const msg = {
       id: 'msg_' + uuidv4().slice(0, 12),
@@ -1572,8 +1599,11 @@ io.on('connection', (socket) => {
       threadReplies: [],
     };
 
-    // Emit immediately so real-time always works, then persist
-    io.to(channelId).emit('new_message', { channelId, message: msg });
+    try {
+      await emitNewMessagePayload(io, channelId, { channelId, message: msg }, chSnap);
+    } catch (e) {
+      console.error('emit new_message:', e.message);
+    }
     try { await appendMessage(channelId, msg); } catch (e) { console.error('DB write error (send_message):', e.message); }
     scheduleRobotDmReply(io, channelId, currentUser.id, text || '', chSnap);
   });
@@ -1596,8 +1626,10 @@ io.on('connection', (socket) => {
       } catch (_) { /* non-fatal */ }
 
       try {
-        socket.join(channelId);
-      } catch (_) { /* non-fatal */ }
+        await socket.join(channelId);
+      } catch (e) {
+        console.error('socket.join(thread_reply):', e.message);
+      }
 
       const reply = {
         id: 'reply_' + uuidv4().slice(0, 12),
@@ -2149,7 +2181,15 @@ async function emitRobotDmWelcome(io, channelId) {
     reactions: {},
     threadReplies: [],
   };
-  io.to(channelId).emit('new_message', { channelId, message: botMsg });
+  let ch = null;
+  try {
+    ch = await findChannel({ id: channelId });
+  } catch (_) { /* non-fatal */ }
+  try {
+    await emitNewMessagePayload(io, channelId, { channelId, message: botMsg }, ch);
+  } catch (e) {
+    console.error('emit robot welcome:', e.message);
+  }
   try {
     await appendMessage(channelId, botMsg);
   } catch (e) {
@@ -2157,10 +2197,19 @@ async function emitRobotDmWelcome(io, channelId) {
   }
 }
 
+function normalizeRobotTriggerText(raw) {
+  return (raw || '')
+    .replace(/\uFEFF/g, '')
+    .replace(/\u200B/g, '')
+    .replace(/\u2060/g, '')
+    .replace(/\uFF0F/g, '/')
+    .trim();
+}
+
 function scheduleRobotDmReply(io, channelId, fromUserId, rawText, channelSnap) {
   if (!channelId || !fromUserId || fromUserId === ROBOT_DM_ID) return;
 
-  const t = (rawText || '').replace(/\uFEFF/g, '').trim();
+  const t = normalizeRobotTriggerText(rawText);
   const lowered = t.toLowerCase();
   let reply = null;
   if (/^\s*\/robot\b/i.test(t)) reply = robotDmPick(ROBOT_DM_PROMPTS);
@@ -2172,9 +2221,9 @@ function scheduleRobotDmReply(io, channelId, fromUserId, rawText, channelSnap) {
   const delayMs = 480 + Math.floor(Math.random() * 720);
   setTimeout(async () => {
     try {
-      let ch = channelSnap && channelSnap.id === channelId ? channelSnap : null;
+      let ch = channelSnap && String(channelSnap.id) === String(channelId) ? channelSnap : null;
       if (!ch) ch = await findChannel({ id: channelId });
-      if (!ch || !ch.ddGame || ch.ddDmUserId !== ROBOT_DM_ID) return;
+      if (!ch || !ch.ddGame || String(ch.ddDmUserId) !== String(ROBOT_DM_ID)) return;
 
       const botMsg = {
         id: 'msg_' + uuidv4().slice(0, 12),
@@ -2186,7 +2235,7 @@ function scheduleRobotDmReply(io, channelId, fromUserId, rawText, channelSnap) {
         reactions: {},
         threadReplies: [],
       };
-      io.to(channelId).emit('new_message', { channelId, message: botMsg });
+      await emitNewMessagePayload(io, channelId, { channelId, message: botMsg }, ch);
       await appendMessage(channelId, botMsg);
     } catch (e) {
       console.error('robot_dm_reply:', e.message);
