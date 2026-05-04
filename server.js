@@ -1549,9 +1549,16 @@ io.on('connection', (socket) => {
     } catch (e) { console.error('DB error (send_message access):', e.message); return; }
 
     let skipChatNormalize = false;
+    let chSnap = null;
     try {
-      const chSnap = await findChannel({ id: channelId });
+      chSnap = await findChannel({ id: channelId });
       skipChatNormalize = !!(chSnap && chSnap.ddGame);
+    } catch (_) { /* non-fatal */ }
+
+    // Ensure sender is in the Socket.IO channel room before broadcast (fixes race after
+    // channel_created vs first message — without this, io.to(channelId) can miss the client).
+    try {
+      socket.join(channelId);
     } catch (_) { /* non-fatal */ }
 
     const msg = {
@@ -1568,7 +1575,7 @@ io.on('connection', (socket) => {
     // Emit immediately so real-time always works, then persist
     io.to(channelId).emit('new_message', { channelId, message: msg });
     try { await appendMessage(channelId, msg); } catch (e) { console.error('DB write error (send_message):', e.message); }
-    scheduleRobotDmReply(io, channelId, currentUser.id, text || '');
+    scheduleRobotDmReply(io, channelId, currentUser.id, text || '', chSnap);
   });
 
   socket.on('thread_reply', async ({ channelId, parentMsgId, text }) => {
@@ -1582,9 +1589,14 @@ io.on('connection', (socket) => {
       if (!parent) return;
 
       let skipChatNormalize = false;
+      let chSnap = null;
       try {
-        const chSnap = await findChannel({ id: channelId });
+        chSnap = await findChannel({ id: channelId });
         skipChatNormalize = !!(chSnap && chSnap.ddGame);
+      } catch (_) { /* non-fatal */ }
+
+      try {
+        socket.join(channelId);
       } catch (_) { /* non-fatal */ }
 
       const reply = {
@@ -1599,6 +1611,7 @@ io.on('connection', (socket) => {
       parent.threadReplies.push(reply);
       await updateMessagesForChannel(channelId, msgs);
       io.to(channelId).emit('thread_reply', { channelId, parentMsgId, reply });
+      scheduleRobotDmReply(io, channelId, currentUser.id, text, chSnap);
     } catch (e) { console.error('DB error (thread_reply):', e.message); }
   });
 
@@ -2144,13 +2157,13 @@ async function emitRobotDmWelcome(io, channelId) {
   }
 }
 
-function scheduleRobotDmReply(io, channelId, fromUserId, rawText) {
+function scheduleRobotDmReply(io, channelId, fromUserId, rawText, channelSnap) {
   if (!channelId || !fromUserId || fromUserId === ROBOT_DM_ID) return;
 
-  const t = (rawText || '').trim();
+  const t = (rawText || '').replace(/\uFEFF/g, '').trim();
   const lowered = t.toLowerCase();
   let reply = null;
-  if (/^\/robot\b/i.test(t)) reply = robotDmPick(ROBOT_DM_PROMPTS);
+  if (/^\s*\/robot\b/i.test(t)) reply = robotDmPick(ROBOT_DM_PROMPTS);
   else if (lowered.includes('robot dm')) reply = robotDmPick(ROBOT_DM_NUDGES);
   else if (/\?\s*$/.test(t) && Math.random() < 0.32) reply = robotDmPick(ROBOT_DM_QUESTION_RSP);
 
@@ -2159,7 +2172,8 @@ function scheduleRobotDmReply(io, channelId, fromUserId, rawText) {
   const delayMs = 480 + Math.floor(Math.random() * 720);
   setTimeout(async () => {
     try {
-      const ch = await findChannel({ id: channelId });
+      let ch = channelSnap && channelSnap.id === channelId ? channelSnap : null;
+      if (!ch) ch = await findChannel({ id: channelId });
       if (!ch || !ch.ddGame || ch.ddDmUserId !== ROBOT_DM_ID) return;
 
       const botMsg = {

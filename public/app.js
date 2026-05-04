@@ -120,10 +120,10 @@
     const ch = channels.find((c) => c.id === channelId);
     if (!ch || !ch.ddGame || ch.ddDmUserId !== ROBOT_DM_ID) return;
     if (!currentUser || currentUser.id === ROBOT_DM_ID) return;
-    const t = (rawText || '').trim();
+    const t = (rawText || '').replace(/\uFEFF/g, '').trim();
     const lowered = t.toLowerCase();
     let reply = null;
-    if (/^\/robot\b/i.test(t)) reply = pickRobotDm(ROBOT_DM_PROMPTS_CLIENT);
+    if (/^\s*\/robot\b/i.test(t)) reply = pickRobotDm(ROBOT_DM_PROMPTS_CLIENT);
     else if (lowered.includes('robot dm')) reply = pickRobotDm(ROBOT_DM_NUDGES_CLIENT);
     else if (/\?\s*$/.test(t) && Math.random() < 0.32) reply = pickRobotDm(ROBOT_DM_QUESTION_RSP_CLIENT);
     if (!reply) return;
@@ -2629,6 +2629,7 @@ function applyComposerNormalize(el) {
           messages = allMsgs;
           broadcast('thread_reply', { channelId: activeChannelId, parentMsgId: activeThreadMsgId });
           renderThread(activeThreadMsgId); renderMessages();
+          scheduleLocalRobotDmReply(activeChannelId, trimmed);
         }
       } else {
         lsAppendMessage(activeChannelId, msg);
