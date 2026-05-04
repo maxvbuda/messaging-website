@@ -757,18 +757,97 @@
 
   function fileUrl(id) { return backUrl() + '/api/files/' + id; }
 
+  /** Display / download source for an attachment (server id, data URL, blob URL, or absolute path). */
+  function mediaAttachmentSrc(file) {
+    if (!file) return '';
+    if (file.dataUrl) return file.dataUrl;
+    if (file.url) {
+      const u = file.url;
+      if (u.startsWith('data:') || u.startsWith('blob:')) return u;
+      if (u.startsWith('/')) return backUrl() + u;
+      return u;
+    }
+    if (file.id) return fileUrl(file.id);
+    return '';
+  }
+
+  const downloadIconSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
+
+  function attachmentDownloadButtonHtml() {
+    return `<button type="button" class="btn-icon attachment-download" title="Download" aria-label="Download">${downloadIconSvg}</button>`;
+  }
+
+  function resolveFileForAttachment(msgId, fromThreadPanel) {
+    const msgs = messages[activeChannelId] || [];
+    if (fromThreadPanel && activeThreadMsgId) {
+      const pm = msgs.find(m => m.id === activeThreadMsgId);
+      if (!pm) return null;
+      if (msgId === pm.id) return pm.file || null;
+      const rep = (pm.threadReplies || []).find(r => r.id === msgId);
+      return rep ? rep.file || null : null;
+    }
+    const m = msgs.find(x => x.id === msgId);
+    return m ? m.file || null : null;
+  }
+
+  async function downloadMediaAttachment(file) {
+    if (!file) return;
+    const name = (file.name && String(file.name).trim()) || 'download';
+    const src = mediaAttachmentSrc(file);
+    if (!src) return;
+
+    const clickTempLink = (url, filename) => {
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    };
+
+    if (src.startsWith('data:') || src.startsWith('blob:')) {
+      clickTempLink(src, name);
+      return;
+    }
+
+    if (inServerMode() && authToken && file.id) {
+      try {
+        const res = await fetch(fileUrl(file.id), { headers: { Authorization: 'Bearer ' + authToken } });
+        if (!res.ok) throw new Error('fetch failed');
+        const blob = await res.blob();
+        const objUrl = URL.createObjectURL(blob);
+        clickTempLink(objUrl, name);
+        setTimeout(() => URL.revokeObjectURL(objUrl), 3000);
+        return;
+      } catch (e) {
+        console.warn('downloadMediaAttachment: fetch failed, falling back', e);
+      }
+    }
+
+    clickTempLink(src, name);
+  }
+
   function renderFileAttachment(file) {
     if (!file) return '';
+    const src = mediaAttachmentSrc(file);
+    if (!src) return '';
     if (isImage(file.type)) {
       return `<div class="file-attachment img-attachment">
-        <a href="${fileUrl(file.id)}" target="_blank">
-          <img src="${fileUrl(file.id)}" alt="${escHtml(file.name)}" class="inline-image" loading="lazy">
+        <div class="media-attachment-inner">
+        <a href="${src}" target="_blank" rel="noopener">
+          <img src="${src}" alt="${escHtml(file.name)}" class="inline-image" loading="lazy">
         </a>
+        ${attachmentDownloadButtonHtml()}
+        </div>
       </div>`;
     }
     if (isVideo(file.type)) {
-      return `<div class="file-attachment">
-        <video src="${fileUrl(file.id)}" controls class="inline-video"></video>
+      return `<div class="file-attachment video-attachment">
+        <div class="media-attachment-inner">
+        <video src="${src}" controls class="inline-video"></video>
+        ${attachmentDownloadButtonHtml()}
+        </div>
       </div>`;
     }
     const ext = file.name.split('.').pop().toUpperCase().slice(0, 4);
@@ -1788,15 +1867,15 @@
     const ch = channels.find(c => c.id === activeChannelId);
     threadChannel.textContent = ch ? `#${ch.name}` : '';
     const pu = resolveUser(pm.userId, pm.userName);
-    let html = `<div class="message">${avatarEl(pu, 'message-avatar')}
+    let html = `<div class="message" data-msg="${pm.id}">${avatarEl(pu, 'message-avatar')}
       <div class="message-body"><div class="message-meta"><span class="message-author">${escHtml(pu.name)}</span><span class="message-time">${formatTime(pm.ts)}</span></div>
-      <div class="message-text">${formatText(pm.text)}</div></div></div>
+      ${pm.text ? `<div class="message-text">${formatText(pm.text)}</div>` : ''}${renderFileAttachment(pm.file)}</div></div>
       <div class="date-divider"><span>${(pm.threadReplies||[]).length} ${(pm.threadReplies||[]).length===1?'reply':'replies'}</span></div>`;
     (pm.threadReplies || []).forEach(r => {
       const u = resolveUser(r.userId, r.userName);
-      html += `<div class="message">${avatarEl(u, 'message-avatar')}
+      html += `<div class="message" data-msg="${r.id}">${avatarEl(u, 'message-avatar')}
         <div class="message-body"><div class="message-meta"><span class="message-author">${escHtml(u.name)}</span><span class="message-time">${formatTime(r.ts)}</span></div>
-        <div class="message-text">${formatText(r.text)}</div></div></div>`;
+        ${r.text ? `<div class="message-text">${formatText(r.text)}</div>` : ''}${renderFileAttachment(r.file)}</div></div>`;
     });
     threadMessagesEl.innerHTML = html;
     threadPanel.classList.add('open'); memberPanel.classList.remove('open');
@@ -2351,6 +2430,22 @@ function filterExplicit(text) {
       switchChannel(dmId);
     }
   });
+
+  function onAttachmentDownloadClick(e) {
+    const btn = e.target.closest('.attachment-download');
+    if (!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const row = btn.closest('.message');
+    if (!row || !row.dataset.msg) return;
+    const fromThread = threadMessagesEl.contains(row);
+    const file = resolveFileForAttachment(row.dataset.msg, fromThread);
+    if (!file || (!isImage(file.type) && !isVideo(file.type))) return;
+    downloadMediaAttachment(file);
+  }
+
+  messagesListEl.addEventListener('click', onAttachmentDownloadClick);
+  threadMessagesEl.addEventListener('click', onAttachmentDownloadClick);
 
   $('#sendBtn').addEventListener('click', () => { sendMessage(messageInput.value); messageInput.value = ''; autoResize(messageInput); });
   messageInput.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(messageInput.value); messageInput.value = ''; autoResize(messageInput); } });

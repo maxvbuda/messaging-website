@@ -876,6 +876,35 @@ body {
   border: none;
   max-width: 100%;
 }
+.file-attachment.video-attachment {
+  padding: 0;
+  background: none;
+  border: none;
+  max-width: 100%;
+}
+.media-attachment-inner {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+}
+.media-attachment-inner .attachment-download {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  width: 32px;
+  height: 32px;
+  opacity: 0;
+  transition: opacity 0.12s;
+  background: var(--bg-dark);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+}
+.media-attachment-inner:hover .attachment-download,
+.media-attachment-inner:focus-within .attachment-download {
+  opacity: 1;
+}
 .inline-image {
   max-width: min(420px, 100%);
   max-height: 320px;
@@ -1547,6 +1576,10 @@ body {
   }
   .message { flex-wrap: wrap; }
   .message-body { width: 100%; }
+
+  .media-attachment-inner .attachment-download {
+    opacity: 1;
+  }
 
   /* Emoji picker: bottom sheet on mobile */
   .emoji-picker {
