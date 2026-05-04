@@ -93,12 +93,12 @@
     .btn-accent:hover { background: #7e70f0; }
 
     /* Message checkboxes */
-    .msg-cb-cell { display: flex; align-items: center; justify-content: center; padding-right: 4px; flex-shrink: 0; }
-    .msg-cb { appearance: none; -webkit-appearance: none; width: 16px; height: 16px; border: 1.5px solid var(--border); border-radius: 4px; background: var(--bg3); cursor: pointer; flex-shrink: 0; transition: background 0.1s, border-color 0.1s; }
-    .msg-cb:checked { background: var(--accent); border-color: var(--accent); }
-    .msg-cb:checked::after { content: ''; display: block; width: 4px; height: 8px; border: 2px solid #fff; border-top: none; border-left: none; transform: rotate(45deg) translate(1px, -1px); margin: 1px auto 0; }
-    .msg-cb:hover:not(:checked) { border-color: var(--accent); }
-    .card-row.msg-selected { background: rgba(108,92,231,0.08); }
+    .msg-cb-cell, .file-cb-cell { display: flex; align-items: center; justify-content: center; padding-right: 4px; flex-shrink: 0; }
+    .msg-cb, .file-cb { appearance: none; -webkit-appearance: none; width: 16px; height: 16px; border: 1.5px solid var(--border); border-radius: 4px; background: var(--bg3); cursor: pointer; flex-shrink: 0; transition: background 0.1s, border-color 0.1s; }
+    .msg-cb:checked, .file-cb:checked { background: var(--accent); border-color: var(--accent); }
+    .msg-cb:checked::after, .file-cb:checked::after { content: ''; display: block; width: 4px; height: 8px; border: 2px solid #fff; border-top: none; border-left: none; transform: rotate(45deg) translate(1px, -1px); margin: 1px auto 0; }
+    .msg-cb:hover:not(:checked), .file-cb:hover:not(:checked) { border-color: var(--accent); }
+    .card-row.msg-selected, .card-row.file-selected { background: rgba(108,92,231,0.08); }
 
     /* Bulk action bar */
     .bulk-bar { display: none; align-items: center; gap: 10px; padding: 8px 0 12px; }
@@ -183,7 +183,10 @@
         <input type="text" id="fileFilterQuery" placeholder="Filter by name, id, or uploader…" style="flex:1">
         <button class="btn-accent" id="fileListRefreshBtn" type="button">Refresh</button>
       </div>
-      <p style="font-size:12px;color:var(--muted);margin:-4px 0 12px">Remove a blob from storage. Message attachments pointing at it are stripped; profiles using it as avatar fall back to initials.</p>
+      <p style="font-size:12px;color:var(--muted);margin:-4px 0 12px">Remove a blob from storage. Message attachments pointing at it are stripped; profiles using it as avatar fall back to initials. Shift-click checkboxes to select a range.</p>
+      <div class="bulk-bar" id="fileBulkBar">
+        <button class="btn-deny" id="fileBulkRemoveBtn" type="button">Remove Selected (0)</button>
+      </div>
       <div id="filesListWrap"><div class="empty">Open this tab or press Refresh to load files.</div></div>
     </div>
   </div>
@@ -588,6 +591,10 @@
   document.getElementById('msgBulkDeleteBtn').addEventListener('click', () => { bulkDeleteSelected(); });
 
   // ── Stored files ──
+  let fileList = [];
+  let lastCheckedFileIndex = -1;
+  const selectedFileIds = new Set();
+
   function formatBytes(n) {
     const x = typeof n === 'number' ? n : 0;
     if (x < 1024) return x + ' B';
@@ -596,27 +603,104 @@
     return (kb / 1024).toFixed(1) + ' MB';
   }
 
+  function updateFileBulkBar() {
+    const n = selectedFileIds.size;
+    const bar = document.getElementById('fileBulkBar');
+    const btn = document.getElementById('fileBulkRemoveBtn');
+    if (n > 0) {
+      bar.classList.add('visible');
+      btn.textContent = `Remove Selected (${n})`;
+    } else {
+      bar.classList.remove('visible');
+    }
+  }
+
+  function clearFileSelection() {
+    const wrap = document.getElementById('filesListWrap');
+    selectedFileIds.clear();
+    lastCheckedFileIndex = -1;
+    if (wrap) {
+      wrap.querySelectorAll('.file-cb').forEach(c => { c.checked = false; });
+      wrap.querySelectorAll('.card-row.file-selected').forEach(r => r.classList.remove('file-selected'));
+    }
+    updateFileBulkBar();
+  }
+
+  function handleFileCheckbox(e, index) {
+    const root = document.getElementById('filesListWrap');
+    const cb = e.target.closest('.file-cb');
+    if (!cb || !root) return;
+    const row = cb.closest('.file-result-row');
+    const fileId = (fileList[index] && fileList[index].id) || '';
+
+    if (e.shiftKey && lastCheckedFileIndex !== -1) {
+      const lo = Math.min(lastCheckedFileIndex, index);
+      const hi = Math.max(lastCheckedFileIndex, index);
+      const shouldCheck = cb.checked;
+      for (let i = lo; i <= hi; i++) {
+        const f = fileList[i];
+        if (!f) continue;
+        const c = root.querySelector(`.file-cb[data-file-index="${i}"]`);
+        const r = root.querySelector(`.file-result-row[data-file-index="${i}"]`);
+        if (c) c.checked = shouldCheck;
+        if (r) r.classList.toggle('file-selected', shouldCheck);
+        if (shouldCheck) selectedFileIds.add(f.id);
+        else selectedFileIds.delete(f.id);
+      }
+    } else {
+      if (cb.checked) {
+        selectedFileIds.add(fileId);
+        row && row.classList.add('file-selected');
+      } else {
+        selectedFileIds.delete(fileId);
+        row && row.classList.remove('file-selected');
+      }
+      lastCheckedFileIndex = index;
+    }
+
+    updateFileBulkBar();
+  }
+
   async function deleteStoredFile(fileId, label) {
     if (!confirm('Permanently remove "' + label + '" from storage? Attachments are cleared from messages and avatars are reset.')) return;
     const d = await api('DELETE', '/api/admin/files/' + encodeURIComponent(fileId));
     if (d.error) { alert(d.error); return; }
+    selectedFileIds.delete(fileId);
+    updateFileBulkBar();
     loadStoredFiles();
+  }
+
+  async function bulkRemoveSelectedFiles() {
+    const ids = [...selectedFileIds];
+    if (!ids.length) return;
+    if (!confirm(`Permanently remove ${ids.length} file${ids.length > 1 ? 's' : ''} from storage? Attachments and avatars that use them will be cleared.`)) return;
+    let failed = 0;
+    for (const id of ids) {
+      const d = await api('DELETE', '/api/admin/files/' + encodeURIComponent(id));
+      if (d.error) failed++;
+    }
+    await loadStoredFiles();
+    if (failed) alert(`${failed} file(s) could not be removed.`);
   }
 
   async function loadStoredFiles() {
     const wrap = document.getElementById('filesListWrap');
     const q = document.getElementById('fileFilterQuery').value.trim();
     wrap.innerHTML = '<div class="empty">Loading…</div>';
+    clearFileSelection();
     const qs = '?limit=300' + (q ? '&q=' + encodeURIComponent(q) : '');
     const d = await api('GET', '/api/admin/files' + qs);
     if (d.error) { wrap.innerHTML = '<div class="empty" style="color:var(--red)">' + esc(d.error) + '</div>'; return; }
-    const files = d.files || [];
-    if (!files.length) { wrap.innerHTML = '<div class="empty">No files match.</div>'; return; }
-    wrap.innerHTML = `<div class="card">${files.map((f) => {
+    fileList = d.files || [];
+    if (!fileList.length) { wrap.innerHTML = '<div class="empty">No files match.</div>'; return; }
+    wrap.innerHTML = `<div class="card">${fileList.map((f, i) => {
       const kind = f.isAvatar ? '<span class="badge badge-pending" style="margin-left:6px">avatar</span>' : '<span class="badge badge-online" style="margin-left:6px">upload</span>';
       const openUrl = BACKEND + '/api/files/' + encodeURIComponent(f.id);
       return `
-      <div class="card-row" data-file-id="${escAttr(f.id)}">
+      <div class="card-row file-result-row" data-file-id="${escAttr(f.id)}" data-file-index="${i}">
+        <div class="file-cb-cell">
+          <input type="checkbox" class="file-cb" data-file-index="${i}">
+        </div>
         <div class="row-info">
           <div class="row-name">${esc(f.name)} <span style="font-size:11px;color:var(--muted);font-weight:400">${esc(f.id)}</span>${kind}</div>
           <div class="row-sub">${formatBytes(f.size)} · ${esc(f.type || 'unknown type')} · ${esc(f.uploadedByName)} · ${timeAgo(f.uploadedAt)}</div>
@@ -631,11 +715,19 @@
 
   document.getElementById('fileListRefreshBtn').addEventListener('click', () => { loadStoredFiles(); });
   document.getElementById('fileFilterQuery').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadStoredFiles(); });
+  document.getElementById('fileBulkRemoveBtn').addEventListener('click', () => { bulkRemoveSelectedFiles(); });
   document.getElementById('filesListWrap').addEventListener('click', (e) => {
     const btn = e.target.closest('.js-admin-file-del');
-    if (!btn) return;
-    e.preventDefault();
-    deleteStoredFile(btn.dataset.fileId || '', btn.dataset.fileLabel || btn.dataset.fileId || '');
+    if (btn) {
+      e.preventDefault();
+      deleteStoredFile(btn.dataset.fileId || '', btn.dataset.fileLabel || btn.dataset.fileId || '');
+      return;
+    }
+    const cb = e.target.closest('.file-cb');
+    if (cb) {
+      const i = Number(cb.dataset.fileIndex, 10);
+      if (!Number.isNaN(i)) handleFileCheckbox(e, i);
+    }
   });
 
   // ── Init ──
