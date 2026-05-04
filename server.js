@@ -1934,9 +1934,60 @@ function filterExplicit(text) {
   return text.replace(_EXPLICIT_REGEX, (match) => '*'.repeat(match.length));
 }
 
+/** Slash easter egg: /roll-dN for N in {2,3,4,6,8,10,12,20,100} (case-insensitive). */
+function expandPolyhedralRollEasterEgg(rawTrimmed) {
+  const t = (rawTrimmed || '').trim();
+  const m = /^\/roll-d(\d+)$/i.exec(t);
+  if (!m) return null;
+  const sides = parseInt(m[1], 10);
+  const allowed = new Set([2, 3, 4, 6, 8, 10, 12, 20, 100]);
+  if (!allowed.has(sides)) {
+    return '🎒 That die isn’t in the SlackFlow pouch. Use /roll-d2, d3, d4, d6, d8, d10, d12, d20, or d100.';
+  }
+
+  if (sides === 2) {
+    const heads = Math.random() < 0.5;
+    return heads
+      ? '🪙 D2 → Heads — The coin chooses violence (for good).'
+      : '🪙 D2 → Tails — Probability shrugs.';
+  }
+
+  const n = 1 + Math.floor(Math.random() * sides);
+  const core = `🎲 D${sides} → ${n}`;
+  let tag = '';
+  if (n === 1) {
+    const low = {
+      3: ' — Minimal triangle.',
+      4: ' — Pyramid point-first. Ouch.',
+      6: ' — The one dot stares into your soul.',
+      8: ' — Basement of the octahedron.',
+      10: ' — Single-digit despair.',
+      12: ' — Even the d12 pities this roll.',
+      20: ' — …how?',
+      100: ' — Natural “please no” on percentile.',
+    };
+    tag = low[sides] || '';
+  } else if (n === sides) {
+    const high = {
+      3: ' — Tri-corner crit (for very small dragons).',
+      4: ' — Apex predator.',
+      6: ' — Boxcars energy.',
+      8: ' — Peak octahedron.',
+      10: ' — Maximum single digit.',
+      12: ' — The d12 actually mattered!',
+      20: ' — Natural twenty! SlackFlow nerds rejoice.',
+      100: ' — 💯 on the percentile. Legend.',
+    };
+    tag = high[sides] || '';
+  }
+  return core + tag;
+}
+
 function processOutgoingChatText(raw) {
   const t = (raw || '').trim();
   if (!t) return t;
+  const rolled = expandPolyhedralRollEasterEgg(t);
+  if (rolled) return rolled;
   return filterExplicit(normalizeChatText(t));
 }
 
