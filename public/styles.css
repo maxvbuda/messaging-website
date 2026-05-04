@@ -1473,6 +1473,160 @@ li.channel-dd-game {
   animation: modalIn 0.2s ease;
 }
 .modal-sm { width: 380px; }
+.modal-dm-handbook {
+  width: 860px;
+  max-width: 94vw;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+}
+.modal-dm-handbook .modal-body.dm-handbook-body {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.modal-subtitle {
+  margin: 4px 0 0;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-muted);
+  line-height: 1.35;
+  max-width: 42rem;
+}
+.dm-handbook-body {
+  display: grid;
+  grid-template-columns: minmax(0, 212px) minmax(0, 1fr);
+  gap: 0;
+  padding: 0 !important;
+  flex: 1;
+  min-height: 280px;
+  max-height: min(62vh, 540px);
+}
+.dm-handbook-nav {
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  background: rgba(0, 0, 0, 0.1);
+}
+.dm-handbook-story-list {
+  list-style: none;
+  margin: 0;
+  padding: 8px;
+}
+.dm-handbook-story-list li { margin: 0 0 4px; }
+.dm-handbook-pick {
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  line-height: 1.3;
+  font-family: var(--font);
+}
+.dm-handbook-pick:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+.dm-handbook-pick.active {
+  border-color: var(--accent);
+  background: var(--accent-muted);
+}
+.dm-handbook-detail-wrap {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.dm-handbook-detail {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 18px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+.dm-handbook-detail .dm-handbook-story-title {
+  font-size: 18px;
+  font-weight: 900;
+  color: var(--text-primary);
+  margin: 0 0 6px;
+}
+.dm-handbook-detail .dm-handbook-tagline {
+  font-size: 12px;
+  color: var(--accent);
+  font-weight: 700;
+  margin: 0 0 14px;
+}
+.dm-handbook-detail .dm-handbook-section {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin: 16px 0 6px;
+  font-weight: 800;
+}
+.dm-handbook-detail .dm-handbook-section:first-of-type {
+  margin-top: 4px;
+}
+.dm-handbook-readaloud {
+  padding: 12px 14px;
+  background: var(--bg-medium);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+  margin: 0 0 10px;
+  font-style: italic;
+  color: var(--text-primary);
+}
+.dm-handbook-beat h5 {
+  margin: 14px 0 4px;
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--text-primary);
+}
+.dm-handbook-beat p {
+  margin: 0;
+}
+.dm-handbook-actions {
+  flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-dark);
+}
+.btn-dm-handbook {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-medium);
+  color: var(--text-primary);
+  cursor: pointer;
+  margin-right: 4px;
+  white-space: nowrap;
+}
+.btn-dm-handbook:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+@media (max-width: 720px) {
+  .dm-handbook-body {
+    grid-template-columns: 1fr;
+    max-height: none;
+  }
+  .dm-handbook-nav {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    max-height: 132px;
+  }
+}
 
 @keyframes modalIn {
   from { opacity: 0; transform: translateY(20px) scale(0.97); }

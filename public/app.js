@@ -75,6 +75,12 @@
     '📝','💻','🐛','⚡','🔧','🎨','📊','📈','🛡️','🧪',
   ];
 
+  const DM_HANDBOOK_STORIES =
+    typeof globalThis !== 'undefined' && Array.isArray(globalThis.slackflowDmHandbook)
+      ? globalThis.slackflowDmHandbook
+      : [];
+  let dmHandbookSelectedStoryId = '';
+
   // ── In-memory data ──
   let currentUser = null;
   let users = [];
@@ -857,6 +863,89 @@
     const ch = channels.find((c) => c.id === activeChannelId);
     if (ch && ch.ddGame && userCanEndDdSession(ch)) btn.style.display = 'inline-block';
     else btn.style.display = 'none';
+  }
+
+  function userIsDmInActiveDdChannel() {
+    const ch = channels.find((c) => c.id === activeChannelId);
+    return !!(currentUser && ch && ch.ddGame && ch.ddDmUserId === currentUser.id);
+  }
+
+  function updateDmHandbookButton() {
+    const btn = $('#dmHandbookBtn');
+    if (!btn || !currentUser) return;
+    btn.style.display = userIsDmInActiveDdChannel() ? 'inline-block' : 'none';
+  }
+
+  function getDmHandbookStory(storyId) {
+    if (!DM_HANDBOOK_STORIES.length) return null;
+    const s = DM_HANDBOOK_STORIES.find((x) => x.id === storyId);
+    return s || DM_HANDBOOK_STORIES[0];
+  }
+
+  function renderDmHandbookStoryList() {
+    const ul = $('#dmHandbookStoryList');
+    if (!ul) return;
+    if (!DM_HANDBOOK_STORIES.length) {
+      ul.innerHTML = '<li style="padding:12px;color:var(--text-muted);font-size:12px;">No stories loaded.</li>';
+      return;
+    }
+    ul.innerHTML = DM_HANDBOOK_STORIES.map(
+      (s) =>
+        `<li><button type="button" class="dm-handbook-pick${s.id === dmHandbookSelectedStoryId ? ' active' : ''}" data-story="${escHtml(s.id)}">${escHtml(s.title)}</button></li>`
+    ).join('');
+  }
+
+  function renderDmHandbookDetail() {
+    const el = $('#dmHandbookDetail');
+    if (!el) return;
+    const s = getDmHandbookStory(dmHandbookSelectedStoryId);
+    if (!s) {
+      el.innerHTML = '<p class="modal-hint">Handbook unavailable.</p>';
+      return;
+    }
+    const beatsHtml = (s.beats || [])
+      .map(
+        (b) =>
+          `<div class="dm-handbook-beat"><h5>${escHtml(b.title)}</h5><p>${escHtml(b.body)}</p></div>`
+      )
+      .join('');
+    el.innerHTML = `
+      <h3 class="dm-handbook-story-title">${escHtml(s.title)}</h3>
+      <p class="dm-handbook-tagline">${escHtml(s.tagline)}</p>
+      <div class="dm-handbook-section">Premise</div>
+      <p>${escHtml(s.premise)}</p>
+      <div class="dm-handbook-section">Opening read-aloud</div>
+      <div class="dm-handbook-readaloud">${escHtml(s.opening)}</div>
+      <div class="dm-handbook-section">Scene beats</div>
+      ${beatsHtml}
+      <div class="dm-handbook-section">Twist</div>
+      <p>${escHtml(s.twist)}</p>
+      <div class="dm-handbook-section">Treasure ideas</div>
+      <p>${escHtml(s.loot)}</p>`;
+  }
+
+  function openDmHandbookModal() {
+    if (!DM_HANDBOOK_STORIES.length) {
+      alert('DM handbook stories did not load. Check that dm-handbook.js is reachable, then refresh.');
+      return;
+    }
+    dmHandbookSelectedStoryId =
+      dmHandbookSelectedStoryId && DM_HANDBOOK_STORIES.some((x) => x.id === dmHandbookSelectedStoryId)
+        ? dmHandbookSelectedStoryId
+        : DM_HANDBOOK_STORIES[0].id;
+    renderDmHandbookStoryList();
+    renderDmHandbookDetail();
+    openModal('dmHandbookModal');
+  }
+
+  function copyDmHandbookToComposer(text) {
+    if (!text || !$('#messageInput')) return;
+    const ta = messageInput;
+    ta.value = text;
+    applyComposerNormalize(ta);
+    autoResize(ta);
+    ta.focus();
+    closeModal('dmHandbookModal');
   }
 
   // ── File upload ──
@@ -2010,6 +2099,7 @@
     }
     updateChannelAccessButton();
     updateEndDdSessionButton();
+    updateDmHandbookButton();
 
     let html = '';
     if (ch) {
@@ -2017,7 +2107,7 @@
         const dm = resolveUser(ch.ddDmUserId);
         html += `<div class="channel-intro"><div class="channel-intro-icon">🎲</div>
           <h2>D&amp;D session</h2>
-          <p><strong>${escHtml(dm.name)}</strong> is the DM.${ch.topic ? ' ' + escHtml(ch.topic) : ''} Tap <strong>End game</strong> in the header when the session wraps (host or DM).</p></div>`;
+          <p><strong>${escHtml(dm.name)}</strong> is the DM.${ch.topic ? ' ' + escHtml(ch.topic) : ''} DMs: open <strong>Handbook</strong> for premade story seeds. Host or DM: tap <strong>End game</strong> when the session wraps.</p></div>`;
       } else {
         html += `<div class="channel-intro"><div class="channel-intro-icon">${isDM ? '💬' : '#'}</div>
         <h2>${isDM ? '' : '#'}${escHtml(ch.name)}</h2>
@@ -3022,6 +3112,26 @@ function applyComposerNormalize(el) {
         renderAll();
       }
     } else renderChannelList();
+  });
+
+  $('#dmHandbookBtn')?.addEventListener('click', () => openDmHandbookModal());
+
+  $('#dmHandbookStoryList')?.addEventListener('click', (e) => {
+    const b = e.target.closest('.dm-handbook-pick');
+    if (!b || !b.dataset.story) return;
+    dmHandbookSelectedStoryId = b.dataset.story;
+    renderDmHandbookStoryList();
+    renderDmHandbookDetail();
+  });
+
+  $('#dmHandbookCopyPremise')?.addEventListener('click', () => {
+    const s = getDmHandbookStory(dmHandbookSelectedStoryId);
+    if (s) copyDmHandbookToComposer(`[${s.title}] ${s.premise}`);
+  });
+
+  $('#dmHandbookCopyOpening')?.addEventListener('click', () => {
+    const s = getDmHandbookStory(dmHandbookSelectedStoryId);
+    if (s) copyDmHandbookToComposer(s.opening);
   });
 
   $('#channelsToggle').addEventListener('click', (e) => { if (e.target.closest('.btn-tiny')) return; e.currentTarget.classList.toggle('collapsed'); channelListEl.style.display = e.currentTarget.classList.contains('collapsed') ? 'none' : ''; });
