@@ -1972,7 +1972,7 @@ body {
 .avt-hint { font-size: 11px; }
 .avt-upload-drop span { font-size: 13px; }
 
-/* ── Avatar Builder v2 ─────────────────────────────── */
+/* ── Avatar Builder v3 ─────────────────────────────── */
 .avb-layout {
   display: flex;
   flex-direction: column;
@@ -1988,26 +1988,43 @@ body {
   padding: 10px 0 4px;
 }
 
+.avb-preview-wrap {
+  padding: 5px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: linear-gradient(155deg, rgba(255,255,255,0.26), rgba(255,255,255,0.05) 45%, rgba(0,0,0,0.08));
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,0.35),
+    0 6px 28px rgba(0,0,0,0.42),
+    0 2px 8px rgba(0,0,0,0.28);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.avb-preview-wrap:hover {
+  transform: scale(1.03);
+  box-shadow:
+    inset 0 1px 2px rgba(255,255,255,0.45),
+    0 10px 40px rgba(0,0,0,0.5),
+    0 3px 10px rgba(0,0,0,0.32);
+}
+
 #avbPreview {
-  width: 150px;
-  height: 150px;
+  width: 228px;
+  height: 228px;
   border-radius: 50%;
   overflow: hidden;
   flex-shrink: 0;
-  box-shadow:
-    0 0 0 3px rgba(255,255,255,0.08),
-    0 4px 28px rgba(0,0,0,0.4),
-    0 1px 6px rgba(0,0,0,0.25);
-  transition: transform 0.18s ease, box-shadow 0.18s ease;
-  cursor: default;
+  box-shadow: inset 0 2px 14px rgba(0,0,0,0.2);
+  transition: opacity 0.15s ease;
 }
-#avbPreview:hover {
-  transform: scale(1.04);
-  box-shadow:
-    0 0 0 4px rgba(255,255,255,0.12),
-    0 8px 36px rgba(0,0,0,0.48),
-    0 2px 8px rgba(0,0,0,0.3);
+.avb-preview-wrap.avb-preview-pulse {
+  animation: avbPreviewPulse 0.45s cubic-bezier(0.34, 1.25, 0.55, 1);
 }
+@keyframes avbPreviewPulse {
+  0% { transform: scale(0.93); filter: brightness(0.9); }
+  70% { transform: scale(1.02); filter: brightness(1.05); }
+  100% { transform: scale(1); filter: brightness(1); }
+}
+
 #avbPreview svg {
   width: 100%;
   height: 100%;
@@ -2044,11 +2061,25 @@ body {
   font-size: 12px;
 }
 
-/* Category tabs */
+/* Category tabs — sticky horizontal scroll on narrow modals */
 .avb-cat-tabs {
   display: flex;
   gap: 4px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 8px;
+  margin-bottom: 2px;
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: linear-gradient(to bottom, var(--bg-medium) 82%, transparent);
+  scrollbar-width: thin;
+}
+.avb-cat-tabs::-webkit-scrollbar { height: 5px; }
+.avb-cat-tabs::-webkit-scrollbar-thumb {
+  background: var(--border-light);
+  border-radius: 6px;
 }
 
 .avb-cat-btn {
