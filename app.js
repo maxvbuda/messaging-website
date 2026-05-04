@@ -1716,6 +1716,25 @@
       if (channelId === activeChannelId) renderMessages();
       if (activeThreadMsgId === msgId) { threadPanel.classList.remove('open'); activeThreadMsgId = null; }
     });
+    socket.on('message_file_removed', ({ updates }) => {
+      const list = Array.isArray(updates) ? updates : [];
+      for (const u of list) {
+        const msgs = messages[u.channelId];
+        if (!msgs) continue;
+        const msg = msgs.find(m => m.id === u.msgId);
+        if (!msg) continue;
+        if (u.replyId) {
+          const r = (msg.threadReplies || []).find(x => x.id === u.replyId);
+          if (r) delete r.file;
+        } else {
+          delete msg.file;
+        }
+      }
+      if (list.some(x => x.channelId === activeChannelId)) {
+        renderMessages();
+        if (activeThreadMsgId) renderThread(activeThreadMsgId);
+      }
+    });
     socket.on('channel_created', ({ channel }) => {
       if (!channels.find(c => c.id === channel.id)) channels.push(channel);
       if (!messages[channel.id]) messages[channel.id] = [];

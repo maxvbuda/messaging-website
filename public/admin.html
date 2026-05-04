@@ -130,6 +130,7 @@
       <div class="tab" data-tab="invites">Invite Codes</div>
       <div class="tab" data-tab="users">Users</div>
       <div class="tab" data-tab="messages">Messages</div>
+      <div class="tab" data-tab="files">Stored files</div>
     </div>
 
     <!-- Join Requests -->
@@ -162,10 +163,20 @@
         <button class="btn-accent" id="msgSearchBtn">Search</button>
       </div>
       <div class="bulk-bar" id="msgBulkBar">
-        <button class="btn-deny" id="msgBulkDeleteBtn" onclick="bulkDeleteSelected()">Delete Selected (0)</button>
+        <button class="btn-deny" id="msgBulkDeleteBtn" type="button">Delete Selected (0)</button>
         <span style="font-size:12px;color:var(--muted)" id="msgBulkCount"></span>
       </div>
       <div id="msgSearchResults"><div class="empty">Enter a query above and press Search.</div></div>
+    </div>
+
+    <!-- Stored uploads -->
+    <div class="tab-pane" id="tab-files">
+      <div class="gen-invite-bar" style="margin-bottom:8px">
+        <input type="text" id="fileFilterQuery" placeholder="Filter by name, id, or uploader…" style="flex:1">
+        <button class="btn-accent" id="fileListRefreshBtn" type="button">Refresh</button>
+      </div>
+      <p style="font-size:12px;color:var(--muted);margin:-4px 0 12px">Remove a blob from storage. Message attachments pointing at it are stripped; profiles using it as avatar fall back to initials.</p>
+      <div id="filesListWrap"><div class="empty">Open this tab or press Refresh to load files.</div></div>
     </div>
   </div>
 </div>
@@ -184,7 +195,17 @@
   function initials(name) {
     return name.split(' ').filter(Boolean).map(w => w[0]).join('').toUpperCase().slice(0, 2) || '?';
   }
-  function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function escAttr(s) {
+    return String(s)
+      .replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+      .replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function esc(s) {
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
   function timeAgo(ts) {
     const s = Math.floor((Date.now() - ts) / 1000);
     if (s < 60) return 'just now';
@@ -199,7 +220,18 @@
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + adminToken },
       body: body ? JSON.stringify(body) : undefined,
     });
-    return res.json();
+    const txt = await res.text().catch(() => '');
+    let d = {};
+    if (txt) {
+      try { d = JSON.parse(txt); }
+      catch {
+        d = res.ok ? {} : { error: txt };
+      }
+    }
+    if (!res.ok && d.error == null) {
+      d = { ...(typeof d === 'object' ? d : {}), error: txt || ('HTTP ' + res.status) };
+    }
+    return d;
   }
 
   // ── Login ──
@@ -241,6 +273,7 @@
       if (tab.dataset.tab === 'invites') loadInvites();
       if (tab.dataset.tab === 'users') loadUsers();
       if (tab.dataset.tab === 'messages') { document.getElementById('msgSearchResults').innerHTML = '<div class="empty">Enter a query above and press Search.</div>'; }
+      if (tab.dataset.tab === 'files') loadStoredFiles();
     });
   });
 
@@ -418,27 +451,34 @@
   }
 
   function handleMsgCheckbox(e, index) {
-    const cb = e.target;
-    const msgId = cb.dataset.msgid;
-    const row = document.getElementById('msgrow-' + msgId);
+    const root = document.getElementById('msgSearchResults');
+    const cb = e.target.closest('.msg-cb');
+    if (!cb || !root) return;
+    const row = cb.closest('.msg-result-row');
+    const msgId = (msgList[index] && msgList[index].id) || '';
 
     if (e.shiftKey && lastCheckedIndex !== -1) {
       const lo = Math.min(lastCheckedIndex, index);
       const hi = Math.max(lastCheckedIndex, index);
-      const shouldCheck = cb.checked; // the current cb was already toggled by browser
+      const shouldCheck = cb.checked;
       for (let i = lo; i <= hi; i++) {
         const m = msgList[i];
         if (!m) continue;
-        const c = document.querySelector(`.msg-cb[data-msgid="${CSS.escape(m.id)}"]`);
-        const r = document.getElementById('msgrow-' + m.id);
+        const c = root.querySelector(`.msg-cb[data-msg-index="${i}"]`);
+        const r = root.querySelector(`.msg-result-row[data-msg-index="${i}"]`);
         if (c) c.checked = shouldCheck;
         if (r) r.classList.toggle('msg-selected', shouldCheck);
         if (shouldCheck) selectedMsgIds.add(m.id);
         else selectedMsgIds.delete(m.id);
       }
     } else {
-      if (cb.checked) { selectedMsgIds.add(msgId); row && row.classList.add('msg-selected'); }
-      else { selectedMsgIds.delete(msgId); row && row.classList.remove('msg-selected'); }
+      if (cb.checked) {
+        selectedMsgIds.add(msgId);
+        row && row.classList.add('msg-selected');
+      } else {
+        selectedMsgIds.delete(msgId);
+        row && row.classList.remove('msg-selected');
+      }
       lastCheckedIndex = index;
     }
 
@@ -446,10 +486,13 @@
   }
 
   function clearMsgSelection() {
+    const root = document.getElementById('msgSearchResults');
     selectedMsgIds.clear();
     lastCheckedIndex = -1;
-    document.querySelectorAll('.msg-cb').forEach(c => { c.checked = false; });
-    document.querySelectorAll('.card-row.msg-selected').forEach(r => r.classList.remove('msg-selected'));
+    if (root) {
+      root.querySelectorAll('.msg-cb').forEach(c => { c.checked = false; });
+      root.querySelectorAll('.msg-result-row.msg-selected').forEach(r => r.classList.remove('msg-selected'));
+    }
     updateBulkBar();
   }
 
@@ -466,19 +509,16 @@
     msgList = d.messages || [];
     if (!msgList.length) { el.innerHTML = '<div class="empty">No messages found.</div>'; return; }
     el.innerHTML = `<div class="card">${msgList.map((m, i) => `
-      <div class="card-row" id="msgrow-${esc(m.id)}">
+      <div class="card-row msg-result-row" data-msg-index="${i}" data-msg-id="${escAttr(m.id)}">
         <div class="msg-cb-cell">
-          <input type="checkbox" class="msg-cb"
-            data-msgid="${esc(m.id)}"
-            data-index="${i}"
-            onclick="handleMsgCheckbox(event,${i})">
+          <input type="checkbox" class="msg-cb" data-msg-index="${i}">
         </div>
         <div class="row-info">
           <div class="row-name" style="font-size:12px;color:var(--muted)">${m.isDM ? '' : '#'}${esc(m.channelName)} · ${esc(m.userName)} · ${timeAgo(m.ts)}${m.isThreadReply ? ' · <em>thread reply</em>' : ''}</div>
           <div class="row-sub" style="font-size:14px;color:var(--text);margin-top:4px">${esc(m.text)}</div>
         </div>
         <div class="row-actions">
-          <button class="btn-deny" onclick="deleteMsg('${esc(m.channelId)}','${esc(m.id)}',${m.isThreadReply},'${esc(m.parentMsgId || '')}')">Delete</button>
+          <button type="button" class="btn-deny js-admin-msg-del" data-msg-index="${i}">Delete</button>
         </div>
       </div>
     `).join('')}</div>`;
@@ -486,11 +526,12 @@
 
   async function deleteMsg(channelId, msgId, isThreadReply, parentMsgId) {
     if (!confirm('Delete this message? This cannot be undone.')) return;
+    const root = document.getElementById('msgSearchResults');
+    let row = root && [...root.querySelectorAll('.msg-result-row')].find(r => r.dataset.msgId === msgId);
     let path = `/api/admin/messages/${encodeURIComponent(channelId)}/${encodeURIComponent(msgId)}`;
     if (isThreadReply && parentMsgId) path += `?threadReply=true&parentMsgId=${encodeURIComponent(parentMsgId)}`;
     const d = await api('DELETE', path);
     if (d.error) { alert(d.error); return; }
-    const row = document.getElementById('msgrow-' + msgId);
     if (row) row.remove();
     selectedMsgIds.delete(msgId);
     msgList = msgList.filter(m => m.id !== msgId);
@@ -508,10 +549,10 @@
       if (m.isThreadReply && m.parentMsgId) path += `?threadReply=true&parentMsgId=${encodeURIComponent(m.parentMsgId)}`;
       const d = await api('DELETE', path);
       if (d.error) { failed++; continue; }
-      const row = document.getElementById('msgrow-' + m.id);
+      const root = document.getElementById('msgSearchResults');
+      const row = root && [...root.querySelectorAll('.msg-result-row')].find(r => r.dataset.msgId === m.id);
       if (row) row.remove();
     }
-    msgList = msgList.filter(m => !ids.includes(m.id) || toDelete.find(t => t.id === m.id && false));
     msgList = msgList.filter(m => !ids.includes(m.id));
     clearMsgSelection();
     if (failed) alert(`${failed} message(s) could not be deleted.`);
@@ -519,6 +560,75 @@
 
   document.getElementById('msgSearchBtn').addEventListener('click', searchMessages);
   document.getElementById('msgSearchQuery').addEventListener('keydown', e => { if (e.key === 'Enter') searchMessages(); });
+
+  document.getElementById('msgSearchResults').addEventListener('click', (e) => {
+    const delBtn = e.target.closest('.js-admin-msg-del');
+    if (delBtn) {
+      e.preventDefault();
+      const i = Number(delBtn.dataset.msgIndex, 10);
+      const m = msgList[i];
+      if (m) deleteMsg(m.channelId, m.id, !!m.isThreadReply, m.parentMsgId || '');
+      return;
+    }
+    const cb = e.target.closest('.msg-cb');
+    if (cb) {
+      const i = Number(cb.dataset.msgIndex, 10);
+      if (!Number.isNaN(i)) handleMsgCheckbox(e, i);
+    }
+  });
+
+  document.getElementById('msgBulkDeleteBtn').addEventListener('click', () => { bulkDeleteSelected(); });
+
+  // ── Stored files ──
+  function formatBytes(n) {
+    const x = typeof n === 'number' ? n : 0;
+    if (x < 1024) return x + ' B';
+    const kb = x / 1024;
+    if (kb < 1024) return kb.toFixed(1) + ' KB';
+    return (kb / 1024).toFixed(1) + ' MB';
+  }
+
+  async function deleteStoredFile(fileId, label) {
+    if (!confirm('Permanently remove "' + label + '" from storage? Attachments are cleared from messages and avatars are reset.')) return;
+    const d = await api('DELETE', '/api/admin/files/' + encodeURIComponent(fileId));
+    if (d.error) { alert(d.error); return; }
+    loadStoredFiles();
+  }
+
+  async function loadStoredFiles() {
+    const wrap = document.getElementById('filesListWrap');
+    const q = document.getElementById('fileFilterQuery').value.trim();
+    wrap.innerHTML = '<div class="empty">Loading…</div>';
+    const qs = '?limit=300' + (q ? '&q=' + encodeURIComponent(q) : '');
+    const d = await api('GET', '/api/admin/files' + qs);
+    if (d.error) { wrap.innerHTML = '<div class="empty" style="color:var(--red)">' + esc(d.error) + '</div>'; return; }
+    const files = d.files || [];
+    if (!files.length) { wrap.innerHTML = '<div class="empty">No files match.</div>'; return; }
+    wrap.innerHTML = `<div class="card">${files.map((f) => {
+      const kind = f.isAvatar ? '<span class="badge badge-pending" style="margin-left:6px">avatar</span>' : '<span class="badge badge-online" style="margin-left:6px">upload</span>';
+      const openUrl = BACKEND + '/api/files/' + encodeURIComponent(f.id);
+      return `
+      <div class="card-row" data-file-id="${escAttr(f.id)}">
+        <div class="row-info">
+          <div class="row-name">${esc(f.name)} <span style="font-size:11px;color:var(--muted);font-weight:400">${esc(f.id)}</span>${kind}</div>
+          <div class="row-sub">${formatBytes(f.size)} · ${esc(f.type || 'unknown type')} · ${esc(f.uploadedByName)} · ${timeAgo(f.uploadedAt)}</div>
+        </div>
+        <div class="row-actions">
+          <a class="btn-sm" href="${openUrl}" target="_blank" rel="noopener">Open</a>
+          <button type="button" class="btn-deny js-admin-file-del" data-file-id="${escAttr(f.id)}" data-file-label="${escAttr(f.name || f.id)}">Remove</button>
+        </div>
+      </div>`;
+    }).join('')}</div>`;
+  }
+
+  document.getElementById('fileListRefreshBtn').addEventListener('click', () => { loadStoredFiles(); });
+  document.getElementById('fileFilterQuery').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadStoredFiles(); });
+  document.getElementById('filesListWrap').addEventListener('click', (e) => {
+    const btn = e.target.closest('.js-admin-file-del');
+    if (!btn) return;
+    e.preventDefault();
+    deleteStoredFile(btn.dataset.fileId || '', btn.dataset.fileLabel || btn.dataset.fileId || '');
+  });
 
   // ── Init ──
   function showApp() {

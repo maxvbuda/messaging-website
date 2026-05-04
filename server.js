@@ -183,6 +183,79 @@ async function updateMessagesForChannel(channelId, msgs) {
   memData.messages[channelId] = msgs;
 }
 
+function avatarUrlReferencesFile(url, fileId) {
+  if (!url || typeof url !== 'string') return false;
+  return url.includes('/api/files/' + fileId);
+}
+
+/** Removes msg.file / thread reply attachments matching fileId; returns payload for socket clients. */
+async function pruneUploadedFileRefs(fileId) {
+  const updates = [];
+  if (db) {
+    const docs = await messagesCol.find({}).toArray();
+    for (const doc of docs) {
+      const channelId = doc.channelId;
+      const msgs = doc.messages;
+      if (!msgs || !msgs.length) continue;
+      let docTouched = false;
+      for (const m of msgs) {
+        if (m.file && m.file.id === fileId) {
+          updates.push({ channelId, msgId: m.id });
+          delete m.file;
+          docTouched = true;
+        }
+        const tr = m.threadReplies;
+        if (tr && Array.isArray(tr)) {
+          for (const r of tr) {
+            if (r.file && r.file.id === fileId) {
+              updates.push({ channelId, msgId: m.id, replyId: r.id });
+              delete r.file;
+              docTouched = true;
+            }
+          }
+        }
+      }
+      if (docTouched) await updateMessagesForChannel(channelId, msgs);
+    }
+  } else {
+    const byCh = memData.messages || {};
+    for (const channelId of Object.keys(byCh)) {
+      const msgs = byCh[channelId];
+      if (!msgs || !msgs.length) continue;
+      let touched = false;
+      for (const m of msgs) {
+        if (m.file && m.file.id === fileId) {
+          updates.push({ channelId, msgId: m.id });
+          delete m.file;
+          touched = true;
+        }
+        const tr = m.threadReplies;
+        if (tr && Array.isArray(tr)) {
+          for (const r of tr) {
+            if (r.file && r.file.id === fileId) {
+              updates.push({ channelId, msgId: m.id, replyId: r.id });
+              delete r.file;
+              touched = true;
+            }
+          }
+        }
+      }
+      if (touched) await updateMessagesForChannel(channelId, msgs);
+    }
+  }
+  return updates;
+}
+
+async function clearAvatarsPointingAtFile(fileId) {
+  const usersList = await getUsers();
+  for (const u of usersList) {
+    if (!avatarUrlReferencesFile(u.avatarUrl, fileId)) continue;
+    await updateUser(u.id, { avatarUrl: null });
+    const refreshed = await findUser({ id: u.id });
+    io.emit('user_updated', { user: publicUser(refreshed) });
+  }
+}
+
 // ── Token store: token → userId (in-memory is fine, users just re-login after restart) ──
 const tokens = new Map();
 
@@ -1022,6 +1095,90 @@ app.delete('/api/admin/messages/:channelId/:msgId', requireAdmin, async (req, re
     res.json({ ok: true });
   } catch (e) {
     console.error('admin messages/delete:', e);
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+// ── Admin: stored uploads (attachments + avatar blobs) ──
+
+function fileDocToPublicMeta(f) {
+  if (!f) return null;
+  return {
+    id: f.id,
+    name: f.name || '',
+    type: f.type || '',
+    size: typeof f.size === 'number' ? f.size : 0,
+    uploadedBy: f.uploadedBy || null,
+    uploadedAt: f.uploadedAt || 0,
+    isAvatar: !!f.isAvatar,
+  };
+}
+
+app.get('/api/admin/files', requireAdmin, async (req, res) => {
+  try {
+    const limit = Math.min(500, Math.max(1, parseInt(req.query.limit, 10) || 200));
+    const qRaw = (req.query.q || '').trim().toLowerCase();
+
+    let rows;
+    let normalized;
+    if (db) {
+      rows = await filesCol.find({}).project({ data: 0 }).sort({ uploadedAt: -1 }).limit(2000).toArray();
+      normalized = rows.map((raw) => fileDocToPublicMeta(raw));
+    } else {
+      normalized = Object.values(memData.files || {}).map(fileDocToPublicMeta)
+        .filter(Boolean)
+        .sort((a, b) => (b.uploadedAt || 0) - (a.uploadedAt || 0));
+    }
+
+    const allUsers = await getUsers();
+    const userMap = {};
+    allUsers.forEach((u) => { userMap[u.id] = u.name; });
+
+    normalized = normalized.map((m) => ({
+      ...m,
+      uploadedByName: (m.uploadedBy && userMap[m.uploadedBy]) || m.uploadedBy || '—',
+    }));
+
+    const filtered = !qRaw
+      ? normalized
+      : normalized.filter((f) =>
+        (f.name || '').toLowerCase().includes(qRaw) ||
+        (f.id || '').toLowerCase().includes(qRaw) ||
+        (f.uploadedByName || '').toLowerCase().includes(qRaw));
+
+    res.json({ files: filtered.slice(0, limit) });
+  } catch (e) {
+    console.error('admin files/list:', e);
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+app.delete('/api/admin/files/:id', requireAdmin, async (req, res) => {
+  try {
+    const fileId = req.params.id;
+    let existed = false;
+    if (db) {
+      const doc = await filesCol.findOne({ id: fileId }, { projection: { id: 1 } });
+      existed = !!doc;
+    } else {
+      existed = !!(memData.files && memData.files[fileId]);
+    }
+
+    if (!existed) return res.status(404).json({ error: 'File not found.' });
+
+    const attachmentUpdates = await pruneUploadedFileRefs(fileId);
+    await clearAvatarsPointingAtFile(fileId);
+
+    if (db) await filesCol.deleteOne({ id: fileId });
+    else if (memData.files) delete memData.files[fileId];
+
+    if (attachmentUpdates.length) {
+      io.emit('message_file_removed', { updates: attachmentUpdates });
+    }
+
+    res.json({ ok: true, strippedAttachments: attachmentUpdates.length });
+  } catch (e) {
+    console.error('admin files/delete:', e);
     res.status(500).json({ error: String(e.message || e) });
   }
 });
