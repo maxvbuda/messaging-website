@@ -316,7 +316,7 @@
         <div class="card-row">
           <div class="avatar" style="background:${colorFor(r.name)}">${initials(r.name)}</div>
           <div class="row-info">
-            <div class="row-name">${esc(r.name)} <span style="color:var(--muted);font-weight:400">@${esc(r.username)}</span></div>
+            <div class="row-name">${esc(r.name)} <span style="color:var(--muted);font-weight:400">@${esc(r.username)}</span>${r.email ? ` <span style="color:var(--muted);font-weight:400">· ${esc(r.email)}</span>` : ''}</div>
             <div class="row-sub">${sub}</div>
           </div>
           <div class="row-actions">

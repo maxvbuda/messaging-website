@@ -631,6 +631,7 @@
         authUsername.value = '';
         authPassword.value = '';
         authName.value = '';
+        if (authEmail) authEmail.value = '';
         renderRailAvatar();
       }
     } else {
@@ -705,6 +706,7 @@
       authUsername.value = '';
       authPassword.value = '';
       authName.value = '';
+      if (authEmail) authEmail.value = '';
       renderRailAvatar();
     }
   }
@@ -772,6 +774,7 @@
     authUsername.value = '';
     authPassword.value = '';
     authName.value = '';
+    if (authEmail) authEmail.value = '';
     renderWorkspaceRail();
     renderSidebarWorkspaceTitle();
     renderRailAvatar();
@@ -788,12 +791,16 @@
   const authPassword = $('#authPassword');
   const authName = $('#authName');
   const authNameField = $('#authNameField');
+  const authEmail = $('#authEmail');
+  const authEmailField = $('#authEmailField');
   const authError = $('#authError');
   const authSubmitBtn = $('#authSubmitBtn');
   const authSubtitle = $('#authSubtitle');
   const authFooterNormal = $('#authFooterNormal');
   const authFooterInvite = $('#authFooterInvite');
   const authInviteSignInLink = $('#authInviteSignInLink');
+  const authInviteField = $('#authInviteField');
+  const authInvite = $('#authInvite');
   const appWrapper = $('#appWrapper');
   const channelListEl = $('#channelList');
   const dmListEl = $('#dmList');
@@ -1185,16 +1192,15 @@
   function showAuthError(msg) { authError.textContent = msg; authError.classList.add('visible'); }
   function hideAuthError() { authError.classList.remove('visible'); }
 
-  const authInviteField = $('#authInviteField');
-  const authInvite = $('#authInvite');
-
   function setAuthSignInOnly() {
     isRegisterMode = false;
     hideAuthError();
     authNameField.style.display = 'none';
     authInviteField.style.display = 'none';
+    if (authEmailField) authEmailField.style.display = 'none';
     if (authInvite) authInvite.value = '';
     authName.value = '';
+    if (authEmail) authEmail.value = '';
     authSubmitBtn.textContent = 'Sign In';
     authSubtitle.textContent = 'Enter your credentials to get started.';
     if (authFooterNormal) authFooterNormal.style.display = '';
@@ -1205,6 +1211,7 @@
     isRegisterMode = true;
     hideAuthError();
     authNameField.style.display = '';
+    if (authEmailField) authEmailField.style.display = '';
     authInviteField.style.display = '';
     authSubmitBtn.textContent = 'Create Account';
     authSubtitle.textContent = 'You have an invite link. Finish creating your account below.';
@@ -1220,6 +1227,7 @@
     authInvite.value = urlInvite.toUpperCase();
     if (urlParams.get('name')) authName.value = urlParams.get('name');
     if (urlParams.get('username')) authUsername.value = urlParams.get('username');
+    if (authEmail && urlParams.get('email')) authEmail.value = urlParams.get('email');
     $('#pendingRegScreen').style.display = 'none';
     authScreen.style.display = '';
     window.history.replaceState({}, '', window.location.pathname);
@@ -1238,16 +1246,21 @@
     const username = authUsername.value.trim().toLowerCase();
     const password = authPassword.value;
     const displayName = authName.value.trim();
+    const email = authEmail ? authEmail.value.trim() : '';
 
     if (!username || !password) { showAuthError('Please fill in all fields.'); return; }
     if (username.length < 2) { showAuthError('Username must be at least 2 characters.'); return; }
-    if (isRegisterMode && !displayName) { showAuthError('Please enter a display name.'); return; }
-    if (isRegisterMode && password.length < 3) { showAuthError('Password must be at least 3 characters.'); return; }
+    if (isRegisterMode) {
+      if (!displayName) { showAuthError('Please enter a display name.'); return; }
+      const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+      if (!emailOk) { showAuthError('Please enter a valid email address.'); return; }
+      if (password.length < 3) { showAuthError('Password must be at least 3 characters.'); return; }
+    }
 
     if (inServerMode()) {
       const endpoint = isRegisterMode ? '/api/register' : '/api/login';
       const inviteCode = authInvite ? authInvite.value.trim() : '';
-      const body = isRegisterMode ? { username, password, name: displayName, inviteCode } : { username, password };
+      const body = isRegisterMode ? { username, password, name: displayName, inviteCode, email } : { username, password };
       try {
         const res = await fetch(backUrl() + endpoint, {
           method: 'POST',
@@ -1269,7 +1282,9 @@
       const allUsers = lsGetUsers();
       if (isRegisterMode) {
         if (allUsers.find(u => u.username === username)) { showAuthError('That username is already taken.'); return; }
-        const nu = { id: 'u_' + Date.now() + '_' + Math.random().toString(36).slice(2,7), username, password, name: displayName, status: 'online', role: 'Member', createdAt: Date.now() };
+        const em = email.toLowerCase();
+        if (allUsers.some(u => u.email && String(u.email).toLowerCase() === em)) { showAuthError('That email is already in use.'); return; }
+        const nu = { id: 'u_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7), username, password, name: displayName, email: em, status: 'online', role: 'Member', createdAt: Date.now() };
         allUsers.push(nu); lsSaveUsers(allUsers);
         lsSave('sf_session', nu.id);
         currentUser = nu;
@@ -1309,7 +1324,7 @@
     $('#pendingRegScreen').style.display = 'none';
     $('#authScreen').style.display = '';
     setAuthSignInOnly();
-    authUsername.value = ''; authPassword.value = ''; authName.value = '';
+    authUsername.value = ''; authPassword.value = ''; authName.value = ''; if (authEmail) authEmail.value = '';
     hideAuthError();
   }
 
@@ -2809,6 +2824,7 @@ function applyComposerNormalize(el) {
     const errEl = $('#pendingRegError');
     const waitErr = $('#pendingRegWaitErr');
     const nameEl = $('#pendingRegName');
+    const emailEl = $('#pendingRegEmail');
     const userEl = $('#pendingRegUsername');
     const passEl = $('#pendingRegPassword');
 
@@ -2871,7 +2887,7 @@ function applyComposerNormalize(el) {
           stopPoll();
           clearPendingLs();
           showFormUI();
-          nameEl.value = ''; userEl.value = ''; passEl.value = '';
+          nameEl.value = ''; userEl.value = ''; passEl.value = ''; if (emailEl) emailEl.value = '';
           showFormErr('Your request was not approved. You can submit again with a different username if you like.');
           return;
         }
@@ -2900,9 +2916,12 @@ function applyComposerNormalize(el) {
       if (!backUrl()) { showFormErr('Server is not configured.'); return; }
 
       const name = nameEl.value.trim();
+      const email = emailEl ? emailEl.value.trim() : '';
       const username = userEl.value.trim().toLowerCase();
       const password = passEl.value;
-      if (!name || !username || !password) { showFormErr('Please fill in all fields.'); return; }
+      const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+      if (!name || !username || !password || !email) { showFormErr('Please fill in all fields (including email).'); return; }
+      if (!emailOk) { showFormErr('Please enter a valid email address.'); return; }
       if (username.length < 2) { showFormErr('Username must be at least 2 characters.'); return; }
       if (password.length < 3) { showFormErr('Password must be at least 3 characters.'); return; }
 
@@ -2912,7 +2931,7 @@ function applyComposerNormalize(el) {
         const res = await fetch(backUrl() + '/api/register-request', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, username, password }),
+          body: JSON.stringify({ name, username, password, email }),
         });
         const d = await res.json();
         if (!res.ok) { showFormErr(d.error || 'Something went wrong.'); return; }
@@ -2941,7 +2960,7 @@ function applyComposerNormalize(el) {
       stopPoll();
       clearPendingLs();
       showFormUI();
-      nameEl.value = ''; userEl.value = ''; passEl.value = '';
+      nameEl.value = ''; userEl.value = ''; passEl.value = ''; if (emailEl) emailEl.value = '';
     });
 
     $('#goToPendingRegLink').addEventListener('click', (e) => {

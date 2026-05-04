@@ -137,6 +137,7 @@ async function findUser(query) {
   if (db) return usersCol.findOne(query);
   if (query.username) return memData.users.find(u => u.username === query.username) || null;
   if (query.id) return memData.users.find(u => u.id === query.id) || null;
+  if (query.email) return memData.users.find(u => u.email && String(u.email).toLowerCase() === String(query.email).toLowerCase()) || null;
   return null;
 }
 
@@ -459,11 +460,37 @@ function isBlockedName(username, displayName) {
   return check(username || '') || check(displayName || '');
 }
 
+function normalizeEmailInput(e) {
+  const t = typeof e === 'string' ? e.trim().toLowerCase() : '';
+  return t || '';
+}
+
+function isValidEmailFormat(s) {
+  if (!s || typeof s !== 'string') return false;
+  const t = s.trim();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t);
+}
+
+async function findExistingUserByNormalizedEmail(emailNorm) {
+  if (!emailNorm) return null;
+  if (db) return usersCol.findOne({ email: emailNorm });
+  return memData.users.find(u => u.email && String(u.email).toLowerCase() === emailNorm) || null;
+}
+
+async function findPendingJoinRequestByEmail(emailNorm) {
+  if (!emailNorm) return null;
+  const q = { status: 'pending', passwordHash: { $exists: true }, email: emailNorm };
+  if (db) return joinRequestsCol.findOne(q);
+  return (memData.joinRequests || []).find((r) => r.status === 'pending' && r.passwordHash && r.email === emailNorm);
+}
+
 app.post('/api/register', async (req, res) => {
-  const { username, password, name, inviteCode } = req.body;
+  const { username, password, name, inviteCode, email } = req.body;
   const ip = getClientIp(req);
 
   if (!username || !password || !name) return res.status(400).json({ error: 'All fields are required.' });
+  const emailNorm = normalizeEmailInput(email);
+  if (!emailNorm || !isValidEmailFormat(emailNorm)) return res.status(400).json({ error: 'A valid email address is required.' });
   if (username.length < 2) return res.status(400).json({ error: 'Username must be at least 2 characters.' });
   if (password.length < 3) return res.status(400).json({ error: 'Password must be at least 3 characters.' });
 
@@ -488,6 +515,7 @@ app.post('/api/register', async (req, res) => {
     return res.status(403).json({ error: 'This account cannot be created.' });
   }
   if (await findUser({ username: uname })) return res.status(409).json({ error: 'That username is already taken.' });
+  if (await findExistingUserByNormalizedEmail(emailNorm)) return res.status(409).json({ error: 'That email is already registered.' });
 
   // Prevent display-name impersonation
   const trimmedName = name.trim();
@@ -502,6 +530,7 @@ app.post('/api/register', async (req, res) => {
     username: uname,
     passwordHash: hash,
     name: trimmedName,
+    email: emailNorm,
     status: 'online',
     role: 'Member',
     createdAt: Date.now(),
@@ -784,8 +813,10 @@ app.post('/api/register-request', async (req, res) => {
     return res.status(429).json({ error: 'Too many requests. Try again later.' });
   }
 
-  const { name, username, password } = req.body;
+  const { name, username, password, email } = req.body;
   if (!username || !password || !name) return res.status(400).json({ error: 'All fields are required.' });
+  const emailNorm = normalizeEmailInput(email);
+  if (!emailNorm || !isValidEmailFormat(emailNorm)) return res.status(400).json({ error: 'A valid email address is required.' });
   if (username.trim().length < 2) return res.status(400).json({ error: 'Username must be at least 2 characters.' });
   if (password.length < 3) return res.status(400).json({ error: 'Password must be at least 3 characters.' });
 
@@ -793,6 +824,8 @@ app.post('/api/register-request', async (req, res) => {
   if (isBlockedName(uname, name)) return res.status(403).json({ error: 'This request cannot be submitted.' });
   if (await findUser({ username: uname })) return res.status(409).json({ error: 'That username is already taken.' });
   if (await findPendingRegistrationByUsername(uname)) return res.status(409).json({ error: 'That username already has a pending request.' });
+  if (await findExistingUserByNormalizedEmail(emailNorm)) return res.status(409).json({ error: 'That email is already registered.' });
+  if (await findPendingJoinRequestByEmail(emailNorm)) return res.status(409).json({ error: 'That email already has a pending request.' });
 
   // Prevent display-name impersonation
   const trimmedReqName = name.trim();
@@ -810,6 +843,7 @@ app.post('/api/register-request', async (req, res) => {
     pendingToken,
     name: trimmedReqName,
     username: uname,
+    email: emailNorm,
     passwordHash: hash,
     status: 'pending',
     createdAt: ts,
@@ -886,6 +920,13 @@ app.post('/api/admin/requests/:id/approve', requireAdmin, async (req, res) => {
     if (await findUser({ username: jr.username })) {
       return res.status(409).json({ error: 'That username is already registered. Deny this request.' });
     }
+    const emailNorm = normalizeEmailInput(jr.email);
+    if (!emailNorm || !isValidEmailFormat(emailNorm)) {
+      return res.status(400).json({ error: 'This request has no valid email on file. Deny it and ask the applicant to submit a new request with email.' });
+    }
+    if (await findExistingUserByNormalizedEmail(emailNorm)) {
+      return res.status(409).json({ error: 'That email is already registered. Deny this request.' });
+    }
     const approvedName = (jr.name || '').trim() || jr.username;
     const approvedAllUsers = await getUsers();
     if (approvedAllUsers.some(u => u.name.toLowerCase() === approvedName.toLowerCase())) {
@@ -896,6 +937,7 @@ app.post('/api/admin/requests/:id/approve', requireAdmin, async (req, res) => {
       username: jr.username,
       passwordHash: jr.passwordHash,
       name: approvedName,
+      email: emailNorm,
       status: 'online',
       role: 'Member',
       createdAt: Date.now(),
