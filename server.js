@@ -36,9 +36,6 @@ const io = new Server(server, {
 const PORT = process.env.PORT || 3000;
 const MONGODB_URI = process.env.MONGODB_URI;
 /** Database name in the cluster (override with MONGODB_DB). Defaults to slackflow. */
-const MONGODB_DB_NAME = process.env.MONGODB_DB || 'slackflow';
-const FRONTEND_URL = (process.env.FRONTEND_URL || 'https://maxvbuda.github.io/messaging-website/').replace(/\/?$/, '/');
-
 // ── Middleware ──
 app.use(express.json());
 
@@ -62,7 +59,7 @@ const upload = multer({
 });
 
 let db;
-let usersCol, channelsCol, messagesCol, sessionsCol, filesCol, invitesCol, joinRequestsCol;
+let usersCol, channelsCol, messagesCol, sessionsCol, filesCol, joinRequestsCol;
 
 const DEFAULT_CHANNELS = [
   { id: 'c_general', name: 'general', topic: 'Company-wide announcements and work-based matters', createdBy: 'system' },
@@ -104,7 +101,6 @@ async function connectDB() {
   messagesCol = db.collection('messages');
   sessionsCol = db.collection('sessions');
   filesCol = db.collection('files');
-  invitesCol = db.collection('invites');
   joinRequestsCol = db.collection('joinRequests');
   // Auto-expire sessions after 30 days
   await sessionsCol.createIndex({ createdAt: 1 }, { expireAfterSeconds: 60 * 60 * 24 * 30 });
@@ -328,62 +324,6 @@ function publicUser(u) {
   return { id: u.id, name: u.name, username: u.username, status: u.status, statusMsg: u.statusMsg || '', role: u.role, createdAt: u.createdAt, avatarUrl: u.avatarUrl || null };
 }
 
-// ── Invite helpers ──
-
-function generateInviteCode() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let code = '';
-  for (let i = 0; i < 8; i++) {
-    if (i === 4) code += '-';
-    code += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return code;
-}
-
-async function findInvite(code) {
-  const upper = code.trim().toUpperCase();
-  if (db) return invitesCol.findOne({ code: upper, used: false });
-  return (memData.invites || []).find(i => i.code === upper && !i.used) || null;
-}
-
-async function markInviteUsed(code, userId) {
-  const upper = code.trim().toUpperCase();
-  if (db) {
-    await invitesCol.updateOne({ code: upper }, { $set: { used: true, usedBy: userId, usedAt: Date.now() } });
-    return;
-  }
-  const inv = (memData.invites || []).find(i => i.code === upper);
-  if (inv) { inv.used = true; inv.usedBy = userId; }
-}
-
-async function createInvite(createdBy) {
-  const code = generateInviteCode();
-  const inv = { code, createdBy, createdAt: Date.now(), used: false };
-  if (db) await invitesCol.insertOne(inv);
-  else { if (!memData.invites) memData.invites = []; memData.invites.push(inv); }
-  return code;
-}
-
-// ── REST: Invite generate ──
-app.post('/api/invite/generate', async (req, res) => {
-  const token = req.headers.authorization?.replace('Bearer ', '');
-  const user = await getUserByToken(token);
-  if (!user) return res.status(401).json({ error: 'Unauthorized' });
-  const code = await createInvite(user.id);
-  res.json({ code });
-});
-
-// ── REST: Invite list (own invites) ──
-app.get('/api/invite/list', async (req, res) => {
-  const token = req.headers.authorization?.replace('Bearer ', '');
-  const user = await getUserByToken(token);
-  if (!user) return res.status(401).json({ error: 'Unauthorized' });
-  let invites;
-  if (db) invites = await invitesCol.find({ createdBy: user.id }).sort({ createdAt: -1 }).toArray();
-  else invites = (memData.invites || []).filter(i => i.createdBy === user.id);
-  res.json({ invites: invites.map(i => ({ code: i.code, used: i.used, createdAt: i.createdAt })) });
-});
-
 // ── REST: Auth ──
 
 // Names/usernames blocked from registering or logging in (substring match, case-insensitive)
@@ -471,6 +411,14 @@ function isValidEmailFormat(s) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t);
 }
 
+function parseMarketingOptIn(body) {
+  if (!body || typeof body !== 'object') return false;
+  const v = body.marketingEmails ?? body.marketingOptIn;
+  if (v === true || v === 1) return true;
+  if (typeof v === 'string' && /^(1|true|yes|on)$/i.test(v.trim())) return true;
+  return false;
+}
+
 async function findExistingUserByNormalizedEmail(emailNorm) {
   if (!emailNorm) return null;
   if (db) return usersCol.findOne({ email: emailNorm });
@@ -485,7 +433,8 @@ async function findPendingJoinRequestByEmail(emailNorm) {
 }
 
 app.post('/api/register', async (req, res) => {
-  const { username, password, name, inviteCode, email } = req.body;
+  const { username, password, name, email } = req.body;
+  const marketingEmails = parseMarketingOptIn(req.body);
   const ip = getClientIp(req);
 
   if (!username || !password || !name) return res.status(400).json({ error: 'All fields are required.' });
@@ -494,14 +443,8 @@ app.post('/api/register', async (req, res) => {
   if (username.length < 2) return res.status(400).json({ error: 'Username must be at least 2 characters.' });
   if (password.length < 3) return res.status(400).json({ error: 'Password must be at least 3 characters.' });
 
-  // Require invite code (skip only if no users exist yet — first account bootstraps)
   const existingUsers = await getUsers();
   if (existingUsers.length > 0) {
-    if (!inviteCode) return res.status(403).json({ error: 'An invite code is required to register.' });
-    const invite = await findInvite(inviteCode);
-    if (!invite) return res.status(403).json({ error: 'Invalid or already-used invite code.' });
-
-    // Enforce per-IP account creation limit
     if (await ipExceedsAccountLimit(ip)) {
       console.warn(`[register] IP ${ip} blocked: already has ${MAX_ACCOUNTS_PER_IP}+ accounts`);
       return res.status(429).json({ error: 'Too many accounts created from this network. Contact an admin.' });
@@ -531,6 +474,7 @@ app.post('/api/register', async (req, res) => {
     passwordHash: hash,
     name: trimmedName,
     email: emailNorm,
+    marketingEmails,
     status: 'online',
     role: 'Member',
     createdAt: Date.now(),
@@ -539,7 +483,6 @@ app.post('/api/register', async (req, res) => {
 
   await insertUser(user);
   recordIpAccountCreation(ip);
-  if (inviteCode) await markInviteUsed(inviteCode, user.id);
 
   const token = generateToken();
   tokens.set(token, user.id);
@@ -754,14 +697,6 @@ function ensureJrMessages(jr) {
   return jr;
 }
 
-function buildInviteUrl(code, jr) {
-  let u = FRONTEND_URL + '?invite=' + encodeURIComponent(code);
-  if (jr.name && jr.name !== 'Applicant') u += '&name=' + encodeURIComponent(jr.name);
-  const uname = jr.username && !String(jr.username).startsWith('pending_') ? jr.username : '';
-  if (uname) u += '&username=' + encodeURIComponent(uname);
-  return u;
-}
-
 async function findPendingRegistrationByUsername(uname) {
   const u = uname.trim().toLowerCase();
   if (db) return await joinRequestsCol.findOne({ username: u, status: 'pending', passwordHash: { $exists: true } });
@@ -814,6 +749,7 @@ app.post('/api/register-request', async (req, res) => {
   }
 
   const { name, username, password, email } = req.body;
+  const marketingEmails = parseMarketingOptIn(req.body);
   if (!username || !password || !name) return res.status(400).json({ error: 'All fields are required.' });
   const emailNorm = normalizeEmailInput(email);
   if (!emailNorm || !isValidEmailFormat(emailNorm)) return res.status(400).json({ error: 'A valid email address is required.' });
@@ -844,6 +780,7 @@ app.post('/api/register-request', async (req, res) => {
     name: trimmedReqName,
     username: uname,
     email: emailNorm,
+    marketingEmails,
     passwordHash: hash,
     status: 'pending',
     createdAt: ts,
@@ -938,6 +875,7 @@ app.post('/api/admin/requests/:id/approve', requireAdmin, async (req, res) => {
       passwordHash: jr.passwordHash,
       name: approvedName,
       email: emailNorm,
+      marketingEmails: !!jr.marketingEmails,
       status: 'online',
       role: 'Member',
       createdAt: Date.now(),
@@ -963,29 +901,9 @@ app.post('/api/admin/requests/:id/approve', requireAdmin, async (req, res) => {
     return res.json({ ok: true, accountCreated: true });
   }
 
-  // Legacy chat-style request: issue invite link only
-  const code = await createInvite('admin');
-  ensureJrMessages(jr);
-  const url = buildInviteUrl(code, jr);
-  const linkMsg = { from: 'admin', text: `You're approved. Create your account with this link:\n${url}`, ts: Date.now() };
-
-  if (db) {
-    await joinRequestsCol.updateOne(
-      { id },
-      {
-        $set: { status: 'approved', inviteCode: code, updatedAt: Date.now() },
-        $push: { messages: linkMsg },
-      },
-    );
-  } else {
-    jr.status = 'approved';
-    jr.inviteCode = code;
-    ensureJrMessages(jr);
-    jr.messages.push(linkMsg);
-    jr.updatedAt = Date.now();
-  }
-
-  res.json({ code });
+  return res.status(400).json({
+    error: 'This older chat-only request can no longer be approved with a link. Deny it and ask the person to use “Request access” on the sign-in page instead.',
+  });
 });
 
 app.post('/api/admin/requests/:id/deny', requireAdmin, async (req, res) => {
@@ -1007,6 +925,32 @@ app.post('/api/admin/requests/:id/deny', requireAdmin, async (req, res) => {
 app.get('/api/admin/users', requireAdmin, async (req, res) => {
   const users = await getUsers();
   res.json({ users: users.map(publicUser) });
+});
+
+/** Subscribers who opted in to product / marketing email (deduped by normalized email). */
+app.get('/api/admin/marketing-emails', requireAdmin, async (req, res) => {
+  try {
+    const users = await getUsers();
+    const seen = new Set();
+    const subscribers = [];
+    for (const u of users) {
+      if (!u.marketingEmails || !u.email) continue;
+      const em = String(u.email).toLowerCase().trim();
+      if (!em || seen.has(em)) continue;
+      seen.add(em);
+      subscribers.push({
+        email: em,
+        name: u.name || '',
+        username: u.username || '',
+        createdAt: u.createdAt || null,
+      });
+    }
+    subscribers.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    res.json({ count: subscribers.length, subscribers });
+  } catch (e) {
+    console.error('admin marketing-emails:', e);
+    res.status(500).json({ error: String(e.message || e) });
+  }
 });
 
 app.post('/api/admin/users/:id/ban', requireAdmin, async (req, res) => {
@@ -1065,13 +1009,6 @@ app.get('/api/admin/users/by-ip', requireAdmin, async (req, res) => {
     .sort((a, b) => b[1].length - a[1].length)
     .map(([ip, accounts]) => ({ ip, count: accounts.length, accounts }));
   res.json({ suspicious, total: users.length });
-});
-
-app.get('/api/admin/invites', requireAdmin, async (req, res) => {
-  let invites;
-  if (db) invites = await invitesCol.find().sort({ createdAt: -1 }).toArray();
-  else invites = (memData.invites || []).slice().reverse();
-  res.json({ invites: invites.map(i => ({ code: i.code, used: i.used, createdAt: i.createdAt })) });
 });
 
 // ── Admin: Message search & delete ──

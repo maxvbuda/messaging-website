@@ -793,14 +793,16 @@
   const authNameField = $('#authNameField');
   const authEmail = $('#authEmail');
   const authEmailField = $('#authEmailField');
+  const authMarketingField = $('#authMarketingField');
+  const authMarketingOptIn = $('#authMarketingOptIn');
   const authError = $('#authError');
   const authSubmitBtn = $('#authSubmitBtn');
   const authSubtitle = $('#authSubtitle');
   const authFooterNormal = $('#authFooterNormal');
-  const authFooterInvite = $('#authFooterInvite');
-  const authInviteSignInLink = $('#authInviteSignInLink');
-  const authInviteField = $('#authInviteField');
-  const authInvite = $('#authInvite');
+  const authLinksSignIn = $('#authLinksSignIn');
+  const authLinksRegister = $('#authLinksRegister');
+  const showRegisterLink = $('#showRegisterLink');
+  const switchToSignInLink = $('#switchToSignInLink');
   const appWrapper = $('#appWrapper');
   const channelListEl = $('#channelList');
   const dmListEl = $('#dmList');
@@ -1196,43 +1198,33 @@
     isRegisterMode = false;
     hideAuthError();
     authNameField.style.display = 'none';
-    authInviteField.style.display = 'none';
     if (authEmailField) authEmailField.style.display = 'none';
-    if (authInvite) authInvite.value = '';
+    if (authMarketingField) authMarketingField.style.display = 'none';
     authName.value = '';
     if (authEmail) authEmail.value = '';
+    if (authMarketingOptIn) authMarketingOptIn.checked = false;
+    if (authLinksSignIn) authLinksSignIn.style.display = '';
+    if (authLinksRegister) authLinksRegister.style.display = 'none';
     authSubmitBtn.textContent = 'Sign In';
     authSubtitle.textContent = 'Enter your credentials to get started.';
-    if (authFooterNormal) authFooterNormal.style.display = '';
-    if (authFooterInvite) authFooterInvite.style.display = 'none';
   }
 
-  function setAuthInviteRegisterUI() {
+  function setAuthRegisterUI() {
     isRegisterMode = true;
     hideAuthError();
     authNameField.style.display = '';
     if (authEmailField) authEmailField.style.display = '';
-    authInviteField.style.display = '';
+    if (authMarketingField) authMarketingField.style.display = '';
+    if (authLinksSignIn) authLinksSignIn.style.display = 'none';
+    if (authLinksRegister) authLinksRegister.style.display = '';
     authSubmitBtn.textContent = 'Create Account';
-    authSubtitle.textContent = 'You have an invite link. Finish creating your account below.';
-    if (authFooterNormal) authFooterNormal.style.display = 'none';
-    if (authFooterInvite) authFooterInvite.style.display = '';
+    authSubtitle.textContent = 'Pick a username, password, display name, and email to join.';
   }
 
-  // Auto-fill invite code, name, username from URL params and switch to register mode
   const urlParams = new URLSearchParams(window.location.search);
-  const urlInvite = urlParams.get('invite');
-  if (urlInvite) {
-    setAuthInviteRegisterUI();
-    authInvite.value = urlInvite.toUpperCase();
-    if (urlParams.get('name')) authName.value = urlParams.get('name');
-    if (urlParams.get('username')) authUsername.value = urlParams.get('username');
-    if (authEmail && urlParams.get('email')) authEmail.value = urlParams.get('email');
-    $('#pendingRegScreen').style.display = 'none';
-    authScreen.style.display = '';
-    window.history.replaceState({}, '', window.location.pathname);
-  } else {
-    setAuthSignInOnly();
+
+  setAuthSignInOnly();
+  {
     const p = $('#pendingRegScreen');
     if (p) p.style.display = 'none';
     authScreen.style.display = '';
@@ -1259,8 +1251,8 @@
 
     if (inServerMode()) {
       const endpoint = isRegisterMode ? '/api/register' : '/api/login';
-      const inviteCode = authInvite ? authInvite.value.trim() : '';
-      const body = isRegisterMode ? { username, password, name: displayName, inviteCode, email } : { username, password };
+      const marketingEmails = !!(authMarketingOptIn && authMarketingOptIn.checked);
+      const body = isRegisterMode ? { username, password, name: displayName, email, marketingEmails } : { username, password };
       try {
         const res = await fetch(backUrl() + endpoint, {
           method: 'POST',
@@ -1284,7 +1276,7 @@
         if (allUsers.find(u => u.username === username)) { showAuthError('That username is already taken.'); return; }
         const em = email.toLowerCase();
         if (allUsers.some(u => u.email && String(u.email).toLowerCase() === em)) { showAuthError('That email is already in use.'); return; }
-        const nu = { id: 'u_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7), username, password, name: displayName, email: em, status: 'online', role: 'Member', createdAt: Date.now() };
+        const nu = { id: 'u_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7), username, password, name: displayName, email: em, marketingEmails: !!(authMarketingOptIn && authMarketingOptIn.checked), status: 'online', role: 'Member', createdAt: Date.now() };
         allUsers.push(nu); lsSaveUsers(allUsers);
         lsSave('sf_session', nu.id);
         currentUser = nu;
@@ -1324,7 +1316,7 @@
     $('#pendingRegScreen').style.display = 'none';
     $('#authScreen').style.display = '';
     setAuthSignInOnly();
-    authUsername.value = ''; authPassword.value = ''; authName.value = ''; if (authEmail) authEmail.value = '';
+    authUsername.value = ''; authPassword.value = ''; authName.value = ''; if (authEmail) authEmail.value = ''; if (authMarketingOptIn) authMarketingOptIn.checked = false;
     hideAuthError();
   }
 
@@ -2801,7 +2793,9 @@ function applyComposerNormalize(el) {
   //  EVENT LISTENERS
   // ==============================
 
-  if (authInviteSignInLink) authInviteSignInLink.addEventListener('click', (e) => { e.preventDefault(); setAuthSignInOnly(); });
+  if (showRegisterLink) showRegisterLink.addEventListener('click', (e) => { e.preventDefault(); setAuthRegisterUI(); });
+  if (switchToSignInLink) switchToSignInLink.addEventListener('click', (e) => { e.preventDefault(); setAuthSignInOnly(); });
+
   authForm.addEventListener('submit', handleAuth);
   $('#logoutBtn').addEventListener('click', logout);
 
@@ -2827,6 +2821,7 @@ function applyComposerNormalize(el) {
     const emailEl = $('#pendingRegEmail');
     const userEl = $('#pendingRegUsername');
     const passEl = $('#pendingRegPassword');
+    const marketingCb = $('#pendingRegMarketingOptIn');
 
     let regId = localStorage.getItem(LS_ID) || '';
     let pendingToken = localStorage.getItem(LS_TOK) || '';
@@ -2887,7 +2882,7 @@ function applyComposerNormalize(el) {
           stopPoll();
           clearPendingLs();
           showFormUI();
-          nameEl.value = ''; userEl.value = ''; passEl.value = ''; if (emailEl) emailEl.value = '';
+          nameEl.value = ''; userEl.value = ''; passEl.value = ''; if (emailEl) emailEl.value = ''; if (marketingCb) marketingCb.checked = false;
           showFormErr('Your request was not approved. You can submit again with a different username if you like.');
           return;
         }
@@ -2919,6 +2914,7 @@ function applyComposerNormalize(el) {
       const email = emailEl ? emailEl.value.trim() : '';
       const username = userEl.value.trim().toLowerCase();
       const password = passEl.value;
+      const marketingEmails = !!(marketingCb && marketingCb.checked);
       const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
       if (!name || !username || !password || !email) { showFormErr('Please fill in all fields (including email).'); return; }
       if (!emailOk) { showFormErr('Please enter a valid email address.'); return; }
@@ -2931,7 +2927,7 @@ function applyComposerNormalize(el) {
         const res = await fetch(backUrl() + '/api/register-request', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, username, password, email }),
+          body: JSON.stringify({ name, username, password, email, marketingEmails }),
         });
         const d = await res.json();
         if (!res.ok) { showFormErr(d.error || 'Something went wrong.'); return; }
@@ -2960,17 +2956,18 @@ function applyComposerNormalize(el) {
       stopPoll();
       clearPendingLs();
       showFormUI();
-      nameEl.value = ''; userEl.value = ''; passEl.value = ''; if (emailEl) emailEl.value = '';
+      nameEl.value = ''; userEl.value = ''; passEl.value = ''; if (emailEl) emailEl.value = ''; if (marketingCb) marketingCb.checked = false;
     });
 
     $('#goToPendingRegLink').addEventListener('click', (e) => {
       e.preventDefault();
+      setAuthSignInOnly();
       authScreen.style.display = 'none';
       screen.style.display = '';
       showFormUI();
     });
 
-    if (regId && pendingToken && backUrl() && !urlParams.get('invite')) {
+    if (regId && pendingToken && backUrl()) {
       screen.style.display = '';
       authScreen.style.display = 'none';
       showWaitingUI();

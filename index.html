@@ -39,10 +39,6 @@
           <label for="authEmail">Email</label>
           <input type="email" id="authEmail" placeholder="you@example.com" autocomplete="email">
         </div>
-        <div class="auth-field" id="authInviteField" style="display:none">
-          <label for="authInvite">Invite Code</label>
-          <input type="text" id="authInvite" placeholder="e.g. ABCD-1234" autocomplete="off" style="text-transform:uppercase;letter-spacing:0.08em">
-        </div>
         <div class="auth-field">
           <label for="authUsername">Username</label>
           <input type="text" id="authUsername" placeholder="e.g. jane" autocomplete="off">
@@ -51,14 +47,15 @@
           <label for="authPassword">Password</label>
           <input type="password" id="authPassword" placeholder="Your password" autocomplete="off">
         </div>
+        <div class="auth-field auth-check-row" id="authMarketingField" style="display:none">
+          <label class="auth-check"><input type="checkbox" id="authMarketingOptIn" autocomplete="off"> <span>Send me occasional product updates and tips by email</span></label>
+        </div>
         <button type="submit" class="auth-btn" id="authSubmitBtn">Sign In</button>
       </form>
 
       <p class="auth-toggle" id="authFooterNormal">
-        Need an account? <a href="#" id="goToPendingRegLink">Request access</a> (admin approves you first).
-      </p>
-      <p class="auth-toggle" id="authFooterInvite" style="display:none;margin-top:10px">
-        Already have an account? <a href="#" id="authInviteSignInLink">Sign in</a>
+        <span id="authLinksSignIn">New here? <a href="#" id="showRegisterLink">Create an account</a> or <a href="#" id="goToPendingRegLink">Request access</a> (admin approves first).</span>
+        <span id="authLinksRegister" style="display:none">Already have an account? <a href="#" id="switchToSignInLink">Sign in</a></span>
       </p>
     </div>
   </div>
@@ -68,7 +65,7 @@
     <div class="auth-card" id="pendingRegFormWrap">
       <div class="auth-logo">SF</div>
       <h1 class="auth-title">Request a <strong>SlackFlow</strong> account</h1>
-      <p class="auth-subtitle" style="text-align:left">Create the username and password you want. An admin will approve your request. <strong>Keep this page open</strong> — when you are approved, you will be <strong>signed in automatically</strong> on this device (no invite link needed).</p>
+      <p class="auth-subtitle" style="text-align:left">Create the username and password you want. An admin will approve your request. <strong>Keep this page open</strong> — when you are approved, you will be <strong>signed in automatically</strong> on this device.</p>
 
       <div class="auth-error" id="pendingRegError"></div>
 
@@ -88,6 +85,9 @@
         <div class="auth-field">
           <label for="pendingRegPassword">Password</label>
           <input type="password" id="pendingRegPassword" placeholder="Choose a password" autocomplete="new-password">
+        </div>
+        <div class="auth-field auth-check-row">
+          <label class="auth-check"><input type="checkbox" id="pendingRegMarketingOptIn" autocomplete="off"> <span>Send me occasional product updates and tips by email</span></label>
         </div>
         <button type="submit" class="auth-btn" id="pendingRegSubmitBtn">Submit request</button>
       </form>

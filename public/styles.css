@@ -298,6 +298,23 @@ body {
 .auth-field input:focus { border-color: var(--accent); }
 .auth-field input::placeholder { color: var(--text-muted); }
 
+.auth-check-row { margin-bottom: 14px; }
+.auth-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+  font-weight: 400 !important;
+  font-size: 13px !important;
+  color: var(--text-secondary) !important;
+  line-height: 1.4;
+}
+.auth-check input {
+  width: auto !important;
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
 .auth-btn {
   width: 100%;
   padding: 11px;
