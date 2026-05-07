@@ -15,12 +15,19 @@ const server = http.createServer(app);
 
 const ALLOWED_ORIGINS = [
   'https://maxvbuda.github.io',
+  'https://maxbuda.github.io',
   'https://messaging-website-6qqt.onrender.com',
 ];
+
+const CORS_EXTRA_ORIGINS = String(process.env.CORS_EXTRA_ORIGINS || process.env.ADMIN_ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
 
 function isAllowedOrigin(origin) {
   if (!origin) return true;
   if (ALLOWED_ORIGINS.includes(origin)) return true;
+  if (CORS_EXTRA_ORIGINS.includes(origin)) return true;
   // Allow any localhost or 127.0.0.1 origin regardless of port
   if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return true;
   return false;
@@ -35,7 +42,9 @@ const io = new Server(server, {
 
 const PORT = process.env.PORT || 3000;
 const MONGODB_URI = process.env.MONGODB_URI;
-/** Database name in the cluster (override with MONGODB_DB). Defaults to slackflow. */
+/** Database name in the cluster (override with MONGODB_DB or MONGODB_DB_NAME). Defaults to slackflow. */
+const MONGODB_DB_NAME = (process.env.MONGODB_DB || process.env.MONGODB_DB_NAME || 'slackflow').trim() || 'slackflow';
+
 // ── Middleware ──
 app.use(express.json());
 
@@ -660,9 +669,43 @@ app.get('/api/ice', async (req, res) => {
   }
 });
 
-// ── Admin auth ──
+// ── Admin auth (signed Bearer tokens — no server memory; works across restarts / instances) ──
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'slackflow-admin';
-const adminTokens = new Set();
+const ADMIN_SIGNING_SECRET = process.env.ADMIN_SESSION_SECRET || ADMIN_PASSWORD;
+
+function createAdminBearerToken() {
+  const exp = Math.floor(Date.now() / 1000) + 86400 * 7;
+  const payload = `${exp}.${uuidv4()}`;
+  const sig = crypto.createHmac('sha256', ADMIN_SIGNING_SECRET).update(payload).digest('hex');
+  const b64 = Buffer.from(payload, 'utf8').toString('base64url');
+  return `${b64}.${sig}`;
+}
+
+function verifyAdminBearerToken(raw) {
+  if (!raw || typeof raw !== 'string') return false;
+  const dotSep = raw.lastIndexOf('.');
+  if (dotSep <= 0) return false;
+  const b64 = raw.slice(0, dotSep);
+  const sig = raw.slice(dotSep + 1);
+  let payload;
+  try {
+    payload = Buffer.from(b64, 'base64url').toString('utf8');
+  } catch {
+    return false;
+  }
+  const expectSig = crypto.createHmac('sha256', ADMIN_SIGNING_SECRET).update(payload).digest('hex');
+  if (sig.length !== expectSig.length) return false;
+  try {
+    if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expectSig))) return false;
+  } catch {
+    return false;
+  }
+  const nonceDot = payload.indexOf('.');
+  const expSec = nonceDot === -1 ? NaN : parseInt(payload.slice(0, nonceDot), 10);
+  if (!Number.isFinite(expSec)) return false;
+  if (Math.floor(Date.now() / 1000) > expSec) return false;
+  return true;
+}
 
 app.post('/api/admin/login', (req, res) => {
   const ip = getClientIp(req);
@@ -675,14 +718,12 @@ app.post('/api/admin/login', (req, res) => {
     return res.status(401).json({ error: 'Invalid admin password.' });
   }
   clearAttempts(ip);
-  const token = uuidv4();
-  adminTokens.add(token);
-  res.json({ token });
+  res.json({ token: createAdminBearerToken() });
 });
 
 function requireAdmin(req, res, next) {
   const token = req.headers.authorization?.replace('Bearer ', '');
-  if (!token || !adminTokens.has(token)) return res.status(401).json({ error: 'Unauthorized' });
+  if (!token || !verifyAdminBearerToken(token)) return res.status(401).json({ error: 'Unauthorized' });
   next();
 }
 
@@ -1216,10 +1257,12 @@ app.delete('/api/admin/files/:id', requireAdmin, async (req, res) => {
 });
 
 // Serve admin panel (avoid stale tab markup in browsers/CDNs)
-app.get('/admin', (req, res) => {
+function sendAdminPanel(req, res) {
   res.set('Cache-Control', 'private, no-store, max-age=0');
   res.sendFile(path.join(__dirname, 'public', 'admin.html'));
-});
+}
+app.get('/admin', sendAdminPanel);
+app.get('/admin/', sendAdminPanel);
 
 // ── REST: File upload ──
 

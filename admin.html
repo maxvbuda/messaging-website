@@ -115,6 +115,7 @@
     </div>
     <button class="btn-full" id="adminLoginBtn">Sign In</button>
     <div class="err" id="loginErr"></div>
+    <p id="adminBackendHint" style="font-size:11px;color:var(--muted);margin-top:12px;line-height:1.4"></p>
   </div>
 </div>
 
@@ -191,7 +192,32 @@
 </div>
 
 <script>
-  const BACKEND = 'https://messaging-website-6qqt.onrender.com';
+  /** API origin: same host when admin is opened from Render; GitHub Pages / file uses fallback unless ?api= */
+  const BACKEND = (function resolveAdminBackend() {
+    const FALLBACK = 'https://messaging-website-6qqt.onrender.com';
+    try {
+      const fromQuery = new URLSearchParams(window.location.search).get('api');
+      if (fromQuery && /^https?:\/\/[^/]+/i.test(fromQuery.trim())) return fromQuery.trim().replace(/\/$/, '');
+      if (window.location.protocol === 'file:') return FALLBACK;
+      const host = window.location.hostname || '';
+      if (/(\.|^)github\.io$/i.test(host)) return FALLBACK;
+      return window.location.origin.replace(/\/$/, '');
+    } catch (_) {
+      return FALLBACK;
+    }
+  })();
+
+  (function showBackendHint() {
+    const hint = document.getElementById('adminBackendHint');
+    if (!hint) return;
+    let tip = 'Wrong server? Add <code style="font-size:10px">?api=https://…</code> to the page URL.';
+    try {
+      const here = window.location.origin.replace(/\/$/, '');
+      if (BACKEND === here) tip = 'Same host as this admin page (typical on Render at /admin).';
+    } catch (_) { /* ignore */ }
+    hint.innerHTML = 'API: <span style="color:var(--secondary);word-break:break-all">' + BACKEND + '</span><br><span style="opacity:0.85">' + tip + '</span>';
+  })();
+
   let adminToken = sessionStorage.getItem('sf_admin_token') || null;
   let requestsPollTimer = null;
 
@@ -254,12 +280,26 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password: pw }),
       });
-      const d = await res.json();
-      if (!res.ok) { err.textContent = d.error; err.classList.add('show'); return; }
+      const txt = await res.text().catch(() => '');
+      let d = {};
+      try { d = txt ? JSON.parse(txt) : {}; } catch { /* non-JSON e.g. HTML error page */ }
+      if (!res.ok) {
+        err.textContent = (d && d.error) ? d.error : (txt ? txt.slice(0, 240) : 'HTTP ' + res.status + ' · check API URL (?api=https://your-server)');
+        err.classList.add('show');
+        return;
+      }
       adminToken = d.token;
+      if (!adminToken) {
+        err.textContent = 'No token in response. Is BACKEND pointing to this SlackFlow server?';
+        err.classList.add('show');
+        return;
+      }
       sessionStorage.setItem('sf_admin_token', adminToken);
       showApp();
-    } catch { err.textContent = 'Could not reach server.'; err.classList.add('show'); }
+    } catch (e) {
+      err.textContent = 'Could not reach server (' + BACKEND + '). CORS blocking? Open admin from Render /admin or set ?api=your API URL.';
+      err.classList.add('show');
+    }
   });
   document.getElementById('adminPw').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('adminLoginBtn').click(); });
 
@@ -402,8 +442,15 @@
     const el = document.getElementById('usersList');
     el.innerHTML = '<div class="empty">Loading…</div>';
     const d = await api('GET', '/api/admin/users');
+    if (d.error) {
+      el.innerHTML = '<div class="empty" style="color:var(--red)">' + esc(d.error) + '</div>';
+      return;
+    }
     const users = d.users || [];
-    if (!users.length) { el.innerHTML = '<div class="empty">No users yet.</div>'; return; }
+    if (!users.length) {
+      el.innerHTML = '<div class="empty">No users yet.</div><p class="empty" style="padding-top:0;font-size:12px;color:var(--muted);max-width:520px;margin:0 auto">If accounts exist on the hosted app but not here, MongoDB may not be connected (check <code style="color:var(--secondary)">MONGODB_URI</code> on the server).</p>';
+      return;
+    }
     el.innerHTML = `<div class="card">${users.map(u => `
       <div class="card-row">
         <div class="avatar" style="background:${colorFor(u.name)}">${initials(u.name)}</div>
