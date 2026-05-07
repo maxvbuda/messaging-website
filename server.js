@@ -855,9 +855,6 @@ const pendingRegAttempts = new Map();
 
 app.post('/api/register-request', async (req, res) => {
   const ip = getClientIp(req);
-  if (rateLimitCheck(pendingRegAttempts, ip, 3, 60 * 60 * 1000)) {
-    return res.status(429).json({ error: 'Too many requests. Try again later.' });
-  }
 
   const { name, username, password, email } = req.body;
   const marketingEmails = parseMarketingOptIn(req.body);
@@ -879,6 +876,13 @@ app.post('/api/register-request', async (req, res) => {
   const existingForName = await getUsers();
   if (existingForName.some(u => u.name.toLowerCase() === trimmedReqName.toLowerCase())) {
     return res.status(409).json({ error: 'That display name is already in use. Please choose a different name.' });
+  }
+
+  // Count only submissions that passed validation (mistyped fields must not consume the hourly budget).
+  if (rateLimitCheck(pendingRegAttempts, ip, 6, 60 * 60 * 1000)) {
+    return res.status(429).json({
+      error: 'Too many join requests from this network in the last hour. Try again later or contact an administrator.',
+    });
   }
 
   const hash = await bcrypt.hash(password, 10);
