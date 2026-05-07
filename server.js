@@ -333,6 +333,13 @@ function publicUser(u) {
   return { id: u.id, name: u.name, username: u.username, status: u.status, statusMsg: u.statusMsg || '', role: u.role, createdAt: u.createdAt, avatarUrl: u.avatarUrl || null };
 }
 
+/** Admin Users tab: include moderation flags not exposed in publicUser. */
+function adminListedUser(u) {
+  const pub = publicUser(u);
+  if (!pub) return null;
+  return { ...pub, banned: !!(u && u.banned), suspended: !!(u && u.suspended) };
+}
+
 // ── REST: Auth ──
 
 // Names/usernames blocked from registering or logging in (substring match, case-insensitive)
@@ -469,6 +476,10 @@ app.post('/api/login', async (req, res) => {
     return res.status(403).json({ error: 'This account has been banned.' });
   }
 
+  if (user.suspended) {
+    return res.status(403).json({ error: 'This account has been suspended. Contact your workspace administrator.' });
+  }
+
   // Log the IP for future reference
   if (ip) await updateUser(user.id, { lastIp: ip });
   clearAttempts(ip); // successful login — reset brute-force counter
@@ -489,6 +500,12 @@ app.get('/api/data', async (req, res) => {
   const token = req.headers.authorization?.replace('Bearer ', '');
   const user = await getUserByToken(token);
   if (!user) return res.status(401).json({ error: 'Unauthorized' });
+  if (user.banned || isBlockedName(user.username, user.name)) {
+    return res.status(403).json({ error: 'This account has been banned.' });
+  }
+  if (user.suspended) {
+    return res.status(403).json({ error: 'This account has been suspended.' });
+  }
 
   const [usersRaw, rawChannels, allMessages] = await Promise.all([getUsers(), getChannels(), getAllMessages()]);
   const users = withRobotDmUserList(usersRaw);
@@ -974,6 +991,8 @@ app.post('/api/admin/requests/:id/approve', requireAdmin, async (req, res) => {
       role: 'Member',
       createdAt: Date.now(),
       createdIp: jr.submittedIp || null,
+      banned: false,
+      suspended: false,
     };
     await insertUser(user);
     const token = generateToken();
@@ -1018,7 +1037,7 @@ app.post('/api/admin/requests/:id/deny', requireAdmin, async (req, res) => {
 
 app.get('/api/admin/users', requireAdmin, async (req, res) => {
   const users = await getUsers();
-  res.json({ users: users.map(publicUser) });
+  res.json({ users: users.map(adminListedUser).filter(Boolean) });
 });
 
 /** Subscribers who opted in to product / marketing email (deduped by normalized email). */
@@ -1048,7 +1067,9 @@ app.get('/api/admin/marketing-emails', requireAdmin, async (req, res) => {
 });
 
 app.post('/api/admin/users/:id/ban', requireAdmin, async (req, res) => {
-  await updateUser(req.params.id, { banned: true });
+  const { id } = req.params;
+  await updateUser(id, { banned: true });
+  kickSocketsForUser(id, 'This account has been banned.');
   res.json({ ok: true });
 });
 
@@ -1057,13 +1078,29 @@ app.post('/api/admin/users/:id/unban', requireAdmin, async (req, res) => {
   res.json({ ok: true });
 });
 
-/** Unban every user, clear derived IP blocks, clear name blocklist (runtime), and reset login lockouts. */
+/** Reversible moderation: block sign-in and bootstrap; does not add IPs to the brute-force block list. */
+app.post('/api/admin/users/:id/suspend', requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  await updateUser(id, { suspended: true });
+  kickSocketsForUser(id, 'This account has been suspended.');
+  res.json({ ok: true });
+});
+
+app.post('/api/admin/users/:id/unsuspend', requireAdmin, async (req, res) => {
+  await updateUser(req.params.id, { suspended: false });
+  res.json({ ok: true });
+});
+
+/** Unban and unsuspend every user, clear derived IP blocks, clear name blocklist (runtime), and reset login lockouts. */
 app.post('/api/admin/unban-all', requireAdmin, async (req, res) => {
   try {
     if (db) {
-      await usersCol.updateMany({}, { $set: { banned: false } });
+      await usersCol.updateMany({}, { $set: { banned: false, suspended: false } });
     } else {
-      for (const u of memData.users) u.banned = false;
+      for (const u of memData.users) {
+        u.banned = false;
+        u.suspended = false;
+      }
     }
     BLOCKED_IPS.clear();
     BLOCKED_NAMES.length = 0;
@@ -1576,6 +1613,17 @@ async function ensureChannelParticipantAccess(channelId, userId) {
 /** Live socket count per userId (authenticated connections). DB status can go stale; this is source of truth for "online". */
 const activeSocketByUser = new Map();
 
+/** Disconnect authenticated sockets after ban/suspend so the client cannot keep chatting. */
+function kickSocketsForUser(userId, authErrorMessage) {
+  if (!userId) return;
+  const msg = authErrorMessage || 'Session ended.';
+  for (const [, sock] of io.sockets.sockets) {
+    if (sock.sfUserId !== userId) continue;
+    try { sock.emit('auth_error', msg); } catch (_) { /* noop */ }
+    try { sock.disconnect(true); } catch (_) { /* noop */ }
+  }
+}
+
 async function assertWebRtcRelay(channelId, fromUserId, toUserId) {
   if (!fromUserId || !toUserId || fromUserId === toUserId) return false;
   const ch = await findChannel({ id: channelId });
@@ -1603,6 +1651,10 @@ io.on('connection', (socket) => {
     if (!currentUser) { socket.emit('auth_error', 'Invalid token'); return; }
     if (currentUser.banned || isBlockedName(currentUser.username, currentUser.name)) {
       socket.emit('auth_error', 'This account has been banned.');
+      return;
+    }
+    if (currentUser.suspended) {
+      socket.emit('auth_error', 'This account has been suspended.');
       return;
     }
 
