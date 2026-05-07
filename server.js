@@ -517,6 +517,139 @@ app.get('/api/data', async (req, res) => {
   });
 });
 
+function formatAiContextLine(msg) {
+  if (!msg) return null;
+  const name = msg.userName || 'Someone';
+  const t = String(msg.text || '').trim();
+  const bit = t || (msg.file ? '[attachment]' : '');
+  if (!bit) return null;
+  return `${name}: ${bit}`;
+}
+
+/** Draft a chat message via OpenAI. Requires OPENAI_API_KEY. Body: instruction?, replyToLatest?, channelId, threadParentMsgId? */
+app.post('/api/ai/draft-message', async (req, res) => {
+  const apiKey = (process.env.OPENAI_API_KEY || '').trim();
+  if (!apiKey) {
+    return res.status(503).json({
+      error: 'AI message help is not enabled on this server (set OPENAI_API_KEY).',
+    });
+  }
+
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  const user = await getUserByToken(token);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+  const body = req.body || {};
+  const instruction = typeof body.instruction === 'string' ? body.instruction : '';
+  const replyToLatest = !!body.replyToLatest;
+  const channelId = body.channelId;
+  const threadParentMsgId = body.threadParentMsgId ? String(body.threadParentMsgId) : null;
+
+  if (!channelId) return res.status(400).json({ error: 'channelId is required.' });
+
+  try {
+    if (!(await ensureChannelParticipantAccess(channelId, user.id))) {
+      return res.status(403).json({ error: 'You do not have access to this channel.' });
+    }
+  } catch (e) {
+    console.error('draft-message access:', e.message);
+    return res.status(500).json({ error: 'Failed to verify channel access.' });
+  }
+
+  const ch = await findChannel({ id: channelId }).catch(() => null);
+  const isDm = !!(ch && (ch.isDM || String(channelId).startsWith('dm_')));
+  const channelLabel = ch ? (isDm ? 'a direct message' : `#${ch.name}`) : 'the channel';
+
+  const msgs = await getMessages(channelId);
+  let contextLine = null;
+  let threadRootLine = null;
+
+  if (threadParentMsgId) {
+    const parent = msgs.find((m) => m.id === threadParentMsgId);
+    if (!parent) return res.status(400).json({ error: 'That thread was not found in this channel.' });
+
+    threadRootLine = formatAiContextLine(parent);
+
+    if (replyToLatest) {
+      const candidates = [parent, ...(parent.threadReplies || [])];
+      const withContent = candidates.map(formatAiContextLine).filter(Boolean);
+      if (!withContent.length) {
+        return res.status(400).json({ error: 'There is no text to reply to in this thread yet.' });
+      }
+      const sorted = [...candidates].filter((m) => formatAiContextLine(m)).sort((a, b) => (a.ts || 0) - (b.ts || 0));
+      const latest = sorted[sorted.length - 1];
+      contextLine = formatAiContextLine(latest);
+    }
+  } else if (replyToLatest) {
+    const sorted = [...msgs].filter((m) => formatAiContextLine(m)).sort((a, b) => (a.ts || 0) - (b.ts || 0));
+    const latest = sorted[sorted.length - 1];
+    contextLine = formatAiContextLine(latest);
+    if (!contextLine) {
+      return res.status(400).json({ error: 'There are no messages to reply to in this channel yet.' });
+    }
+  }
+
+  const model = (process.env.OPENAI_MODEL || 'gpt-4o-mini').trim();
+
+  const sysParts = [
+    'You help users write short, natural chat messages for a team messaging app.',
+    'Output only the message text the user should send: no quotes around it, no "Here is" preamble, markdown only if it fits chat.',
+    'Keep it concise unless the user asks for detail.',
+    `The user's display name is ${user.name}. They are writing in ${channelLabel}.`,
+  ];
+  if (threadParentMsgId && threadRootLine) {
+    sysParts.push(`This is a reply in a thread that started with: ${threadRootLine}`);
+  }
+  if (replyToLatest && contextLine) {
+    sysParts.push(`They want to respond to the newest message in context: ${contextLine}`);
+  }
+
+  const ins = instruction.trim();
+  const userMsg =
+    ins ||
+    (replyToLatest
+      ? 'Write an appropriate reply to that message.'
+      : threadParentMsgId
+        ? 'Write an appropriate reply in this thread.'
+        : 'Draft a sensible message for this channel.');
+
+  try {
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), 55000);
+    const r = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      signal: ac.signal,
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: sysParts.join(' ') },
+          { role: 'user', content: userMsg },
+        ],
+        max_tokens: 600,
+        temperature: 0.65,
+      }),
+    });
+    clearTimeout(t);
+    if (!r.ok) {
+      const errText = await r.text();
+      console.error('OpenAI draft-message:', r.status, errText.slice(0, 500));
+      return res.status(502).json({ error: 'AI service returned an error. Try again later.' });
+    }
+    const data = await r.json();
+    let draft = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '';
+    draft = String(draft).trim().replace(/^["']|["']$/g, '');
+    if (!draft) return res.status(502).json({ error: 'AI returned an empty draft.' });
+    res.json({ draft });
+  } catch (e) {
+    console.error('draft-message:', e.message);
+    return res.status(502).json({ error: 'Could not reach the AI service. Try again later.' });
+  }
+});
+
 /** Extra STUN for ICE gathering (TURN still needed for hard NATs). */
 const DEFAULT_STUN_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },

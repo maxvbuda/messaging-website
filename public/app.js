@@ -160,6 +160,8 @@
   let messages = {};
   let activeChannelId = 'c_general';
   let activeThreadMsgId = null;
+  /** True when AI draft modal was opened from the thread composer. */
+  let aiDraftFromThread = false;
   let socket = null;
 
   const DEFAULT_WEBRTC_STUN = [
@@ -938,6 +940,52 @@
     const btn = $('#dmHandbookBtn');
     if (!btn || !currentUser) return;
     btn.style.display = userIsDmInActiveDdChannel() ? 'inline-block' : 'none';
+  }
+
+  function syncAiComposerButtons() {
+    const main = $('#aiDraftBtn');
+    const th = $('#threadAiDraftBtn');
+    const ch = channels.find((c) => c.id === activeChannelId);
+    const ok = !!(currentUser && inServerMode() && authToken && ch && !ch.ddGame && socket && socket.connected);
+    if (main) main.style.display = ok ? 'flex' : 'none';
+    if (th) {
+      const threadOk = ok && threadPanel.classList.contains('open') && activeThreadMsgId;
+      th.style.display = threadOk ? 'flex' : 'none';
+    }
+  }
+
+  function resetAiDraftModal() {
+    const ins = $('#aiDraftInstruction');
+    const pv = $('#aiDraftPreview');
+    const err = $('#aiDraftErr');
+    const chk = $('#aiDraftReplyLatest');
+    const sendB = $('#aiDraftSendBtn');
+    const genB = $('#aiDraftGenerateBtn');
+    if (ins) ins.value = '';
+    if (pv) pv.value = '';
+    if (chk) chk.checked = false;
+    if (err) {
+      err.textContent = '';
+      err.classList.remove('visible');
+    }
+    if (sendB) sendB.disabled = true;
+    if (genB) {
+      genB.disabled = false;
+      genB.textContent = 'Generate';
+    }
+  }
+
+  function openAiDraftModal(fromThread) {
+    if (fromThread && !activeThreadMsgId) return;
+    aiDraftFromThread = !!fromThread;
+    resetAiDraftModal();
+    const hint = $('#aiDraftHint');
+    if (hint) {
+      hint.textContent = fromThread
+        ? 'Reply in this thread. Turn on “newest message” to anchor to the latest message in the thread (including the starter).'
+        : 'Compose for this channel. Turn on “newest message” to anchor your draft to the latest channel message.';
+    }
+    openModal('aiDraftModal');
   }
 
   function getDmHandbookStory(storyId) {
@@ -1913,7 +1961,9 @@
       ensureActiveChannelAccessible();
       socket.emit('join_channel', activeChannelId);
       renderMessages();
+      syncAiComposerButtons();
     });
+    socket.on('disconnect', () => { syncAiComposerButtons(); });
     socket.on('auth_error', () => { logout(); showAuthError('Session expired.'); });
     socket.on('error_msg', (msg) => { alert(typeof msg === 'string' ? msg : String(msg || 'Something went wrong.')); });
 
@@ -2120,6 +2170,7 @@
     updateChannelAccessButton();
     updateEndDdSessionButton();
     updateDmHandbookButton();
+    syncAiComposerButtons();
 
     let html = '';
     if (ch) {
@@ -2198,6 +2249,7 @@
     });
     threadMessagesEl.innerHTML = html;
     threadPanel.classList.add('open'); memberPanel.classList.remove('open');
+    syncAiComposerButtons();
     requestAnimationFrame(() => { threadMessagesEl.scrollTop = threadMessagesEl.scrollHeight; });
   }
 
@@ -2991,13 +3043,92 @@ function applyComposerNormalize(el) {
     applyComposerNormalize(threadInput);
     autoResize(threadInput);
   });
-  $('#threadClose').addEventListener('click', () => { threadPanel.classList.remove('open'); activeThreadMsgId = null; });
+  $('#threadClose').addEventListener('click', () => { threadPanel.classList.remove('open'); activeThreadMsgId = null; syncAiComposerButtons(); });
 
   messagesListEl.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-action]');
     if (btn) { const a = btn.dataset.action, m = btn.dataset.msg; if (a === 'thread') renderThread(m); if (a === 'react') openEmojiPicker(btn, 'reaction', m); if (a === 'delete' && confirm('Delete this message?')) deleteMessage(m); return; }
     const tl = e.target.closest('.thread-link'); if (tl) { renderThread(tl.dataset.msg); return; }
     const rx = e.target.closest('.reaction'); if (rx) toggleReaction(rx.dataset.msg, rx.dataset.emoji);
+  });
+
+  const aiDraftPreviewEl = $('#aiDraftPreview');
+  if (aiDraftPreviewEl) {
+    aiDraftPreviewEl.addEventListener('input', () => {
+      const sendB = $('#aiDraftSendBtn');
+      if (sendB) sendB.disabled = !String(aiDraftPreviewEl.value || '').trim();
+    });
+  }
+
+  $('#aiDraftBtn').addEventListener('click', () => openAiDraftModal(false));
+  $('#threadAiDraftBtn').addEventListener('click', () => openAiDraftModal(true));
+  $('#aiDraftGenerateBtn').addEventListener('click', async () => {
+    const errEl = $('#aiDraftErr');
+    const genBtn = $('#aiDraftGenerateBtn');
+    const chk = $('#aiDraftReplyLatest');
+    const instructionEl = $('#aiDraftInstruction');
+    if (!authToken || !inServerMode()) {
+      if (errEl) {
+        errEl.textContent = 'Sign in on the server workspace to use AI drafts.';
+        errEl.classList.add('visible');
+      }
+      return;
+    }
+    if (errEl) {
+      errEl.textContent = '';
+      errEl.classList.remove('visible');
+    }
+    if (genBtn) {
+      genBtn.disabled = true;
+      genBtn.textContent = '…';
+    }
+    try {
+      const res = await fetch(backUrl() + '/api/ai/draft-message', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer ' + authToken,
+        },
+        body: JSON.stringify({
+          channelId: activeChannelId,
+          replyToLatest: !!(chk && chk.checked),
+          instruction: instructionEl ? instructionEl.value : '',
+          threadParentMsgId: aiDraftFromThread ? activeThreadMsgId : null,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg = typeof data.error === 'string' ? data.error : 'Could not generate a draft.';
+        if (errEl) {
+          errEl.textContent = msg;
+          errEl.classList.add('visible');
+        }
+        return;
+      }
+      if (aiDraftPreviewEl && data.draft) {
+        aiDraftPreviewEl.value = data.draft;
+        const sendB = $('#aiDraftSendBtn');
+        if (sendB) sendB.disabled = !String(data.draft).trim();
+      }
+    } catch {
+      if (errEl) {
+        errEl.textContent = 'Network error. Try again.';
+        errEl.classList.add('visible');
+      }
+    } finally {
+      if (genBtn) {
+        genBtn.disabled = false;
+        genBtn.textContent = 'Generate';
+      }
+    }
+  });
+  $('#aiDraftSendBtn').addEventListener('click', async () => {
+    const pv = $('#aiDraftPreview');
+    const t = pv ? String(pv.value || '').trim() : '';
+    if (!t) return;
+    closeModal('aiDraftModal');
+    resetAiDraftModal();
+    await sendMessage(t, aiDraftFromThread);
   });
 
   $('#emojiBtn').addEventListener('click', (e) => { if (emojiPicker.classList.contains('open')) closeEmojiPicker(); else openEmojiPicker(e.currentTarget, 'input'); });

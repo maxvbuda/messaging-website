@@ -190,6 +190,9 @@
             <button class="btn-icon" id="emojiBtn" title="Emoji">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
             </button>
+            <button class="btn-icon" id="aiDraftBtn" type="button" title="Draft with AI (OpenAI)" style="display:none" aria-label="Draft message with AI">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.09 4.26L17 9l-3.91 2.74L13.18 16 12 12.62 10.82 16 9 11.74 5 9l3.91-1.74L12 3z"/><path d="M19 21l-.87-4.35"/><path d="M5 21l.87-4.35"/></svg>
+            </button>
             <button class="btn-send" id="sendBtn" title="Send">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
             </button>
@@ -211,6 +214,9 @@
       <div class="thread-messages" id="threadMessages"></div>
       <div class="thread-input-area">
         <textarea id="threadInput" placeholder="Reply..." rows="1"></textarea>
+        <button class="btn-icon" id="threadAiDraftBtn" type="button" title="Draft reply with AI" style="display:none" aria-label="Draft thread reply with AI">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.09 4.26L17 9l-3.91 2.74L13.18 16 12 12.62 10.82 16 9 11.74 5 9l3.91-1.74L12 3z"/><path d="M19 21l-.87-4.35"/><path d="M5 21l.87-4.35"/></svg>
+        </button>
         <button class="btn-send" id="threadSendBtn">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
         </button>
@@ -285,6 +291,35 @@
         <div class="modal-footer">
           <button class="btn-secondary" data-modal="addChannelModal">Cancel</button>
           <button class="btn-primary" id="createChannelBtn">Create</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- AI message draft (OpenAI on server — requires OPENAI_API_KEY) -->
+    <div class="modal-overlay" id="aiDraftModal">
+      <div class="modal">
+        <div class="modal-header">
+          <h3>Draft message with AI</h3>
+          <button type="button" class="btn-icon modal-close" data-modal="aiDraftModal" aria-label="Close">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="modal-body ai-draft-modal-body">
+          <p class="modal-hint" id="aiDraftHint" style="margin:0 0 12px;text-align:left">Generate a suggestion, edit it below, then send when ready.</p>
+          <label class="auth-check" style="display:flex;align-items:flex-start;gap:8px;margin-bottom:12px;cursor:pointer">
+            <input type="checkbox" id="aiDraftReplyLatest" autocomplete="off" style="margin-top:3px">
+            <span>Use the newest message as context for a reply (channel or thread)</span>
+          </label>
+          <label class="form-label">What should it say?</label>
+          <textarea id="aiDraftInstruction" class="form-input ai-draft-textarea" rows="3" placeholder="Optional — e.g. friendly yes, summarize in two sentences, disagree politely…"></textarea>
+          <div class="auth-error" id="aiDraftErr" style="display:none;margin-top:10px"></div>
+          <label class="form-label" style="margin-top:14px">Preview — edit before sending</label>
+          <textarea id="aiDraftPreview" class="form-input ai-draft-textarea" rows="4" placeholder="Click Generate…"></textarea>
+        </div>
+        <div class="modal-footer" style="flex-wrap:wrap;gap:8px">
+          <button type="button" class="btn-secondary" data-modal="aiDraftModal">Cancel</button>
+          <button type="button" class="btn-primary" id="aiDraftGenerateBtn">Generate</button>
+          <button type="button" class="btn-primary" id="aiDraftSendBtn" disabled>Send</button>
         </div>
       </div>
     </div>
