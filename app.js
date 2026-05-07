@@ -959,7 +959,6 @@
     const pv = $('#aiDraftPreview');
     const err = $('#aiDraftErr');
     const chk = $('#aiDraftReplyLatest');
-    const sendB = $('#aiDraftSendBtn');
     const genB = $('#aiDraftGenerateBtn');
     if (ins) ins.value = '';
     if (pv) pv.value = '';
@@ -968,11 +967,19 @@
       err.textContent = '';
       err.classList.remove('visible');
     }
-    if (sendB) sendB.disabled = true;
+    syncAiDraftSendBtn();
     if (genB) {
       genB.disabled = false;
       genB.textContent = 'Generate';
     }
+  }
+
+  /** Keep Send aligned with preview (handles programmatic value changes too). */
+  function syncAiDraftSendBtn() {
+    const pv = $('#aiDraftPreview');
+    const sendB = $('#aiDraftSendBtn');
+    if (!sendB || !pv) return;
+    sendB.disabled = !String(pv.value || '').trim();
   }
 
   function openAiDraftModal(fromThread) {
@@ -2585,7 +2592,10 @@ function applyComposerNormalize(el) {
 
   async function sendMessage(text, isThread = false, threadParentIdExplicit) {
     if (!text.trim() && !pendingFile) return;
-    if (!currentUser) return;
+    if (!currentUser) {
+      if (text.trim() || pendingFile) alert('You need to sign in to send messages.');
+      return;
+    }
 
     const trimmedLead = text.trim();
     if (!isThread && DD_PLAY_CMD_RE.test(trimmedLead) && !pendingFile) {
@@ -3064,12 +3074,7 @@ function applyComposerNormalize(el) {
   });
 
   const aiDraftPreviewEl = $('#aiDraftPreview');
-  if (aiDraftPreviewEl) {
-    aiDraftPreviewEl.addEventListener('input', () => {
-      const sendB = $('#aiDraftSendBtn');
-      if (sendB) sendB.disabled = !String(aiDraftPreviewEl.value || '').trim();
-    });
-  }
+  if (aiDraftPreviewEl) aiDraftPreviewEl.addEventListener('input', syncAiDraftSendBtn);
 
   $('#aiDraftBtn').addEventListener('click', () => openAiDraftModal(false));
   $('#threadAiDraftBtn').addEventListener('click', () => openAiDraftModal(true));
@@ -3116,11 +3121,22 @@ function applyComposerNormalize(el) {
         }
         return;
       }
-      if (aiDraftPreviewEl && data.draft) {
-        aiDraftPreviewEl.value = data.draft;
-        const sendB = $('#aiDraftSendBtn');
-        if (sendB) sendB.disabled = !String(data.draft).trim();
+      const draftField = data && Object.prototype.hasOwnProperty.call(data, 'draft');
+      const raw = draftField && data.draft !== undefined && data.draft !== null
+        ? String(data.draft)
+        : '';
+      if (aiDraftPreviewEl) {
+        aiDraftPreviewEl.value = raw;
+        try {
+          aiDraftPreviewEl.dispatchEvent(new Event('input', { bubbles: true }));
+        } catch (_) { syncAiDraftSendBtn(); }
+        if (!String(raw || '').trim() && errEl) {
+          errEl.textContent =
+            'The model returned empty text — type your message in the preview or tap Generate again.';
+          errEl.classList.add('visible');
+        }
       }
+      syncAiDraftSendBtn();
     } catch {
       if (errEl) {
         errEl.textContent = 'Network error. Try again.';
@@ -3133,27 +3149,43 @@ function applyComposerNormalize(el) {
       }
     }
   });
-  $('#aiDraftSendBtn').addEventListener('click', async (ev) => {
-    ev.preventDefault();
-    ev.stopPropagation();
-    const pv = $('#aiDraftPreview');
-    const t = pv ? String(pv.value || '').trim() : '';
-    if (!t) return;
-    const sendAsThread = aiDraftFromThread;
-    /** Snapshot so closing the modal or thread UI cannot strip the parent id before emit. */
-    const threadParentSnap = sendAsThread ? activeThreadMsgId : undefined;
-    if (sendAsThread && !threadParentSnap) {
-      const errEl = $('#aiDraftErr');
-      if (errEl) {
-        errEl.textContent = 'Reopen this thread first, then send the draft—or use Cancel and draft from the main composer.';
-        errEl.classList.add('visible');
+  const aiDraftSendBtnEl = $('#aiDraftSendBtn');
+  if (aiDraftSendBtnEl) {
+    aiDraftSendBtnEl.addEventListener('click', async (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (aiDraftSendBtnEl.disabled) return;
+      const pv = $('#aiDraftPreview');
+      const t = pv ? String(pv.value || '').trim() : '';
+      if (!t) {
+        const errEl = $('#aiDraftErr');
+        if (errEl) {
+          errEl.textContent = 'Add message text in the preview first (generate or type something).';
+          errEl.classList.add('visible');
+        }
+        return;
       }
-      return;
-    }
-    closeModal('aiDraftModal');
-    resetAiDraftModal();
-    await sendMessage(t, sendAsThread, threadParentSnap);
-  });
+      const sendAsThread = aiDraftFromThread;
+      /** Snapshot so closing the modal or thread UI cannot strip the parent id before emit. */
+      const threadParentSnap = sendAsThread ? activeThreadMsgId : undefined;
+      if (sendAsThread && !threadParentSnap) {
+        const errEl = $('#aiDraftErr');
+        if (errEl) {
+          errEl.textContent = 'Reopen this thread first, then send the draft—or use Cancel and draft from the main composer.';
+          errEl.classList.add('visible');
+        }
+        return;
+      }
+      closeModal('aiDraftModal');
+      resetAiDraftModal();
+      try {
+        await sendMessage(t, sendAsThread, threadParentSnap);
+      } catch (e) {
+        console.error('sendMessage:', e);
+        alert('Something went wrong while sending. Check the console or try again.');
+      }
+    });
+  }
 
   $('#emojiBtn').addEventListener('click', (e) => { if (emojiPicker.classList.contains('open')) closeEmojiPicker(); else openEmojiPicker(e.currentTarget, 'input'); });
   emojiGrid.addEventListener('click', (e) => { if (e.target.tagName === 'SPAN') { const em = e.target.textContent; if (emojiInsertMode === 'reaction' && emojiTargetMsgId) toggleReaction(emojiTargetMsgId, em); else { messageInput.value += em; applyComposerNormalize(messageInput); messageInput.focus(); } closeEmojiPicker(); } });
