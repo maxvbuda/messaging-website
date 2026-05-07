@@ -2583,7 +2583,7 @@ function applyComposerNormalize(el) {
   }
 }
 
-  async function sendMessage(text, isThread = false) {
+  async function sendMessage(text, isThread = false, threadParentIdExplicit) {
     if (!text.trim() && !pendingFile) return;
     if (!currentUser) return;
 
@@ -2592,6 +2592,9 @@ function applyComposerNormalize(el) {
       openDdSessionModal();
       return;
     }
+
+    const threadParentMsgId =
+      threadParentIdExplicit !== undefined ? threadParentIdExplicit : activeThreadMsgId;
 
     let file = null;
     if (pendingFile && inServerMode()) {
@@ -2604,8 +2607,16 @@ function applyComposerNormalize(el) {
     }
 
     if (inServerMode() && socket) {
-      if (isThread && activeThreadMsgId) {
-        socket.emit('thread_reply', { channelId: activeChannelId, parentMsgId: activeThreadMsgId, text: text.trim() });
+      if (!socket.connected) {
+        alert('Not connected to the server. Wait for the connection or refresh the page, then try again.');
+        return;
+      }
+      if (!activeChannelId) {
+        alert('No channel is selected.');
+        return;
+      }
+      if (isThread && threadParentMsgId) {
+        socket.emit('thread_reply', { channelId: activeChannelId, parentMsgId: threadParentMsgId, text: text.trim() });
       } else {
         socket.emit('send_message', { channelId: activeChannelId, text: text.trim(), file });
       }
@@ -2620,17 +2631,17 @@ function applyComposerNormalize(el) {
       const filteredText =
         rollTxt != null ? rollTxt : filterExplicit(body);
       const msg = { id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6), userId: currentUser.id, userName: currentUser.name, text: filteredText, ts: Date.now(), reactions: {}, threadReplies: [] };
-      if (isThread && activeThreadMsgId) {
+      if (isThread && threadParentMsgId) {
         const allMsgs = lsGetAllMessages();
         const chMsgs = allMsgs[activeChannelId] || [];
-        const parent = chMsgs.find(m => m.id === activeThreadMsgId);
+        const parent = chMsgs.find(m => m.id === threadParentMsgId);
         if (parent) {
           parent.threadReplies.push({ id: msg.id, userId: msg.userId, text: msg.text, ts: msg.ts });
           allMsgs[activeChannelId] = chMsgs;
           lsSaveAllMessages(allMsgs);
           messages = allMsgs;
-          broadcast('thread_reply', { channelId: activeChannelId, parentMsgId: activeThreadMsgId });
-          renderThread(activeThreadMsgId); renderMessages();
+          broadcast('thread_reply', { channelId: activeChannelId, parentMsgId: threadParentMsgId });
+          renderThread(threadParentMsgId); renderMessages();
           scheduleLocalRobotDmReply(activeChannelId, trimmed);
         }
       } else {
@@ -3122,13 +3133,26 @@ function applyComposerNormalize(el) {
       }
     }
   });
-  $('#aiDraftSendBtn').addEventListener('click', async () => {
+  $('#aiDraftSendBtn').addEventListener('click', async (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
     const pv = $('#aiDraftPreview');
     const t = pv ? String(pv.value || '').trim() : '';
     if (!t) return;
+    const sendAsThread = aiDraftFromThread;
+    /** Snapshot so closing the modal or thread UI cannot strip the parent id before emit. */
+    const threadParentSnap = sendAsThread ? activeThreadMsgId : undefined;
+    if (sendAsThread && !threadParentSnap) {
+      const errEl = $('#aiDraftErr');
+      if (errEl) {
+        errEl.textContent = 'Reopen this thread first, then send the draft—or use Cancel and draft from the main composer.';
+        errEl.classList.add('visible');
+      }
+      return;
+    }
     closeModal('aiDraftModal');
     resetAiDraftModal();
-    await sendMessage(t, aiDraftFromThread);
+    await sendMessage(t, sendAsThread, threadParentSnap);
   });
 
   $('#emojiBtn').addEventListener('click', (e) => { if (emojiPicker.classList.contains('open')) closeEmojiPicker(); else openEmojiPicker(e.currentTarget, 'input'); });
