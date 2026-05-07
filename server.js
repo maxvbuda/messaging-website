@@ -441,64 +441,10 @@ async function findPendingJoinRequestByEmail(emailNorm) {
   return (memData.joinRequests || []).find((r) => r.status === 'pending' && r.passwordHash && r.email === emailNorm);
 }
 
-app.post('/api/register', async (req, res) => {
-  const { username, password, name, email } = req.body;
-  const marketingEmails = parseMarketingOptIn(req.body);
-  const ip = getClientIp(req);
-
-  if (!username || !password || !name) return res.status(400).json({ error: 'All fields are required.' });
-  const emailNorm = normalizeEmailInput(email);
-  if (!emailNorm || !isValidEmailFormat(emailNorm)) return res.status(400).json({ error: 'A valid email address is required.' });
-  if (username.length < 2) return res.status(400).json({ error: 'Username must be at least 2 characters.' });
-  if (password.length < 3) return res.status(400).json({ error: 'Password must be at least 3 characters.' });
-
-  const existingUsers = await getUsers();
-  if (existingUsers.length > 0) {
-    if (await ipExceedsAccountLimit(ip)) {
-      console.warn(`[register] IP ${ip} blocked: already has ${MAX_ACCOUNTS_PER_IP}+ accounts`);
-      return res.status(429).json({ error: 'Too many accounts created from this network. Contact an admin.' });
-    }
-  }
-
-  const uname = username.trim().toLowerCase();
-
-  if (isBlockedName(uname, name)) {
-    if (ip) BLOCKED_IPS.add(ip);
-    return res.status(403).json({ error: 'This account cannot be created.' });
-  }
-  if (await findUser({ username: uname })) return res.status(409).json({ error: 'That username is already taken.' });
-  if (await findExistingUserByNormalizedEmail(emailNorm)) return res.status(409).json({ error: 'That email is already registered.' });
-
-  // Prevent display-name impersonation
-  const trimmedName = name.trim();
-  const allUsers = await getUsers();
-  if (allUsers.some(u => u.name.toLowerCase() === trimmedName.toLowerCase())) {
-    return res.status(409).json({ error: 'That display name is already in use. Please choose a different name.' });
-  }
-
-  const hash = await bcrypt.hash(password, 10);
-  const user = {
-    id: 'u_' + uuidv4().slice(0, 8),
-    username: uname,
-    passwordHash: hash,
-    name: trimmedName,
-    email: emailNorm,
-    marketingEmails,
-    status: 'online',
-    role: 'Member',
-    createdAt: Date.now(),
-    createdIp: ip || null,
-  };
-
-  await insertUser(user);
-  recordIpAccountCreation(ip);
-
-  const token = generateToken();
-  tokens.set(token, user.id);
-  if (db) await sessionsCol.insertOne({ token, userId: user.id, createdAt: new Date() });
-
-  io.emit('user_joined', { user: publicUser(user) });
-  res.json({ token, user: publicUser(user) });
+app.post('/api/register', (_req, res) => {
+  res.status(403).json({
+    error: 'Self-service registration is disabled. Use Request access on the sign-in screen; an administrator must approve each new account.',
+  });
 });
 
 app.post('/api/login', async (req, res) => {
@@ -756,32 +702,6 @@ function rateLimitCheck(map, ip, max, windowMs) {
 }
 
 const pendingRegAttempts = new Map();
-
-// Map: ip -> number of accounts created from this IP
-const ipAccountCreations = new Map();
-const MAX_ACCOUNTS_PER_IP = 3;
-
-/** Returns true if the IP has already created MAX_ACCOUNTS_PER_IP or more accounts. */
-async function ipExceedsAccountLimit(ip) {
-  if (!ip) return false;
-  // Check in-memory counter first (counts creations in this server process)
-  const memCount = ipAccountCreations.get(ip) || 0;
-  if (memCount >= MAX_ACCOUNTS_PER_IP) return true;
-  // For accuracy across restarts, also count from the database
-  if (db) {
-    const dbCount = await usersCol.countDocuments({ createdIp: ip });
-    if (dbCount >= MAX_ACCOUNTS_PER_IP) return true;
-  } else {
-    const dbCount = memData.users.filter(u => u.createdIp === ip).length;
-    if (dbCount >= MAX_ACCOUNTS_PER_IP) return true;
-  }
-  return false;
-}
-
-function recordIpAccountCreation(ip) {
-  if (!ip) return;
-  ipAccountCreations.set(ip, (ipAccountCreations.get(ip) || 0) + 1);
-}
 
 app.post('/api/register-request', async (req, res) => {
   const ip = getClientIp(req);

@@ -630,8 +630,6 @@
         hideAuthError();
         authUsername.value = '';
         authPassword.value = '';
-        authName.value = '';
-        if (authEmail) authEmail.value = '';
         renderRailAvatar();
       }
     } else {
@@ -705,8 +703,6 @@
       hideAuthError();
       authUsername.value = '';
       authPassword.value = '';
-      authName.value = '';
-      if (authEmail) authEmail.value = '';
       renderRailAvatar();
     }
   }
@@ -773,8 +769,6 @@
     hideAuthError();
     authUsername.value = '';
     authPassword.value = '';
-    authName.value = '';
-    if (authEmail) authEmail.value = '';
     renderWorkspaceRail();
     renderSidebarWorkspaceTitle();
     renderRailAvatar();
@@ -789,20 +783,10 @@
   const authForm = $('#authForm');
   const authUsername = $('#authUsername');
   const authPassword = $('#authPassword');
-  const authName = $('#authName');
-  const authNameField = $('#authNameField');
-  const authEmail = $('#authEmail');
-  const authEmailField = $('#authEmailField');
-  const authMarketingField = $('#authMarketingField');
-  const authMarketingOptIn = $('#authMarketingOptIn');
   const authError = $('#authError');
   const authSubmitBtn = $('#authSubmitBtn');
   const authSubtitle = $('#authSubtitle');
   const authFooterNormal = $('#authFooterNormal');
-  const authLinksSignIn = $('#authLinksSignIn');
-  const authLinksRegister = $('#authLinksRegister');
-  const showRegisterLink = $('#showRegisterLink');
-  const switchToSignInLink = $('#switchToSignInLink');
   const appWrapper = $('#appWrapper');
   const channelListEl = $('#channelList');
   const dmListEl = $('#dmList');
@@ -829,8 +813,6 @@
   const sidebarEl = $('#sidebar');
   const sidebarOverlay = $('#sidebarOverlay');
 
-  let isRegisterMode = false;
-  let pendingFile = null; // file waiting to be sent with next message
 
   function uidInDmChannel(dmId, uid) {
     if (!dmId || typeof dmId !== 'string' || !dmId.startsWith('dm_') || !uid) return false;
@@ -1195,30 +1177,9 @@
   function hideAuthError() { authError.classList.remove('visible'); }
 
   function setAuthSignInOnly() {
-    isRegisterMode = false;
     hideAuthError();
-    authNameField.style.display = 'none';
-    if (authEmailField) authEmailField.style.display = 'none';
-    if (authMarketingField) authMarketingField.style.display = 'none';
-    authName.value = '';
-    if (authEmail) authEmail.value = '';
-    if (authMarketingOptIn) authMarketingOptIn.checked = false;
-    if (authLinksSignIn) authLinksSignIn.style.display = '';
-    if (authLinksRegister) authLinksRegister.style.display = 'none';
     authSubmitBtn.textContent = 'Sign In';
     authSubtitle.textContent = 'Enter your credentials to get started.';
-  }
-
-  function setAuthRegisterUI() {
-    isRegisterMode = true;
-    hideAuthError();
-    authNameField.style.display = '';
-    if (authEmailField) authEmailField.style.display = '';
-    if (authMarketingField) authMarketingField.style.display = '';
-    if (authLinksSignIn) authLinksSignIn.style.display = 'none';
-    if (authLinksRegister) authLinksRegister.style.display = '';
-    authSubmitBtn.textContent = 'Create Account';
-    authSubtitle.textContent = 'Pick a username, password, display name, and email to join.';
   }
 
   const urlParams = new URLSearchParams(window.location.search);
@@ -1237,27 +1198,16 @@
 
     const username = authUsername.value.trim().toLowerCase();
     const password = authPassword.value;
-    const displayName = authName.value.trim();
-    const email = authEmail ? authEmail.value.trim() : '';
 
     if (!username || !password) { showAuthError('Please fill in all fields.'); return; }
     if (username.length < 2) { showAuthError('Username must be at least 2 characters.'); return; }
-    if (isRegisterMode) {
-      if (!displayName) { showAuthError('Please enter a display name.'); return; }
-      const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-      if (!emailOk) { showAuthError('Please enter a valid email address.'); return; }
-      if (password.length < 3) { showAuthError('Password must be at least 3 characters.'); return; }
-    }
 
     if (inServerMode()) {
-      const endpoint = isRegisterMode ? '/api/register' : '/api/login';
-      const marketingEmails = !!(authMarketingOptIn && authMarketingOptIn.checked);
-      const body = isRegisterMode ? { username, password, name: displayName, email, marketingEmails } : { username, password };
       try {
-        const res = await fetch(backUrl() + endpoint, {
+        const res = await fetch(backUrl() + '/api/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
+          body: JSON.stringify({ username, password }),
         });
         const d = await res.json();
         if (!res.ok) { showAuthError(d.error || 'Something went wrong.'); return; }
@@ -1272,25 +1222,13 @@
       } catch { showAuthError('Could not reach the server.'); }
     } else {
       const allUsers = lsGetUsers();
-      if (isRegisterMode) {
-        if (allUsers.find(u => u.username === username)) { showAuthError('That username is already taken.'); return; }
-        const em = email.toLowerCase();
-        if (allUsers.some(u => u.email && String(u.email).toLowerCase() === em)) { showAuthError('That email is already in use.'); return; }
-        const nu = { id: 'u_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7), username, password, name: displayName, email: em, marketingEmails: !!(authMarketingOptIn && authMarketingOptIn.checked), status: 'online', role: 'Member', createdAt: Date.now() };
-        allUsers.push(nu); lsSaveUsers(allUsers);
-        lsSave('sf_session', nu.id);
-        currentUser = nu;
-        broadcast('user_joined', { userId: nu.id });
-        enterApp();
-      } else {
-        const user = allUsers.find(u => u.username === username);
-        if (!user || user.password !== password) { showAuthError('Invalid username or password.'); return; }
-        user.status = 'online'; lsSaveUsers(allUsers);
-        lsSave('sf_session', user.id);
-        currentUser = user;
-        broadcast('user_online', { userId: user.id });
-        enterApp();
-      }
+      const user = allUsers.find(u => u.username === username);
+      if (!user || user.password !== password) { showAuthError('Invalid username or password.'); return; }
+      user.status = 'online'; lsSaveUsers(allUsers);
+      lsSave('sf_session', user.id);
+      currentUser = user;
+      broadcast('user_online', { userId: user.id });
+      enterApp();
     }
   }
 
@@ -1316,7 +1254,7 @@
     $('#pendingRegScreen').style.display = 'none';
     $('#authScreen').style.display = '';
     setAuthSignInOnly();
-    authUsername.value = ''; authPassword.value = ''; authName.value = ''; if (authEmail) authEmail.value = ''; if (authMarketingOptIn) authMarketingOptIn.checked = false;
+    authUsername.value = ''; authPassword.value = '';
     hideAuthError();
   }
 
@@ -2793,8 +2731,6 @@ function applyComposerNormalize(el) {
   //  EVENT LISTENERS
   // ==============================
 
-  if (showRegisterLink) showRegisterLink.addEventListener('click', (e) => { e.preventDefault(); setAuthRegisterUI(); });
-  if (switchToSignInLink) switchToSignInLink.addEventListener('click', (e) => { e.preventDefault(); setAuthSignInOnly(); });
 
   authForm.addEventListener('submit', handleAuth);
   $('#logoutBtn').addEventListener('click', logout);

@@ -31,14 +31,6 @@
       <div class="auth-error" id="authError"></div>
 
       <form id="authForm" autocomplete="off">
-        <div class="auth-field" id="authNameField" style="display:none">
-          <label for="authName">Display Name</label>
-          <input type="text" id="authName" placeholder="e.g. Jane Doe" autocomplete="off">
-        </div>
-        <div class="auth-field" id="authEmailField" style="display:none">
-          <label for="authEmail">Email</label>
-          <input type="email" id="authEmail" placeholder="you@example.com" autocomplete="email">
-        </div>
         <div class="auth-field">
           <label for="authUsername">Username</label>
           <input type="text" id="authUsername" placeholder="e.g. jane" autocomplete="off">
@@ -47,15 +39,11 @@
           <label for="authPassword">Password</label>
           <input type="password" id="authPassword" placeholder="Your password" autocomplete="off">
         </div>
-        <div class="auth-field auth-check-row" id="authMarketingField" style="display:none">
-          <label class="auth-check"><input type="checkbox" id="authMarketingOptIn" autocomplete="off"> <span>Send me occasional product updates and tips by email</span></label>
-        </div>
         <button type="submit" class="auth-btn" id="authSubmitBtn">Sign In</button>
       </form>
 
       <p class="auth-toggle" id="authFooterNormal">
-        <span id="authLinksSignIn">New here? <a href="#" id="showRegisterLink">Create an account</a> or <a href="#" id="goToPendingRegLink">Request access</a> (admin approves first).</span>
-        <span id="authLinksRegister" style="display:none">Already have an account? <a href="#" id="switchToSignInLink">Sign in</a></span>
+        Need an account? <a href="#" id="goToPendingRegLink">Request access</a> — an administrator must approve you before you can sign in here.
       </p>
     </div>
   </div>
