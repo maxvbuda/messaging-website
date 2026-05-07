@@ -1182,6 +1182,9 @@
     </div>`;
   }
 
+  /** Staged attachment for the next main-composer send (server mode uploads on send). */
+  let pendingFile = null;
+
   function setPendingFile(file) {
     pendingFile = file;
     const preview = $('#filePreview');
