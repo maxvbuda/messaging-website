@@ -2096,6 +2096,16 @@
       }
       renderAll();
     });
+    socket.on('feature_lab_updated', ({ messages }) => {
+      const m = $('#featureLabModal');
+      if (messages && Array.isArray(messages) && m && m.classList.contains('open')) {
+        const box = $('#featureLabMessages');
+        if (box) {
+          box.innerHTML = featureLabMarkupFromMessages(messages);
+          box.scrollTop = box.scrollHeight;
+        }
+      }
+    });
     socket.on('user_typing', ({ channelId, userName }) => {
       if (channelId === activeChannelId) showTyping(userName);
     });
@@ -2107,6 +2117,7 @@
   // ==============================
 
   function renderAll() {
+    syncFeatureLabEntry();
     renderWorkspaceRail();
     renderSidebarWorkspaceTitle();
     renderChannelList();
@@ -3387,6 +3398,17 @@ function applyComposerNormalize(el) {
     });
   });
 
+  const featureLabBtnEl = $('#featureLabBtn');
+  if (featureLabBtnEl) featureLabBtnEl.addEventListener('click', () => { void openFeatureLabModal(); });
+  const featureLabSendEl = $('#featureLabSendBtn');
+  if (featureLabSendEl) featureLabSendEl.addEventListener('click', () => { void submitFeatureLabMessage(); });
+  const featureLabInp = $('#featureLabInput');
+  if (featureLabInp) {
+    featureLabInp.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void submitFeatureLabMessage(); }
+    });
+  }
+
   function refreshProfileModalAvatar() {
     if (!currentUser) return;
     const a = $('#profileAvatarLg');
@@ -4381,6 +4403,319 @@ ${hatSvg}
   $('#mobileMenuBtn').addEventListener('click', openMobileSidebar);
   sidebarOverlay.addEventListener('click', closeMobileSidebar);
 
+  function lsFeatureLabKey(uid) {
+    return 'sf_feature_lab_ms_' + uid;
+  }
+
+  function localFeatureLabSeed() {
+    return [{
+      from: 'system',
+      text: 'Welcome to Feature Lab — a quiet channel with admins. Propose improvements, brainstorm together, or ask for tooling here. Someone on the workspace team will read and reply when they can.',
+      ts: Date.now(),
+    }];
+  }
+
+  function syncFeatureLabEntry() {
+    const wrap = $('#featureLabWrap');
+    if (!wrap) return;
+    wrap.hidden = !(currentUser && currentUser.featureLabUnlocked);
+  }
+
+  function featureLabMarkupFromMessages(msgs) {
+    if (!Array.isArray(msgs) || !msgs.length) {
+      return '<div class="feature-lab-loading">No messages yet.</div>';
+    }
+    return msgs.map((msg) => {
+      const cls = msg.from === 'system' ? 'feature-lab-row system' : (msg.from === 'admin' ? 'feature-lab-row admin' : 'feature-lab-row user');
+      const isSelf = msg.from === 'user' && currentUser && msg.userId === currentUser.id;
+      let whoLabel = 'Member';
+      if (msg.from === 'system') whoLabel = 'Note';
+      else if (msg.from === 'admin') whoLabel = 'Admin';
+      else if (isSelf) whoLabel = 'You';
+      else whoLabel = msg.userName || 'Member';
+      return `<div class="${cls}"><span class="feature-lab-who">${escHtml(whoLabel)}</span><div class="feature-lab-bubble">${escHtml(msg.text || '')}</div></div>`;
+    }).join('');
+  }
+
+  async function refreshFeatureLabPanel() {
+    const box = $('#featureLabMessages');
+    if (!box || !currentUser || !currentUser.featureLabUnlocked) return;
+    box.innerHTML = '<div class="feature-lab-loading">Loading…</div>';
+    if (inServerMode()) {
+      try {
+        const res = await fetch(backUrl() + '/api/feature-lab', {
+          headers: { Authorization: 'Bearer ' + authToken },
+        });
+        const d = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          box.innerHTML = '<div class="feature-lab-err">' + escHtml(d.error || 'Could not load Feature Lab.') + '</div>';
+          return;
+        }
+        box.innerHTML = featureLabMarkupFromMessages(d.messages || []);
+      } catch {
+        box.innerHTML = '<div class="feature-lab-err">Network error.</div>';
+      }
+    } else {
+      let msgs = lsLoad(lsFeatureLabKey(currentUser.id), null);
+      if (!Array.isArray(msgs)) {
+        msgs = localFeatureLabSeed();
+        lsSave(lsFeatureLabKey(currentUser.id), msgs);
+      }
+      box.innerHTML = featureLabMarkupFromMessages(msgs);
+    }
+    box.scrollTop = box.scrollHeight;
+  }
+
+  async function openFeatureLabModal() {
+    if (!currentUser || !currentUser.featureLabUnlocked) return;
+    closeMobileSidebar();
+    const inp = $('#featureLabInput');
+    if (inp) inp.value = '';
+    openModal('featureLabModal');
+    await refreshFeatureLabPanel();
+  }
+
+  async function submitFeatureLabMessage() {
+    const inp = $('#featureLabInput');
+    if (!inp || !currentUser || !currentUser.featureLabUnlocked) return;
+    const text = (inp.value || '').trim();
+    if (!text) return;
+    if (inServerMode()) {
+      try {
+        const res = await fetch(backUrl() + '/api/feature-lab/message', {
+          method: 'POST',
+          headers: { Authorization: 'Bearer ' + authToken, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text }),
+        });
+        const d = await res.json().catch(() => ({}));
+        if (!res.ok) { alert(d.error || 'Send failed'); return; }
+        inp.value = '';
+        const box = $('#featureLabMessages');
+        if (box) {
+          box.innerHTML = featureLabMarkupFromMessages(d.messages || []);
+          box.scrollTop = box.scrollHeight;
+        }
+      } catch {
+        alert('Network error.');
+      }
+      return;
+    }
+    let msgs = lsLoad(lsFeatureLabKey(currentUser.id), null);
+    if (!Array.isArray(msgs)) msgs = localFeatureLabSeed();
+    msgs.push({ from: 'user', userId: currentUser.id, userName: currentUser.name, text, ts: Date.now() });
+    lsSave(lsFeatureLabKey(currentUser.id), msgs);
+    inp.value = '';
+    const box = $('#featureLabMessages');
+    if (box) {
+      box.innerHTML = featureLabMarkupFromMessages(msgs);
+      box.scrollTop = box.scrollHeight;
+    }
+  }
+
+  async function unlockFeatureLabFromEgg() {
+    if (!currentUser || appWrapper.style.display === 'none') return;
+    if (currentUser.featureLabUnlocked) {
+      syncFeatureLabEntry();
+      return;
+    }
+    if (!inServerMode()) {
+      const all = lsGetUsers();
+      const u = all.find(x => x.id === currentUser.id);
+      if (u) {
+        u.featureLabUnlocked = true;
+        lsSaveUsers(all);
+      }
+      currentUser.featureLabUnlocked = true;
+      let msgs = lsLoad(lsFeatureLabKey(currentUser.id), null);
+      if (!Array.isArray(msgs)) {
+        lsSave(lsFeatureLabKey(currentUser.id), localFeatureLabSeed());
+      }
+      syncFeatureLabEntry();
+      nudgeFeatureLabBtn();
+      return;
+    }
+    try {
+      const res = await fetch(backUrl() + '/api/feature-lab/unlock', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + authToken, 'Content-Type': 'application/json' },
+      });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok && d.user) {
+        currentUser = { ...currentUser, ...d.user };
+        syncFeatureLabEntry();
+        nudgeFeatureLabBtn();
+      }
+    } catch (_) { /* ignore */ }
+  }
+
+  function nudgeFeatureLabBtn() {
+    const b = $('#featureLabBtn');
+    if (!b) return;
+    b.classList.remove('lab-highlight');
+    void b.offsetWidth;
+    b.classList.add('lab-highlight');
+    setTimeout(() => b.classList.remove('lab-highlight'), 3800);
+  }
+
+  function initSfEggSurprise() {
+    const mark = document.querySelector('.header-hash');
+    if (!mark) return;
+    const HOLD_MS = 820;
+    let token = null;
+    let overlay = null;
+    let starRafId = null;
+    let disposeStars = null;
+    let idleTimer = null;
+
+    function dismissEgg() {
+      if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+      document.removeEventListener('keydown', eggEsc);
+      if (disposeStars) { disposeStars(); disposeStars = null; }
+      if (starRafId) {
+        cancelAnimationFrame(starRafId);
+        starRafId = null;
+      }
+      const el = overlay;
+      overlay = null;
+      token = null;
+      if (el && el.parentNode) el.parentNode.removeChild(el);
+    }
+
+    function eggEsc(e) {
+      if (e.key === 'Escape') dismissEgg();
+    }
+
+    function runStars(canvas) {
+      const ctx = canvas.getContext('2d');
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+      function sizeFn() {
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        canvas.width = Math.floor(w * dpr);
+        canvas.height = Math.floor(h * dpr);
+        canvas.style.width = w + 'px';
+        canvas.style.height = h + 'px';
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        return { w, h };
+      }
+
+      let { w, h } = sizeFn();
+      let n = Math.min(480, Math.floor((w * h) / 4200));
+      const stars = [];
+      const palettes = ['#dfe6e9', '#74b9ff', '#a29bfe', '#ffeaa7', '#55efc4'];
+
+      function fillStars(width, height) {
+        stars.length = 0;
+        n = Math.min(480, Math.floor((width * height) / 4200));
+        for (let i = 0; i < n; i++) {
+          stars.push({
+            x: (Math.random() - 0.5) * width * 2.8,
+            y: (Math.random() - 0.5) * height * 2.8,
+            z: Math.random() * 950 + 12,
+            c: palettes[i % palettes.length],
+          });
+        }
+      }
+
+      fillStars(w, h);
+      let last = performance.now();
+      let running = true;
+
+      function onResize() {
+        ({ w, h } = sizeFn());
+        fillStars(w, h);
+      }
+      window.addEventListener('resize', onResize);
+      disposeStars = () => {
+        running = false;
+        window.removeEventListener('resize', onResize);
+      };
+
+      function tick(now) {
+        if (!running || !overlay) return;
+        const dt = Math.min(46, now - last);
+        last = now;
+        const cx = w / 2;
+        const cy = h / 2;
+        ctx.fillStyle = 'rgba(8, 6, 14, 0.24)';
+        ctx.fillRect(0, 0, w, h);
+        const speed = 2.8 * (dt / 16);
+        for (const s of stars) {
+          s.z -= speed * (220 / (s.z + 80));
+          if (s.z <= 4) {
+            s.x = (Math.random() - 0.5) * w * 2.8;
+            s.y = (Math.random() - 0.5) * h * 2.8;
+            s.z = Math.random() * 950 + 12;
+          }
+          const sx = cx + (s.x / s.z) * 520;
+          const sy = cy + (s.y / s.z) * 520;
+          const r = Math.min(4.5, Math.max(0.35, 640 / (s.z + 30)));
+          if (sx < -80 || sx > w + 80 || sy < -80 || sy > h + 80) continue;
+          ctx.globalAlpha = Math.min(1, (900 - s.z) / 450);
+          ctx.fillStyle = s.c;
+          ctx.beginPath();
+          ctx.arc(sx, sy, r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+        starRafId = requestAnimationFrame(tick);
+      }
+
+      starRafId = requestAnimationFrame(tick);
+    }
+
+    function reveal() {
+      if (overlay || appWrapper.style.display === 'none') return;
+      const lines = [
+        'Transmission received—or the static learned your name.',
+        'You waited. The backlog approves.',
+        'Channel zero called. It mostly wanted silence.',
+        'Somewhere a cursor rests where no thread goes.',
+      ];
+      overlay = document.createElement('div');
+      overlay.className = 'sf-egg-surprise';
+      overlay.innerHTML =
+        '<canvas aria-hidden="true"></canvas>' +
+        '<p class="sf-egg-quote" role="status"></p>' +
+        '<button type="button" class="sf-egg-dismiss" aria-label="Close">✕</button>';
+      document.body.appendChild(overlay);
+
+      const q = overlay.querySelector('.sf-egg-quote');
+      if (q) q.textContent = lines[Math.floor(Math.random() * lines.length)];
+      overlay.querySelector('.sf-egg-dismiss')?.addEventListener('click', dismissEgg);
+      document.addEventListener('keydown', eggEsc);
+
+      const canvas = overlay.querySelector('canvas');
+      if (canvas) runStars(canvas);
+
+      unlockFeatureLabFromEgg();
+
+      idleTimer = setTimeout(() => {
+        idleTimer = null;
+        dismissEgg();
+      }, 12800);
+    }
+
+    mark.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      token = Symbol('egg');
+      const my = token;
+      setTimeout(() => {
+        if (my !== token) return;
+        reveal();
+      }, HOLD_MS);
+    });
+
+    function cancelHold() {
+      token = null;
+    }
+
+    mark.addEventListener('pointerup', cancelHold);
+    mark.addEventListener('pointercancel', cancelHold);
+    mark.addEventListener('pointerleave', cancelHold);
+  }
+
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       threadPanel.classList.remove('open');
@@ -4407,6 +4742,7 @@ ${hatSvg}
 
   bindNotificationAudioUnlock();
   renderWorkspaceRail();
+  initSfEggSurprise();
 
   if (inServerMode() && authToken) {
     enterApp();

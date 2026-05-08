@@ -150,6 +150,7 @@
       <div class="tab" data-tab="marketing">Marketing emails</div>
       <div class="tab" data-tab="messages">Messages</div>
       <div class="tab" data-tab="files">Files</div>
+      <div class="tab" data-tab="featureLab">Feature Lab</div>
     </div>
 
     <!-- Join Requests -->
@@ -204,6 +205,12 @@
         <button class="btn-deny" id="fileBulkRemoveBtn" type="button">Remove Selected (0)</button>
       </div>
       <div id="filesListWrap"><div class="empty">Open this tab or press Refresh to load files.</div></div>
+    </div>
+
+    <!-- Feature Lab -->
+    <div class="tab-pane" id="tab-featureLab">
+      <p style="font-size:12px;color:var(--muted);margin:-4px 0 14px;max-width:720px;line-height:1.45">Private collaboration threads unlocked in-app for signed-in SlackFlow accounts. Reply here—the user receives updates via live sync when Feature Lab is open.</p>
+      <div id="featureLabAdminList"><div class="empty">Open this tab to load threads.</div></div>
     </div>
   </div>
 </div>
@@ -340,6 +347,7 @@
       if (tab.dataset.tab === 'marketing') loadMarketingEmails();
       if (tab.dataset.tab === 'messages') { document.getElementById('msgSearchResults').innerHTML = '<div class="empty">Enter a query above and press Search.</div>'; }
       if (tab.dataset.tab === 'files') loadStoredFiles();
+      if (tab.dataset.tab === 'featureLab') loadFeatureLabThreads();
     });
   });
 
@@ -813,6 +821,98 @@
       if (!Number.isNaN(i)) handleFileCheckbox(e, i);
     }
   });
+
+  function featureLabAdminPanelDomId(userId) {
+    return 'fl-panel-' + String(userId || '').replace(/[^\w\-]/g, '_');
+  }
+
+  async function loadFeatureLabThreads() {
+    const el = document.getElementById('featureLabAdminList');
+    if (!el) return;
+    el.innerHTML = '<div class="empty">Loading…</div>';
+    const d = await api('GET', '/api/admin/feature-lab');
+    if (d.error) {
+      el.innerHTML = '<div class="empty" style="color:var(--red)">' + esc(d.error) + '</div>';
+      return;
+    }
+    const threads = d.threads || [];
+    if (!threads.length) {
+      el.innerHTML = '<div class="empty">No Feature Lab conversations yet.</div>';
+      return;
+    }
+    el.innerHTML = threads.map((t) => {
+      const pid = featureLabAdminPanelDomId(t.userId);
+      const preview = esc(t.lastPreview || '');
+      return `
+      <div class="card" data-fl-user="${escAttr(t.userId)}">
+        <div class="card-row">
+          <div class="avatar" style="background:${colorFor(t.userName)}">${initials(t.userName)}</div>
+          <div class="row-info">
+            <div class="row-name">${esc(t.userName)} <span style="color:var(--muted);font-weight:400">@${esc(t.username)}</span></div>
+            <div class="row-sub">${preview} · updated ${timeAgo(t.updatedAt)}</div>
+          </div>
+          <div class="row-actions">
+            <button type="button" class="btn-sm js-feature-lab-expand" data-user-id="${escAttr(t.userId)}">View / reply</button>
+          </div>
+        </div>
+        <div id="${pid}" style="display:none;border-top:1px solid var(--border);padding:12px 16px 16px"></div>
+      </div>`;
+    }).join('');
+    el.querySelectorAll('.js-feature-lab-expand').forEach((btn) => {
+      btn.addEventListener('click', () => toggleAdminFeatureLabPanel(btn.getAttribute('data-user-id')));
+    });
+  }
+
+  async function populateAdminFeatureLabPanel(userId, panel) {
+    const d = await api('GET', '/api/admin/feature-lab/' + encodeURIComponent(userId));
+    if (d.error) {
+      panel.innerHTML = '<div style="color:var(--red);font-size:13px">' + esc(d.error) + '</div>';
+      return;
+    }
+    const msgs = (d.doc && d.doc.messages) || [];
+    let body = msgs.map((m) => {
+      const label = m.from === 'system' ? 'System' : (m.from === 'admin' ? 'Admin' : esc(m.userName || 'Member'));
+      return `
+        <div style="margin-bottom:12px;font-size:13px;line-height:1.45;color:var(--text)">
+          <strong style="color:var(--secondary);font-size:11px;text-transform:uppercase;display:block;margin-bottom:4px">${label}</strong>
+          <span style="white-space:pre-wrap">${esc(m.text || '')}</span>
+        </div>`;
+    }).join('');
+    const tid = String(userId).replace(/[^\w\-]/g, '_');
+    body += `
+      <label style="display:block;font-size:12px;color:var(--muted);margin-bottom:6px;margin-top:4px">Reply as admin</label>
+      <textarea id="fla-ta-${tid}" rows="4" placeholder="Collaborate…" style="width:100%;padding:10px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--font);resize:vertical;box-sizing:border-box"></textarea>
+      <button type="button" class="btn-accent" data-fl-send="1" style="margin-top:8px">Send reply</button>`;
+    panel.innerHTML = body;
+    panel.querySelector('[data-fl-send]')?.addEventListener('click', () => submitAdminFeatureLab(userId));
+  }
+
+  async function toggleAdminFeatureLabPanel(userId) {
+    if (!userId) return;
+    const panel = document.getElementById(featureLabAdminPanelDomId(userId));
+    if (!panel) return;
+    if (panel.style.display === 'block') {
+      panel.style.display = 'none';
+      return;
+    }
+    panel.style.display = 'block';
+    panel.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">Loading…</div>';
+    await populateAdminFeatureLabPanel(userId, panel);
+  }
+
+  async function submitAdminFeatureLab(userId) {
+    const tid = String(userId).replace(/[^\w\-]/g, '_');
+    const ta = document.getElementById('fla-ta-' + tid);
+    const text = ta && ta.value ? ta.value.trim() : '';
+    if (!text) return;
+    const d = await api('POST', '/api/admin/feature-lab/' + encodeURIComponent(userId) + '/message', { text });
+    if (d.error) {
+      alert(d.error);
+      return;
+    }
+    const panel = document.getElementById(featureLabAdminPanelDomId(userId));
+    if (panel) await populateAdminFeatureLabPanel(userId, panel);
+  }
 
   // ── Init ──
   function showApp() {

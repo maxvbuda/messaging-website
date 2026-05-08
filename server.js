@@ -68,7 +68,7 @@ const upload = multer({
 });
 
 let db;
-let usersCol, channelsCol, messagesCol, sessionsCol, filesCol, joinRequestsCol;
+let usersCol, channelsCol, messagesCol, sessionsCol, filesCol, joinRequestsCol, featureLabCol;
 
 const DEFAULT_CHANNELS = [
   { id: 'c_general', name: 'general', topic: 'Company-wide announcements and work-based matters', createdBy: 'system' },
@@ -111,6 +111,10 @@ async function connectDB() {
   sessionsCol = db.collection('sessions');
   filesCol = db.collection('files');
   joinRequestsCol = db.collection('joinRequests');
+  featureLabCol = db.collection('featureLab');
+  try {
+    await featureLabCol.createIndex({ userId: 1 }, { unique: true });
+  } catch (e) { /* index may exist */ }
   // Auto-expire sessions after 30 days
   await sessionsCol.createIndex({ createdAt: 1 }, { expireAfterSeconds: 60 * 60 * 24 * 30 });
 
@@ -129,6 +133,8 @@ let memData = {
   users: [],
   channels: JSON.parse(JSON.stringify(DEFAULT_CHANNELS)),
   messages: {},
+  /** @type {Record<string, object>} userId -> feature lab doc */
+  featureLabThreads: {},
 };
 
 // ── Data helpers (work with both Mongo and memory) ──
@@ -330,7 +336,17 @@ async function getUserByToken(token) {
 
 function publicUser(u) {
   if (!u) return null;
-  return { id: u.id, name: u.name, username: u.username, status: u.status, statusMsg: u.statusMsg || '', role: u.role, createdAt: u.createdAt, avatarUrl: u.avatarUrl || null };
+  return {
+    id: u.id,
+    name: u.name,
+    username: u.username,
+    status: u.status,
+    statusMsg: u.statusMsg || '',
+    role: u.role,
+    createdAt: u.createdAt,
+    avatarUrl: u.avatarUrl || null,
+    featureLabUnlocked: !!u.featureLabUnlocked,
+  };
 }
 
 /** Admin Users tab: include moderation flags not exposed in publicUser. */
@@ -532,6 +548,182 @@ app.get('/api/data', async (req, res) => {
     channels,
     messages,
   });
+});
+
+// ── Feature Lab (unlock via UI easter egg; private user ↔ admin collaboration thread)
+async function getAuthedBearerUser(req) {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return null;
+  const user = await getUserByToken(token);
+  if (!user) return null;
+  if (user.banned || isBlockedName(user.username, user.name)) return null;
+  if (user.suspended) return null;
+  return user;
+}
+
+async function getFeatureLabDoc(userId) {
+  if (!userId || userId === ROBOT_DM_ID) return null;
+  if (db) return featureLabCol.findOne({ userId });
+  return memData.featureLabThreads[userId] || null;
+}
+
+async function saveFeatureLabDoc(doc) {
+  if (!doc || !doc.userId) return;
+  if (db) {
+    await featureLabCol.replaceOne({ userId: doc.userId }, doc, { upsert: true });
+    return;
+  }
+  memData.featureLabThreads[doc.userId] = doc;
+}
+
+async function ensureFeatureLabThreadInitialized(userId) {
+  let doc = await getFeatureLabDoc(userId);
+  const now = Date.now();
+  if (!doc) {
+    doc = {
+      userId,
+      unlockedAt: now,
+      updatedAt: now,
+      messages: [{
+        from: 'system',
+        text: 'Welcome to Feature Lab — a quiet channel with admins. Propose improvements, brainstorm together, or ask for tooling here. Someone on the workspace team will read and reply when they can.',
+        ts: now,
+      }],
+    };
+    await saveFeatureLabDoc(doc);
+  }
+  return doc;
+}
+
+function emitFeatureLabUpdated(userId, messagesPayload) {
+  try {
+    io.to('uid_' + userId).emit('feature_lab_updated', { messages: messagesPayload });
+  } catch (e) { /* non-fatal */ }
+}
+
+async function appendFeatureLabMessage(userId, msg) {
+  let doc = await getFeatureLabDoc(userId);
+  if (!doc) return null;
+  if (!Array.isArray(doc.messages)) doc.messages = [];
+  doc.messages.push(msg);
+  doc.updatedAt = Date.now();
+  await saveFeatureLabDoc(doc);
+  emitFeatureLabUpdated(userId, doc.messages);
+  return doc;
+}
+
+async function listFeatureLabDocs() {
+  if (db) return featureLabCol.find({}).sort({ updatedAt: -1 }).toArray();
+  return Object.values(memData.featureLabThreads || {}).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+}
+
+app.post('/api/feature-lab/unlock', async (req, res) => {
+  try {
+    const user = await getAuthedBearerUser(req);
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+    await updateUser(user.id, { featureLabUnlocked: true });
+    const doc = await ensureFeatureLabThreadInitialized(user.id);
+    const fresh = await findUser({ id: user.id });
+    res.json({ ok: true, user: publicUser({ ...(fresh || user), status: fresh?.status || user.status }), messages: doc.messages });
+  } catch (e) {
+    console.error('feature-lab/unlock:', e);
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+app.get('/api/feature-lab', async (req, res) => {
+  try {
+    const user = await getAuthedBearerUser(req);
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+    const u = await findUser({ id: user.id });
+    if (!u || !u.featureLabUnlocked) return res.status(403).json({ error: 'Feature Lab is not available yet.' });
+    const doc = await ensureFeatureLabThreadInitialized(user.id);
+    res.json({ messages: doc.messages || [] });
+  } catch (e) {
+    console.error('feature-lab/get:', e);
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+app.post('/api/feature-lab/message', async (req, res) => {
+  try {
+    const user = await getAuthedBearerUser(req);
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+    const u = await findUser({ id: user.id });
+    if (!u || !u.featureLabUnlocked) return res.status(403).json({ error: 'Feature Lab is not available yet.' });
+
+    await ensureFeatureLabThreadInitialized(user.id);
+    const text = processOutgoingChatText(String((req.body && req.body.text) || ''), {});
+    if (!text.trim()) return res.status(400).json({ error: 'Message cannot be empty.' });
+    const msg = { from: 'user', userId: user.id, userName: user.name, text, ts: Date.now() };
+    const doc = await appendFeatureLabMessage(user.id, msg);
+    if (!doc) return res.status(500).json({ error: 'Could not save message.' });
+    res.json({ ok: true, messages: doc.messages });
+  } catch (e) {
+    console.error('feature-lab/message:', e);
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+app.get('/api/admin/feature-lab', requireAdmin, async (req, res) => {
+  try {
+    const docs = await listFeatureLabDocs();
+    const userList = await getUsers();
+    const byId = new Map(userList.map((x) => [x.id, x]));
+    const threads = docs.map((d) => {
+      const u = byId.get(d.userId);
+      const msgs = d.messages || [];
+      const last = msgs.length ? msgs[msgs.length - 1] : null;
+      const previewRaw = last ? (last.from === 'user' ? `${last.userName || 'User'}: ${last.text || ''}` : (last.from === 'admin' ? `Admin: ${last.text}` : last.text || '')) : '';
+      return {
+        userId: d.userId,
+        userName: u ? u.name : 'Unknown user',
+        username: u ? u.username : '',
+        unlockedAt: d.unlockedAt,
+        updatedAt: d.updatedAt,
+        messageCount: msgs.length,
+        lastPreview: String(previewRaw).slice(0, 140),
+        lastTs: last ? last.ts : d.updatedAt,
+      };
+    });
+    res.json({ threads });
+  } catch (e) {
+    console.error('admin feature-lab:', e);
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+app.get('/api/admin/feature-lab/:userId', requireAdmin, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const doc = await getFeatureLabDoc(userId);
+    if (!doc) return res.status(404).json({ error: 'No Feature Lab thread for this user.' });
+    const u = await findUser({ id: userId });
+    res.json({ user: publicUser(u) || { id: userId }, doc });
+  } catch (e) {
+    console.error('admin feature-lab/detail:', e);
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+app.post('/api/admin/feature-lab/:userId/message', requireAdmin, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    let doc = await getFeatureLabDoc(userId);
+    if (!doc) {
+      doc = await ensureFeatureLabThreadInitialized(userId);
+    }
+    await updateUser(userId, { featureLabUnlocked: true });
+    const text = processOutgoingChatText(String((req.body && req.body.text) || ''), {});
+    if (!text.trim()) return res.status(400).json({ error: 'Message cannot be empty.' });
+    const msg = { from: 'admin', text, ts: Date.now() };
+    const saved = await appendFeatureLabMessage(userId, msg);
+    if (!saved) return res.status(500).json({ error: 'Could not save message.' });
+    res.json({ ok: true, messages: saved.messages });
+  } catch (e) {
+    console.error('admin feature-lab/message:', e);
+    res.status(500).json({ error: String(e.message || e) });
+  }
 });
 
 function formatAiContextLine(msg) {
