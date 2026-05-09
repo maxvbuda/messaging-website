@@ -365,16 +365,16 @@ const BLOCKED_NAMES = [];
 const BLOCKED_IPS = new Set();
 
 // ── Brute-force protection ──
-// Map: ip -> { count, windowStart, lockedUntil }
+// Map: bucket key -> { count, windowStart, lockedUntil } (user login uses ip+username so VPN/NAT exits don’t lock each other out)
 const loginAttempts = new Map();
 const MAX_ATTEMPTS = 5;
 const WINDOW_MS = 10 * 60 * 1000;   // 10-minute sliding window
 const LOCKOUT_MS = 15 * 60 * 1000;  // 15-minute lockout
 
-function checkBruteForce(ip) {
-  if (!ip) return null;
+function checkBruteForce(bucketKey) {
+  if (!bucketKey) return null;
   const now = Date.now();
-  const rec = loginAttempts.get(ip) || { count: 0, windowStart: now, lockedUntil: 0 };
+  const rec = loginAttempts.get(bucketKey) || { count: 0, windowStart: now, lockedUntil: 0 };
 
   if (rec.lockedUntil > now) {
     const secs = Math.ceil((rec.lockedUntil - now) / 1000);
@@ -387,14 +387,14 @@ function checkBruteForce(ip) {
     rec.windowStart = now;
   }
 
-  loginAttempts.set(ip, rec);
+  loginAttempts.set(bucketKey, rec);
   return null; // allowed
 }
 
-function recordFailedAttempt(ip) {
-  if (!ip) return;
+function recordFailedAttempt(bucketKey) {
+  if (!bucketKey) return;
   const now = Date.now();
-  const rec = loginAttempts.get(ip) || { count: 0, windowStart: now, lockedUntil: 0 };
+  const rec = loginAttempts.get(bucketKey) || { count: 0, windowStart: now, lockedUntil: 0 };
 
   if (now - rec.windowStart > WINDOW_MS) {
     rec.count = 0;
@@ -404,18 +404,68 @@ function recordFailedAttempt(ip) {
   rec.count += 1;
   if (rec.count >= MAX_ATTEMPTS) {
     rec.lockedUntil = now + LOCKOUT_MS;
-    console.log(`[brute-force] IP ${ip} locked out for 15 min after ${rec.count} failed attempts`);
+    console.log(`[brute-force] bucket ${bucketKey} locked out for 15 min after ${rec.count} failed attempts`);
   }
-  loginAttempts.set(ip, rec);
+  loginAttempts.set(bucketKey, rec);
 }
 
-function clearAttempts(ip) {
-  if (ip) loginAttempts.delete(ip);
+function clearAttempts(bucketKey) {
+  if (bucketKey) loginAttempts.delete(bucketKey);
 }
 
+function envTruthy(v) {
+  return /^1|true|yes$/i.test(String(v == null ? '' : v).trim());
+}
+
+/** When true, trust CDN/proxy headers for the real client IP (set on Render, Fly, behind nginx, etc.). */
+const TRUST_PROXY = envTruthy(process.env.TRUST_PROXY)
+  || envTruthy(process.env.RENDER)
+  || !!process.env.FLY_APP_NAME
+  || envTruthy(process.env.RAILWAY_ENVIRONMENT)
+  || envTruthy(process.env.VERCEL);
+
+function normalizeClientIp(raw) {
+  if (raw == null || raw === '') return '';
+  let s = String(raw).trim();
+  if (s.startsWith('::ffff:')) s = s.slice(7);
+  return s;
+}
+
+function parseXForwardedFor(val) {
+  if (!val || typeof val !== 'string') return [];
+  return val.split(',').map((p) => normalizeClientIp(p)).filter(Boolean);
+}
+
+/**
+ * Best-effort client IP for abuse tracking and moderation.
+ * With TRUST_PROXY, prefers headers the edge sets (before client-spoofable XFF when alone).
+ * Without it, uses the TCP peer only so arbitrary X-Forwarded-For is ignored.
+ */
 function getClientIp(req) {
-  const forwarded = req.headers['x-forwarded-for'];
-  return (forwarded ? forwarded.split(',')[0] : req.socket.remoteAddress || '').trim();
+  const direct = normalizeClientIp(req.socket && req.socket.remoteAddress);
+
+  if (TRUST_PROXY) {
+    const cf = normalizeClientIp(req.headers['cf-connecting-ip']);
+    if (cf) return cf;
+    const trueClient = normalizeClientIp(req.headers['true-client-ip']);
+    if (trueClient) return trueClient;
+    const fly = normalizeClientIp(req.headers['fly-client-ip']);
+    if (fly) return fly;
+    const realIp = normalizeClientIp(req.headers['x-real-ip']);
+    if (realIp) return realIp;
+    const chain = parseXForwardedFor(req.headers['x-forwarded-for']);
+    if (chain.length) return chain[0];
+  }
+
+  return direct;
+}
+
+function loginBruteKey(ip, usernameLower) {
+  return `login:${ip || 'unknown'}:${usernameLower || '_'}`;
+}
+
+function adminBruteKey(ip) {
+  return `admin:${ip || 'unknown'}`;
 }
 
 // IP block middleware
@@ -474,17 +524,20 @@ app.post('/api/login', async (req, res) => {
   const { username, password } = req.body;
   const ip = getClientIp(req);
 
-  const lockMsg = checkBruteForce(ip);
-  if (lockMsg) return res.status(429).json({ error: lockMsg });
-
   if (!username || !password) return res.status(400).json({ error: 'Please fill in all fields.' });
 
   const uname = username.trim().toLowerCase();
+  const bruteKey = loginBruteKey(ip, uname);
+  const lockMsg = checkBruteForce(bruteKey);
+  if (lockMsg) return res.status(429).json({ error: lockMsg });
+
+  if (username.trim().length < 2) return res.status(400).json({ error: 'Username must be at least 2 characters.' });
+
   const user = await findUser({ username: uname });
-  if (!user) { recordFailedAttempt(ip); return res.status(401).json({ error: 'Invalid username or password.' }); }
+  if (!user) { recordFailedAttempt(bruteKey); return res.status(401).json({ error: 'Invalid username or password.' }); }
 
   const match = await bcrypt.compare(password, user.passwordHash);
-  if (!match) { recordFailedAttempt(ip); return res.status(401).json({ error: 'Invalid username or password.' }); }
+  if (!match) { recordFailedAttempt(bruteKey); return res.status(401).json({ error: 'Invalid username or password.' }); }
 
   if (user.banned || isBlockedName(user.username, user.name)) {
     BLOCKED_IPS.add(ip);
@@ -498,7 +551,7 @@ app.post('/api/login', async (req, res) => {
 
   // Log the IP for future reference
   if (ip) await updateUser(user.id, { lastIp: ip });
-  clearAttempts(ip); // successful login — reset brute-force counter
+  clearAttempts(bruteKey); // successful login — reset brute-force counter
 
   await updateUser(user.id, { status: 'online' });
 
@@ -997,15 +1050,16 @@ function verifyAdminBearerToken(raw) {
 
 app.post('/api/admin/login', (req, res) => {
   const ip = getClientIp(req);
-  const lockMsg = checkBruteForce(ip);
+  const adminKey = adminBruteKey(ip);
+  const lockMsg = checkBruteForce(adminKey);
   if (lockMsg) return res.status(429).json({ error: lockMsg });
 
   const { password } = req.body;
   if (password !== ADMIN_PASSWORD) {
-    recordFailedAttempt(ip);
+    recordFailedAttempt(adminKey);
     return res.status(401).json({ error: 'Invalid admin password.' });
   }
-  clearAttempts(ip);
+  clearAttempts(adminKey);
   res.json({ token: createAdminBearerToken() });
 });
 
@@ -1032,18 +1086,19 @@ async function findPendingRegistrationByUsername(uname) {
   return (memData.joinRequests || []).find((r) => r.username === u && r.status === 'pending' && r.passwordHash);
 }
 
-function rateLimitCheck(map, ip, max, windowMs) {
-  if (!ip) return null;
+function rateLimitCheck(map, bucketKey, max, windowMs) {
+  const k = bucketKey && String(bucketKey).trim() ? String(bucketKey).trim() : '__none__';
   const now = Date.now();
-  const rec = map.get(ip) || { count: 0, windowStart: now };
+  const rec = map.get(k) || { count: 0, windowStart: now };
   if (now - rec.windowStart > windowMs) { rec.count = 0; rec.windowStart = now; }
   if (rec.count >= max) return true;
   rec.count++;
-  map.set(ip, rec);
+  map.set(k, rec);
   return false;
 }
 
-const pendingRegAttempts = new Map();
+const pendingRegPerIpEmail = new Map();
+const pendingRegPerIpCap = new Map();
 
 app.post('/api/register-request', async (req, res) => {
   const ip = getClientIp(req);
@@ -1071,7 +1126,14 @@ app.post('/api/register-request', async (req, res) => {
   }
 
   // Count only submissions that passed validation (mistyped fields must not consume the hourly budget).
-  if (rateLimitCheck(pendingRegAttempts, ip, 6, 60 * 60 * 1000)) {
+  // Per-(IP+email) avoids punishing unrelated people on the same VPN/NAT exit; a per-IP cap still limits abuse.
+  const ipEmailKey = `${ip}|${emailNorm}`;
+  if (rateLimitCheck(pendingRegPerIpEmail, ipEmailKey, 8, 60 * 60 * 1000)) {
+    return res.status(429).json({
+      error: 'Too many signup attempts for this email from your connection in the last hour. Try again later or contact an administrator.',
+    });
+  }
+  if (rateLimitCheck(pendingRegPerIpCap, ip || '__no_ip__', 24, 60 * 60 * 1000)) {
     return res.status(429).json({
       error: 'Too many join requests from this network in the last hour. Try again later or contact an administrator.',
     });
@@ -1334,7 +1396,12 @@ app.get('/api/admin/users/by-ip', requireAdmin, async (req, res) => {
   const suspicious = Object.entries(byIp)
     .filter(([, list]) => list.length > 1)
     .sort((a, b) => b[1].length - a[1].length)
-    .map(([ip, accounts]) => ({ ip, count: accounts.length, accounts }));
+    .map(([ip, accounts]) => ({
+      ip,
+      count: accounts.length,
+      accounts,
+      hint: 'Shared VPN, carrier NAT, or office gateways often put unrelated people on one public IP—treat as a lead, not certainty.',
+    }));
   res.json({ suspicious, total: users.length });
 });
 
@@ -2630,10 +2697,12 @@ connectDB().then(async () => {
   await cleanupOrphanedMessages();
   server.listen(PORT, () => {
     console.log(`SlackFlow server running on http://localhost:${PORT}`);
+    console.log(`[http] Client IP: TRUST_PROXY=${TRUST_PROXY ? 'on (edge headers)' : 'off (socket peer only; set TRUST_PROXY=1 behind your own reverse proxy)'}`);
   });
 }).catch(err => {
   console.error('Failed to connect to MongoDB:', err.message);
   server.listen(PORT, () => {
     console.log(`SlackFlow server running on http://localhost:${PORT} (in-memory mode)`);
+    console.log(`[http] Client IP: TRUST_PROXY=${TRUST_PROXY ? 'on (edge headers)' : 'off (socket peer only; set TRUST_PROXY=1 behind your own reverse proxy)'}`);
   });
 });
