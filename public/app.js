@@ -376,6 +376,82 @@
     } catch { /* ignore */ }
   }
 
+  function transformPartySlash(trimmed) {
+    const m = /^\s*\/party\b(?:\s+|$)/i.exec(trimmed || '');
+    if (!m) return trimmed;
+    const tail = trimmed.slice(m[0].length).trim();
+    return tail ? `\u{1F389} ${tail}` : '\u{1F389}';
+  }
+
+  function slackflowCelebrateWorthy(txt) {
+    if (!txt || typeof txt !== 'string') return false;
+    const raw = txt.toLowerCase();
+    if (/[\u{1F389}\u{1F38A}\u{2728}\u{1F483}\u{1F57A}]/u.test(txt)) return true;
+    if (/:tada:|:celebrate:|:boom:/i.test(raw)) return true;
+    const cheer =
+      /\b(let'?s\s+go|celebrate(?:d)?|woo+hoo+|w00+t|party\s*time|we\s+did\s+it|legend(?:ary)?|iconic|crushed\s+it|nailed\s+it|nice\s+(?:work|job|one)|for\s+the\s+win|(?:^|[\s.,!])ftw(?:$|[\s.,!]))/i;
+    return cheer.test(raw);
+  }
+
+  let slackflowCelebrateRunning = false;
+  function slackflowCelebratePrefersReduced() {
+    try {
+      return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /** Confetti-ish burst for wins — everyone viewing the channel sees it together. */
+  function triggerSlackFlowCelebrate() {
+    if (slackflowCelebrateRunning) return;
+    slackflowCelebrateRunning = true;
+    const ca = $('#chatArea');
+    if (slackflowCelebratePrefersReduced()) {
+      if (ca) {
+        ca.classList.add('slackflow-celebrate-flash');
+        setTimeout(() => {
+          ca.classList.remove('slackflow-celebrate-flash');
+          slackflowCelebrateRunning = false;
+        }, 620);
+      } else slackflowCelebrateRunning = false;
+      return;
+    }
+    const holder = document.createElement('div');
+    holder.className = 'slackflow-celebrate';
+    holder.setAttribute('aria-hidden', 'true');
+    const colors = ['#6c5ce7', '#00cec9', '#fdcb6e', '#e17055', '#e84393', '#2ecc71', '#0984e3', '#a29bfe', '#dfe6e9'];
+    const n = 52;
+    for (let i = 0; i < n; i++) {
+      const p = document.createElement('span');
+      p.className = 'slackflow-celebrate-bit';
+      const w = 7 + Math.random() * 5;
+      p.style.width = `${w}px`;
+      p.style.height = `${w * 1.15}px`;
+      p.style.left = `${Math.random() * 106 - 3}%`;
+      p.style.background = colors[i % colors.length];
+      const dur = 2.05 + Math.random() * 1.1;
+      const delay = Math.random() * 0.42;
+      p.style.animationDuration = `${dur}s`;
+      p.style.animationDelay = `${delay}s`;
+      const drift = `${(Math.random() - 0.5) * 110}px`;
+      p.style.setProperty('--celebrate-drift', drift);
+      p.style.setProperty('--celebrate-rot', `${300 + Math.random() * 500}deg`);
+      holder.appendChild(p);
+    }
+    document.body.appendChild(holder);
+    setTimeout(() => {
+      holder.remove();
+      slackflowCelebrateRunning = false;
+    }, 3600);
+  }
+
+  function maybeSlackFlowCelebrate(text, channelId) {
+    if (channelId !== activeChannelId) return;
+    if (!slackflowCelebrateWorthy(text || '')) return;
+    requestAnimationFrame(() => triggerSlackFlowCelebrate());
+  }
+
   function playNotificationSound() {
     void (async () => {
       try {
@@ -1425,6 +1501,7 @@
           });
         }
         if (cid === activeChannelId) renderMessages();
+        if (msg && msg.text) maybeSlackFlowCelebrate(msg.text, cid);
       }
       if (type === 'thread_reply') {
         messages = lsGetAllMessages();
@@ -1445,8 +1522,17 @@
           renderMessages();
           if (activeThreadMsgId === payload.parentMsgId) renderThread(payload.parentMsgId);
         }
+        if (last && last.text) maybeSlackFlowCelebrate(last.text, cid);
       }
       if (type === 'message_deleted' && payload.channelId === activeChannelId) { messages = lsGetAllMessages(); renderMessages(); }
+      if (type === 'message_updated' || type === 'thread_reply_updated') {
+        messages = lsGetAllMessages();
+        const cid = payload && payload.channelId;
+        if (cid === activeChannelId) {
+          renderMessages();
+          if (activeThreadMsgId) renderThread(activeThreadMsgId);
+        }
+      }
       if (type === 'reaction' && payload.channelId === activeChannelId) { messages = lsGetAllMessages(); renderMessages(); }
       if (type === 'new_channel') { channels = lsGetChannels(); renderChannelList(); }
       if (type === 'dd_session_end') {
@@ -1992,6 +2078,7 @@
         });
       }
       if (channelId === activeChannelId) renderMessages();
+      if (message.text) maybeSlackFlowCelebrate(message.text, channelId);
     });
     socket.on('thread_reply', ({ channelId, parentMsgId, reply }) => {
       const msgs = messages[channelId]; if (!msgs) return;
@@ -2009,6 +2096,7 @@
         });
       }
       if (channelId === activeChannelId) { renderMessages(); if (activeThreadMsgId === parentMsgId) renderThread(parentMsgId); }
+      if (reply.text) maybeSlackFlowCelebrate(reply.text, channelId);
     });
     socket.on('reaction_updated', ({ channelId, msgId, reactions }) => {
       const msgs = messages[channelId]; if (!msgs) return;
@@ -2019,6 +2107,31 @@
       if (messages[channelId]) messages[channelId] = messages[channelId].filter(m => m.id !== msgId);
       if (channelId === activeChannelId) renderMessages();
       if (activeThreadMsgId === msgId) { threadPanel.classList.remove('open'); activeThreadMsgId = null; }
+    });
+    socket.on('message_updated', ({ channelId, msgId, text, editedAt }) => {
+      const msgs = messages[channelId];
+      if (!msgs) return;
+      const msg = msgs.find((m) => m.id === msgId);
+      if (!msg) return;
+      msg.text = text;
+      msg.editedAt = editedAt;
+      if (channelId === activeChannelId) {
+        renderMessages();
+        if (activeThreadMsgId === msgId) renderThread(msgId);
+      }
+    });
+    socket.on('thread_reply_updated', ({ channelId, parentMsgId, replyId, text, editedAt }) => {
+      const msgs = messages[channelId];
+      if (!msgs) return;
+      const parent = msgs.find((m) => m.id === parentMsgId);
+      const reply = parent && (parent.threadReplies || []).find((r) => r.id === replyId);
+      if (!reply) return;
+      reply.text = text;
+      reply.editedAt = editedAt;
+      if (channelId === activeChannelId) {
+        renderMessages();
+        if (activeThreadMsgId === parentMsgId) renderThread(parentMsgId);
+      }
     });
     socket.on('message_file_removed', ({ updates }) => {
       const list = Array.isArray(updates) ? updates : [];
@@ -2224,21 +2337,24 @@
         ? `<div class="thread-link" data-msg="${msg.id}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg><span class="thread-reply-count">${tc} ${tc === 1 ? 'reply' : 'replies'}</span></div>` : '';
 
       const isOwn = msg.userId === currentUser.id;
+      const editable = isOwn && msg.userId !== ROBOT_DM_ID;
+      const editedMk = msg.editedAt ? '<span class="msg-edited">(edited)</span>' : '';
       html += `<div class="message ${isCompact ? 'compact' : ''}" data-msg="${msg.id}">
         ${avatarEl(user, 'message-avatar')}
         <div class="message-body">
-          <div class="message-meta"><span class="message-author">${escHtml(user.name)}</span><span class="message-time">${formatTime(msg.ts)}</span></div>
+          <div class="message-meta"><span class="message-author">${escHtml(user.name)}</span><span class="message-time">${formatTime(msg.ts)}${editedMk ? ` ${editedMk}` : ''}</span></div>
           ${msg.text ? `<div class="message-text">${formatText(msg.text)}</div>` : ''}${renderFileAttachment(msg.file)}${reactionsHtml}${threadHtml}
         </div>
         <div class="message-actions">
           <button class="btn-icon" title="React" data-action="react" data-msg="${msg.id}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg></button>
           <button class="btn-icon" title="Reply in thread" data-action="thread" data-msg="${msg.id}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></button>
+          ${editable ? `<button class="btn-icon" title="Edit" data-action="edit" data-msg="${msg.id}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>` : ''}
           ${isOwn ? `<button class="btn-icon" title="Delete" data-action="delete" data-msg="${msg.id}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg></button>` : ''}
         </div></div>`;
       lastUserId = msg.userId; lastTs = msg.ts;
     });
 
-    if (!msgs.length && ch) html += `<div style="text-align:center;padding:40px 20px;color:var(--text-muted)">No messages yet. Be the first to say something!</div>`;
+    if (!msgs.length && ch) html += `<div style="text-align:center;padding:40px 20px;color:var(--text-muted)">No messages yet. Be the first to say something!<div style="margin-top:12px;font-size:13px;line-height:1.45;color:var(--text-secondary)"><span aria-hidden="true">✨ </span>Celebrate with the team — try <kbd class="slackflow-inline-kbd">/party</kbd> plus your note, or toss in a 🎉.</div></div>`;
     messagesListEl.innerHTML = html;
     scrollToBottom();
     const vBtn = $('#videoCallBtn');
@@ -2258,15 +2374,25 @@
     const ch = channels.find(c => c.id === activeChannelId);
     threadChannel.textContent = ch ? `#${ch.name}` : '';
     const pu = resolveUser(pm.userId, pm.userName);
+    const rootEditable = pu.id === currentUser.id && pu.id !== ROBOT_DM_ID;
+    const rootEdited = pm.editedAt ? '<span class="msg-edited">(edited)</span>' : '';
     let html = `<div class="message" data-msg="${pm.id}">${avatarEl(pu, 'message-avatar')}
-      <div class="message-body"><div class="message-meta"><span class="message-author">${escHtml(pu.name)}</span><span class="message-time">${formatTime(pm.ts)}</span></div>
-      ${pm.text ? `<div class="message-text">${formatText(pm.text)}</div>` : ''}${renderFileAttachment(pm.file)}</div></div>
+      <div class="message-body"><div class="message-meta"><span class="message-author">${escHtml(pu.name)}</span><span class="message-time">${formatTime(pm.ts)}${rootEdited ? ` ${rootEdited}` : ''}</span></div>
+      ${pm.text ? `<div class="message-text">${formatText(pm.text)}</div>` : ''}${renderFileAttachment(pm.file)}</div>
+      ${rootEditable ? `<div class="message-actions">
+        <button class="btn-icon" title="Edit" data-action="edit-thread-root" data-msg="${pm.id}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+      </div>` : ''}</div>
       <div class="date-divider"><span>${(pm.threadReplies||[]).length} ${(pm.threadReplies||[]).length===1?'reply':'replies'}</span></div>`;
     (pm.threadReplies || []).forEach(r => {
       const u = resolveUser(r.userId, r.userName);
+      const rEditable = r.userId === currentUser.id && r.userId !== ROBOT_DM_ID;
+      const rEdited = r.editedAt ? '<span class="msg-edited">(edited)</span>' : '';
       html += `<div class="message" data-msg="${r.id}">${avatarEl(u, 'message-avatar')}
-        <div class="message-body"><div class="message-meta"><span class="message-author">${escHtml(u.name)}</span><span class="message-time">${formatTime(r.ts)}</span></div>
-        ${r.text ? `<div class="message-text">${formatText(r.text)}</div>` : ''}${renderFileAttachment(r.file)}</div></div>`;
+        <div class="message-body"><div class="message-meta"><span class="message-author">${escHtml(u.name)}</span><span class="message-time">${formatTime(r.ts)}${rEdited ? ` ${rEdited}` : ''}</span></div>
+        ${r.text ? `<div class="message-text">${formatText(r.text)}</div>` : ''}${renderFileAttachment(r.file)}</div>
+        ${rEditable ? `<div class="message-actions">
+          <button class="btn-icon" title="Edit" data-action="edit-thread-reply" data-parent="${msgId}" data-reply="${r.id}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+        </div>` : ''}</div>`;
     });
     threadMessagesEl.innerHTML = html;
     threadPanel.classList.add('open'); memberPanel.classList.remove('open');
@@ -2580,10 +2706,11 @@ function mapCaretAfterChatNormalize(prev, next, caret) {
   return Math.min(nl, caret + (nl - pl));
 }
 
-function applyComposerNormalize(el) {
+function applyComposerNormalize(el, channelIdOpt) {
   const normalize = chatNormalizeTyping();
   if (!normalize || !el || el.disabled || el.readOnly) return;
-  const ch = channels.find((c) => c.id === activeChannelId);
+  const cid = channelIdOpt != null && channelIdOpt !== '' ? channelIdOpt : activeChannelId;
+  const ch = channels.find((c) => c.id === cid);
   if (ch && ch.ddGame) return;
 
   const before = el.value;
@@ -2604,6 +2731,16 @@ function applyComposerNormalize(el) {
   }
 }
 
+  function normalizeOutboundTextForChannel(trimmed, channelId) {
+    const chLocal = channels.find((c) => c.id === channelId);
+    const skipNorm = !!(chLocal && chLocal.ddGame);
+    const rollTxt = expandPolyhedralRollEasterEgg(trimmed);
+    const normFn = chatNormalizeTyping();
+    let body = trimmed;
+    if (rollTxt == null && normFn && !skipNorm) body = normFn(trimmed);
+    return rollTxt != null ? rollTxt : filterExplicit(body);
+  }
+
   async function sendMessage(text, isThread = false, threadParentIdExplicit) {
     if (!text.trim() && !pendingFile) return;
     if (!currentUser) {
@@ -2617,6 +2754,8 @@ function applyComposerNormalize(el) {
       return;
     }
 
+    const outboundTrim = transformPartySlash(trimmedLead);
+
     const threadParentMsgId =
       threadParentIdExplicit !== undefined ? threadParentIdExplicit : activeThreadMsgId;
 
@@ -2627,7 +2766,7 @@ function applyComposerNormalize(el) {
       file = await uploadFile(pendingFile);
       setPendingFile(null);
       $('#fileInput').value = '';
-      if (!file && !text.trim()) return;
+      if (!file && !outboundTrim) return;
     }
 
     if (inServerMode() && socket) {
@@ -2640,20 +2779,12 @@ function applyComposerNormalize(el) {
         return;
       }
       if (isThread && threadParentMsgId) {
-        socket.emit('thread_reply', { channelId: activeChannelId, parentMsgId: threadParentMsgId, text: text.trim() });
+        socket.emit('thread_reply', { channelId: activeChannelId, parentMsgId: threadParentMsgId, text: outboundTrim });
       } else {
-        socket.emit('send_message', { channelId: activeChannelId, text: text.trim(), file });
+        socket.emit('send_message', { channelId: activeChannelId, text: outboundTrim, file });
       }
     } else {
-      const trimmed = text.trim();
-      const chLocal = channels.find((c) => c.id === activeChannelId);
-      const skipNorm = !!(chLocal && chLocal.ddGame);
-      const rollTxt = expandPolyhedralRollEasterEgg(trimmed);
-      const normFn = chatNormalizeTyping();
-      let body = trimmed;
-      if (rollTxt == null && normFn && !skipNorm) body = normFn(trimmed);
-      const filteredText =
-        rollTxt != null ? rollTxt : filterExplicit(body);
+      const filteredText = normalizeOutboundTextForChannel(outboundTrim, activeChannelId);
       const msg = { id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6), userId: currentUser.id, userName: currentUser.name, text: filteredText, ts: Date.now(), reactions: {}, threadReplies: [] };
       if (isThread && threadParentMsgId) {
         const allMsgs = lsGetAllMessages();
@@ -2666,15 +2797,130 @@ function applyComposerNormalize(el) {
           messages = allMsgs;
           broadcast('thread_reply', { channelId: activeChannelId, parentMsgId: threadParentMsgId });
           renderThread(threadParentMsgId); renderMessages();
-          scheduleLocalRobotDmReply(activeChannelId, trimmed);
+          scheduleLocalRobotDmReply(activeChannelId, outboundTrim);
+          maybeSlackFlowCelebrate(msg.text, activeChannelId);
         }
       } else {
         lsAppendMessage(activeChannelId, msg);
         messages = lsGetAllMessages();
         broadcast('new_message', { channelId: activeChannelId, msgId: msg.id });
         renderMessages();
-        scheduleLocalRobotDmReply(activeChannelId, trimmed);
+        scheduleLocalRobotDmReply(activeChannelId, outboundTrim);
+        maybeSlackFlowCelebrate(filteredText, activeChannelId);
       }
+    }
+  }
+
+  function openEditMessageModal(channelId, msgIdForMain, threadParentId, replyId) {
+    const cid = channelId || activeChannelId;
+    const hidC = $('#editMsgChannelId');
+    const hidM = $('#editMsgId');
+    const hidP = $('#editThreadParentMsgId');
+    const hidR = $('#editThreadReplyId');
+    const ta = $('#editMessageText');
+    if (!hidC || !hidM || !hidP || !hidR || !ta) return;
+    hidC.value = cid;
+    hidM.value = replyId ? '' : (msgIdForMain || '');
+    hidP.value = threadParentId || '';
+    hidR.value = replyId || '';
+    const msgs = messages[cid] || [];
+    let text = '';
+    if (replyId && threadParentId) {
+      const parent = msgs.find((x) => x.id === threadParentId);
+      const r = parent && (parent.threadReplies || []).find((x) => x.id === replyId);
+      text = r ? (r.text || '') : '';
+    } else if (msgIdForMain) {
+      const ex = msgs.find((x) => x.id === msgIdForMain);
+      text = ex ? (ex.text || '') : '';
+    }
+    ta.value = text || '';
+    openModal('editMessageModal');
+    try {
+      ta.focus();
+      ta.setSelectionRange(ta.value.length, ta.value.length);
+    } catch (_) { /* ignore */ }
+  }
+
+  function saveEditedMessage() {
+    if (!currentUser) return;
+    const cid = (($('#editMsgChannelId') && $('#editMsgChannelId').value) || '').trim() || activeChannelId;
+    const msgId = (($('#editMsgId') && $('#editMsgId').value) || '').trim();
+    const parentId = (($('#editThreadParentMsgId') && $('#editThreadParentMsgId').value) || '').trim();
+    const replyId = (($('#editThreadReplyId') && $('#editThreadReplyId').value) || '').trim();
+    const ta = $('#editMessageText');
+    if (!ta) return;
+    const trimmed = ta.value.trim();
+    const filtered = normalizeOutboundTextForChannel(trimmed, cid);
+    if (!String(filtered || '').trim()) {
+      alert('Message cannot be empty.');
+      return;
+    }
+
+    const finishLocal = () => {
+      messages = lsGetAllMessages();
+      closeModal('editMessageModal');
+      renderMessages();
+      if (replyId && parentId) renderThread(parentId);
+      else if (activeThreadMsgId) renderThread(activeThreadMsgId);
+    };
+
+    if (replyId && parentId) {
+      if (inServerMode() && socket) {
+        if (!socket.connected) {
+          alert('Not connected to the server. Wait for the connection or refresh the page, then try again.');
+          return;
+        }
+        socket.emit('edit_thread_reply', {
+          channelId: cid,
+          parentMsgId: parentId,
+          replyId,
+          text: trimmed,
+        });
+      } else {
+        const allMsgs = lsGetAllMessages();
+        const chMsgs = allMsgs[cid] || [];
+        const parent = chMsgs.find((m) => m.id === parentId);
+        const r = parent && (parent.threadReplies || []).find((x) => x.id === replyId);
+        if (!r || r.userId !== currentUser.id || r.userId === ROBOT_DM_ID) return;
+        r.text = filtered;
+        r.editedAt = Date.now();
+        lsSaveAllMessages(allMsgs);
+        messages = allMsgs;
+        broadcast('thread_reply_updated', {
+          channelId: cid,
+          parentMsgId: parentId,
+          replyId,
+          text: filtered,
+          editedAt: r.editedAt,
+        });
+        finishLocal();
+      }
+      if (inServerMode() && socket) closeModal('editMessageModal');
+    } else if (msgId) {
+      if (inServerMode() && socket) {
+        if (!socket.connected) {
+          alert('Not connected to the server. Wait for the connection or refresh the page, then try again.');
+          return;
+        }
+        socket.emit('edit_message', { channelId: cid, msgId, text: trimmed });
+      } else {
+        const allMsgs = lsGetAllMessages();
+        const chMsgs = allMsgs[cid] || [];
+        const msg = chMsgs.find((m) => m.id === msgId);
+        if (!msg || msg.userId !== currentUser.id || msg.userId === ROBOT_DM_ID) return;
+        msg.text = filtered;
+        msg.editedAt = Date.now();
+        lsSaveAllMessages(allMsgs);
+        messages = allMsgs;
+        broadcast('message_updated', {
+          channelId: cid,
+          msgId,
+          text: filtered,
+          editedAt: msg.editedAt,
+        });
+        finishLocal();
+      }
+      if (inServerMode() && socket) closeModal('editMessageModal');
     }
   }
 
@@ -3080,12 +3326,41 @@ function applyComposerNormalize(el) {
   });
   $('#threadClose').addEventListener('click', () => { threadPanel.classList.remove('open'); activeThreadMsgId = null; syncAiComposerButtons(); });
 
-  messagesListEl.addEventListener('click', (e) => {
+  const editMessageSaveBtn = $('#editMessageSaveBtn');
+  if (editMessageSaveBtn) editMessageSaveBtn.addEventListener('click', saveEditedMessage);
+  const editMessageText = $('#editMessageText');
+  if (editMessageText) {
+    editMessageText.addEventListener('input', () => {
+      const cidEl = $('#editMsgChannelId');
+      const cid = cidEl && cidEl.value ? cidEl.value : activeChannelId;
+      applyComposerNormalize(editMessageText, cid);
+    });
+  }
+
+  function onChatMessageAreaClick(e) {
     const btn = e.target.closest('[data-action]');
-    if (btn) { const a = btn.dataset.action, m = btn.dataset.msg; if (a === 'thread') renderThread(m); if (a === 'react') openEmojiPicker(btn, 'reaction', m); if (a === 'delete' && confirm('Delete this message?')) deleteMessage(m); return; }
-    const tl = e.target.closest('.thread-link'); if (tl) { renderThread(tl.dataset.msg); return; }
-    const rx = e.target.closest('.reaction'); if (rx) toggleReaction(rx.dataset.msg, rx.dataset.emoji);
-  });
+    if (btn) {
+      const a = btn.dataset.action;
+      const m = btn.dataset.msg;
+      if (a === 'thread') renderThread(m);
+      else if (a === 'react') openEmojiPicker(btn, 'reaction', m);
+      else if (a === 'delete' && confirm('Delete this message?')) deleteMessage(m);
+      else if (a === 'edit') openEditMessageModal(activeChannelId, m, null, null);
+      else if (a === 'edit-thread-root') openEditMessageModal(activeChannelId, m, null, null);
+      else if (a === 'edit-thread-reply') openEditMessageModal(activeChannelId, null, btn.dataset.parent, btn.dataset.reply);
+      return;
+    }
+    const tl = e.target.closest('.thread-link');
+    if (tl) {
+      renderThread(tl.dataset.msg);
+      return;
+    }
+    const rx = e.target.closest('.reaction');
+    if (rx) toggleReaction(rx.dataset.msg, rx.dataset.emoji);
+  }
+
+  messagesListEl.addEventListener('click', onChatMessageAreaClick);
+  threadMessagesEl.addEventListener('click', onChatMessageAreaClick);
 
   const aiDraftPreviewEl = $('#aiDraftPreview');
   if (aiDraftPreviewEl) aiDraftPreviewEl.addEventListener('input', syncAiDraftSendBtn);

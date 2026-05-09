@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#0f0f13">
   <title>SlackFlow — Team Messaging</title>
@@ -259,6 +259,30 @@
             <button type="button" class="btn-secondary" data-modal="featureLabModal">Close</button>
             <button type="button" class="btn-primary" id="featureLabSendBtn">Send</button>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Edit message -->
+    <div class="modal-overlay" id="editMessageModal">
+      <div class="modal modal-sm">
+        <div class="modal-header">
+          <h3>Edit message</h3>
+          <button type="button" class="btn-icon modal-close" data-modal="editMessageModal" aria-label="Close">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="editMsgChannelId" value="">
+          <input type="hidden" id="editMsgId" value="">
+          <input type="hidden" id="editThreadParentMsgId" value="">
+          <input type="hidden" id="editThreadReplyId" value="">
+          <label class="form-label">Message</label>
+          <textarea id="editMessageText" class="form-input" rows="6" placeholder="Updated text"></textarea>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn-secondary" data-modal="editMessageModal">Cancel</button>
+          <button type="button" class="btn-primary" id="editMessageSaveBtn">Save changes</button>
         </div>
       </div>
     </div>
@@ -671,11 +695,11 @@
     </div>
     <div class="video-call-grid">
       <div class="video-tile">
-        <video id="videoRemote" playsinline webkit-playsinline autoplay></video>
+        <video id="videoRemote" playsinline autoplay></video>
         <span class="video-label" id="videoRemoteLabel">Participant</span>
       </div>
       <div class="video-tile video-tile-local">
-        <video id="videoLocal" playsinline webkit-playsinline autoplay muted></video>
+        <video id="videoLocal" playsinline autoplay muted></video>
         <span class="video-label">You</span>
       </div>
     </div>

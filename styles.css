@@ -989,6 +989,12 @@ li.channel-dd-game {
   font-size: 11.5px;
   color: var(--text-muted);
 }
+.msg-edited {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  font-style: italic;
+}
 
 .message-text {
   font-size: 14px;
@@ -1574,6 +1580,72 @@ li.channel-dd-game {
   background: var(--bg-hover);
   transform: scale(1.2);
 }
+
+/* ========================================
+   Celebration burst (✨ morale)
+   ======================================== */
+.slackflow-celebrate {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 250;
+  overflow: hidden;
+}
+.slackflow-celebrate-bit {
+  position: absolute;
+  top: -22px;
+  opacity: 0.93;
+  border-radius: 2px;
+  animation-name: slackflow-celebrate-fall;
+  animation-timing-function: cubic-bezier(0.33, 0, 0.67, 0.37);
+  animation-fill-mode: forwards;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+}
+
+@keyframes slackflow-celebrate-fall {
+  0% {
+    transform: translate3d(0, -4vh, 0) rotate(0deg) scale(1);
+    opacity: 1;
+  }
+  92% {
+    opacity: 0.45;
+  }
+  100% {
+    transform: translate3d(var(--celebrate-drift, 0px), 110vh, 0) rotate(var(--celebrate-rot, 480deg))
+      scale(0.42);
+    opacity: 0;
+  }
+}
+
+.chat-area.slackflow-celebrate-flash {
+  animation: slackflowCelebrateFlash 0.62s ease-out;
+}
+
+@keyframes slackflowCelebrateFlash {
+  from {
+    filter: saturate(1) brightness(1);
+  }
+  45% {
+    filter: saturate(1.07) brightness(1.035);
+    box-shadow: inset 0 0 0 3px rgba(108, 92, 231, 0.08);
+  }
+  to {
+    filter: saturate(1) brightness(1);
+    box-shadow: none;
+  }
+}
+
+.slackflow-inline-kbd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--bg-light);
+  border: 1px solid var(--border);
+  vertical-align: 0.05em;
+  color: var(--text-secondary);
+}
+
 
 /* ========================================
    Modals

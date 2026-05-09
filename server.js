@@ -2079,6 +2079,72 @@ io.on('connection', (socket) => {
     } catch (e) { console.error('DB error (delete_message):', e.message); }
   });
 
+  socket.on('edit_message', async ({ channelId, msgId, text }) => {
+    if (!currentUser || !channelId || !msgId) return;
+
+    try {
+      if (!(await ensureChannelParticipantAccess(channelId, currentUser.id))) return;
+
+      let skipChatNormalize = false;
+      try {
+        const chSnap = await findChannel({ id: channelId });
+        skipChatNormalize = !!(chSnap && chSnap.ddGame);
+      } catch (_) { /* non-fatal */ }
+
+      const processed = processOutgoingChatText(typeof text === 'string' ? text : '', { skipChatNormalize });
+      if (!processed.trim()) return;
+
+      const msgs = await getMessages(channelId);
+      const msg = msgs.find((m) => m.id === msgId);
+      if (!msg || msg.userId !== currentUser.id || msg.userId === ROBOT_DM_ID) return;
+
+      msg.text = processed;
+      msg.editedAt = Date.now();
+      await updateMessagesForChannel(channelId, msgs);
+      io.to(channelId).emit('message_updated', {
+        channelId,
+        msgId,
+        text: processed,
+        editedAt: msg.editedAt,
+      });
+    } catch (e) { console.error('DB error (edit_message):', e.message); }
+  });
+
+  socket.on('edit_thread_reply', async ({ channelId, parentMsgId, replyId, text }) => {
+    if (!currentUser || !channelId || !parentMsgId || !replyId) return;
+
+    try {
+      if (!(await ensureChannelParticipantAccess(channelId, currentUser.id))) return;
+
+      let skipChatNormalize = false;
+      try {
+        const chSnap = await findChannel({ id: channelId });
+        skipChatNormalize = !!(chSnap && chSnap.ddGame);
+      } catch (_) { /* non-fatal */ }
+
+      const processed = processOutgoingChatText(typeof text === 'string' ? text : '', { skipChatNormalize });
+      if (!processed.trim()) return;
+
+      const msgs = await getMessages(channelId);
+      const parent = msgs.find((m) => m.id === parentMsgId);
+      if (!parent || !parent.threadReplies) return;
+
+      const reply = parent.threadReplies.find((r) => r.id === replyId);
+      if (!reply || reply.userId !== currentUser.id || reply.userId === ROBOT_DM_ID) return;
+
+      reply.text = processed;
+      reply.editedAt = Date.now();
+      await updateMessagesForChannel(channelId, msgs);
+      io.to(channelId).emit('thread_reply_updated', {
+        channelId,
+        parentMsgId,
+        replyId,
+        text: processed,
+        editedAt: reply.editedAt,
+      });
+    } catch (e) { console.error('DB error (edit_thread_reply):', e.message); }
+  });
+
   socket.on('create_channel', async ({ name, topic, visibility, memberIds }) => {
     if (!currentUser || !name?.trim()) return;
 
