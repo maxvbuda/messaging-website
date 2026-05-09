@@ -1,11 +1,14 @@
 /* ========================================
-   SlackFlow — Client
-   Connects to remote backend via Socket.IO.
-   Default server URL is set in DEFAULT_SERVER_URL (workspaces block).
+   Rally — Client
+   Self-hosted team chat (rooms, DMs, threads)
    ======================================== */
 
 (function () {
   'use strict';
+
+  /** Product display name (shown in UI defaults and copy). Storage keys stay prefixed `sf_*` for compatibility. */
+  const RALLY_PRODUCT = 'Rally';
+  const RALLY_DEFAULT_WORKSPACE = `${RALLY_PRODUCT} HQ`;
 
   // ── Theme ──
   const THEMES = ['dark', 'midnight', 'forest', 'sunset', 'rose', 'light'];
@@ -76,9 +79,11 @@
   ];
 
   const DM_HANDBOOK_STORIES =
-    typeof globalThis !== 'undefined' && Array.isArray(globalThis.slackflowDmHandbook)
-      ? globalThis.slackflowDmHandbook
-      : [];
+    typeof globalThis !== 'undefined' && Array.isArray(globalThis.rallyDmHandbook)
+      ? globalThis.rallyDmHandbook
+      : typeof globalThis !== 'undefined' && Array.isArray(globalThis.slackflowDmHandbook)
+        ? globalThis.slackflowDmHandbook
+        : [];
   let dmHandbookSelectedStoryId = '';
 
   /** Synthetic DM user (offline/local + server payloads). Mirrors server `ROBOT_DM_ID`. */
@@ -283,8 +288,8 @@
 
   function channelDisplayName(channelId) {
     const ch = channels.find(c => c.id === channelId);
-    if (!ch) return 'SlackFlow';
-    return channelId.startsWith('dm_') ? ch.name : '#' + ch.name;
+    if (!ch) return RALLY_PRODUCT;
+    return ch.name;
   }
 
   function stopTitleFlash() {
@@ -383,7 +388,7 @@
     return tail ? `\u{1F389} ${tail}` : '\u{1F389}';
   }
 
-  function slackflowCelebrateWorthy(txt) {
+  function rallyCelebrateWorthy(txt) {
     if (!txt || typeof txt !== 'string') return false;
     const raw = txt.toLowerCase();
     if (/[\u{1F389}\u{1F38A}\u{2728}\u{1F483}\u{1F57A}]/u.test(txt)) return true;
@@ -393,8 +398,8 @@
     return cheer.test(raw);
   }
 
-  let slackflowCelebrateRunning = false;
-  function slackflowCelebratePrefersReduced() {
+  let rallyCelebrateRunning = false;
+  function rallyCelebratePrefersReduced() {
     try {
       return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     } catch (_) {
@@ -403,28 +408,28 @@
   }
 
   /** Confetti-ish burst for wins — everyone viewing the channel sees it together. */
-  function triggerSlackFlowCelebrate() {
-    if (slackflowCelebrateRunning) return;
-    slackflowCelebrateRunning = true;
+  function triggerRallyBurst() {
+    if (rallyCelebrateRunning) return;
+    rallyCelebrateRunning = true;
     const ca = $('#chatArea');
-    if (slackflowCelebratePrefersReduced()) {
+    if (rallyCelebratePrefersReduced()) {
       if (ca) {
-        ca.classList.add('slackflow-celebrate-flash');
+        ca.classList.add('rally-burst-flash');
         setTimeout(() => {
-          ca.classList.remove('slackflow-celebrate-flash');
-          slackflowCelebrateRunning = false;
+          ca.classList.remove('rally-burst-flash');
+          rallyCelebrateRunning = false;
         }, 620);
-      } else slackflowCelebrateRunning = false;
+      } else rallyCelebrateRunning = false;
       return;
     }
     const holder = document.createElement('div');
-    holder.className = 'slackflow-celebrate';
+    holder.className = 'rally-burst-layer';
     holder.setAttribute('aria-hidden', 'true');
-    const colors = ['#6c5ce7', '#00cec9', '#fdcb6e', '#e17055', '#e84393', '#2ecc71', '#0984e3', '#a29bfe', '#dfe6e9'];
+    const colors = ['#2dd4bf', '#14b8a6', '#fb7185', '#fbbf24', '#38bdf8', '#a78bfa', '#f472b6', '#e2e8f0'];
     const n = 52;
     for (let i = 0; i < n; i++) {
       const p = document.createElement('span');
-      p.className = 'slackflow-celebrate-bit';
+      p.className = 'rally-burst-piece';
       const w = 7 + Math.random() * 5;
       p.style.width = `${w}px`;
       p.style.height = `${w * 1.15}px`;
@@ -442,14 +447,14 @@
     document.body.appendChild(holder);
     setTimeout(() => {
       holder.remove();
-      slackflowCelebrateRunning = false;
+      rallyCelebrateRunning = false;
     }, 3600);
   }
 
-  function maybeSlackFlowCelebrate(text, channelId) {
+  function maybeRallyBurst(text, channelId) {
     if (channelId !== activeChannelId) return;
-    if (!slackflowCelebrateWorthy(text || '')) return;
-    requestAnimationFrame(() => triggerSlackFlowCelebrate());
+    if (!rallyCelebrateWorthy(text || '')) return;
+    requestAnimationFrame(() => triggerRallyBurst());
   }
 
   function playNotificationSound() {
@@ -573,7 +578,7 @@
   function lsSave(key, d) { localStorage.setItem(key, JSON.stringify(d)); }
 
   let bc;
-  try { bc = new BroadcastChannel('slackflow_sync'); } catch { bc = null; }
+  try { bc = new BroadcastChannel('rally_workspace_sync'); } catch { bc = null; }
   function broadcast(type, payload) {
     if (bc && !inServerMode()) bc.postMessage({ type, payload, senderId: currentUser ? currentUser.id : null });
   }
@@ -611,13 +616,14 @@
             w.url = typeof w.url === 'string' ? normalizeServerUrl(w.url) : '';
             if (!('token' in w)) w.token = null;
           });
-          if (state.list.length === 1 && state.list[0].label === 'SlackFlow 2') {
-            state.list[0].label = 'SlackFlow HQ';
+          if (state.list.length === 1 && (state.list[0].label === 'SlackFlow 2' || state.list[0].label === 'SlackFlow HQ')) {
+            state.list[0].label = RALLY_DEFAULT_WORKSPACE;
             localStorage.setItem(WORKSPACES_LS, JSON.stringify(state));
           } else {
             let touched = false;
             state.list.forEach(w => {
-              if (w.label === 'SlackFlow 2') { w.label = 'SlackFlow'; touched = true; }
+              if (w.label === 'SlackFlow 2' || w.label === 'SlackFlow HQ') { w.label = RALLY_DEFAULT_WORKSPACE; touched = true; }
+              if (w.label === 'SlackFlow') { w.label = RALLY_PRODUCT; touched = true; }
             });
             if (touched) localStorage.setItem(WORKSPACES_LS, JSON.stringify(state));
           }
@@ -629,7 +635,7 @@
     const id = 'ws_default';
     const baseUrl = normalizeServerUrl(DEFAULT_SERVER_URL);
     const state = {
-      list: [{ id, label: 'SlackFlow HQ', url: baseUrl, token: baseUrl ? (legacyTok || null) : null }],
+      list: [{ id, label: RALLY_DEFAULT_WORKSPACE, url: baseUrl, token: baseUrl ? (legacyTok || null) : null }],
       activeId: id,
     };
     localStorage.setItem(WORKSPACES_LS, JSON.stringify(state));
@@ -753,7 +759,7 @@
     const el = $('#sidebarWorkspaceTitle');
     if (!el) return;
     const w = activeWorkspace();
-    el.textContent = w ? w.label : 'SlackFlow';
+    el.textContent = w ? w.label : RALLY_PRODUCT;
   }
 
   function switchWorkspace(wsId) {
@@ -798,7 +804,7 @@
     const defUrl = normalizeServerUrl(sameServerDefaultUrl());
     if (lab) {
       const alreadyHasThisServer = wsState.list.some(w => normalizeServerUrl(w.url) === defUrl && defUrl);
-      lab.value = alreadyHasThisServer ? 'SlackFlow' : '';
+      lab.value = alreadyHasThisServer ? RALLY_PRODUCT : '';
     }
     if (u) u.value = sameServerDefaultUrl();
     if (err) { err.textContent = ''; err.classList.remove('visible'); }
@@ -827,7 +833,7 @@
     let base = normalizeServerUrl(parsed.origin + (parsed.pathname === '/' ? '' : parsed.pathname.replace(/\/$/, '')));
     if (!base) base = parsed.origin;
     const alreadySameServer = wsState.list.some(w => normalizeServerUrl(w.url) === base);
-    const label = labIn || (alreadySameServer ? 'SlackFlow' : (parsed.hostname.replace(/^www\./, '') || 'Workspace'));
+    const label = labIn || (alreadySameServer ? RALLY_PRODUCT : (parsed.hostname.replace(/^www\./, '') || 'Workspace'));
     const id = 'ws_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
     wsState.list.push({ id, label, url: base, token: null });
     wsState.activeId = id;
@@ -1501,7 +1507,7 @@
           });
         }
         if (cid === activeChannelId) renderMessages();
-        if (msg && msg.text) maybeSlackFlowCelebrate(msg.text, cid);
+        if (msg && msg.text) maybeRallyBurst(msg.text, cid);
       }
       if (type === 'thread_reply') {
         messages = lsGetAllMessages();
@@ -1522,7 +1528,7 @@
           renderMessages();
           if (activeThreadMsgId === payload.parentMsgId) renderThread(payload.parentMsgId);
         }
-        if (last && last.text) maybeSlackFlowCelebrate(last.text, cid);
+        if (last && last.text) maybeRallyBurst(last.text, cid);
       }
       if (type === 'message_deleted' && payload.channelId === activeChannelId) { messages = lsGetAllMessages(); renderMessages(); }
       if (type === 'message_updated' || type === 'thread_reply_updated') {
@@ -2078,7 +2084,7 @@
         });
       }
       if (channelId === activeChannelId) renderMessages();
-      if (message.text) maybeSlackFlowCelebrate(message.text, channelId);
+      if (message.text) maybeRallyBurst(message.text, channelId);
     });
     socket.on('thread_reply', ({ channelId, parentMsgId, reply }) => {
       const msgs = messages[channelId]; if (!msgs) return;
@@ -2096,7 +2102,7 @@
         });
       }
       if (channelId === activeChannelId) { renderMessages(); if (activeThreadMsgId === parentMsgId) renderThread(parentMsgId); }
-      if (reply.text) maybeSlackFlowCelebrate(reply.text, channelId);
+      if (reply.text) maybeRallyBurst(reply.text, channelId);
     });
     socket.on('reaction_updated', ({ channelId, msgId, reactions }) => {
       const msgs = messages[channelId]; if (!msgs) return;
@@ -2252,7 +2258,7 @@
       }
       return `
       <li class="${ch.id === activeChannelId ? 'active' : ''}${ch.ddGame ? ' channel-dd-game' : ''}" data-channel="${ch.id}">
-        <span class="channel-hash">#</span>${inner}
+        <span class="channel-room-glyph">\u25C7</span>${inner}
       </li>`;
     }).join('');
   }
@@ -2294,12 +2300,12 @@
       headerChannelName.textContent = `${resolveUser(ch.ddDmUserId).name} (DM)`;
       headerTopic.textContent = ch.topic || '';
       messageInput.placeholder = 'Message the party…';
-      document.querySelector('.header-hash').textContent = '🎲';
+      document.querySelector('.chat-header-glyph').textContent = '🎲';
     } else {
       headerChannelName.textContent = ch ? ch.name : 'unknown';
       headerTopic.textContent = ch ? (ch.topic || '') : '';
-      messageInput.placeholder = ch ? `Message ${isDM ? '' : '#'}${ch.name}` : 'Message';
-      document.querySelector('.header-hash').textContent = isDM ? '💬' : '#';
+      messageInput.placeholder = ch ? `Message · ${ch.name}` : 'Message';
+      document.querySelector('.chat-header-glyph').textContent = isDM ? '💬' : '\u25C7';
     }
     updateChannelAccessButton();
     updateEndDdSessionButton();
@@ -2314,9 +2320,9 @@
           <h2>D&amp;D session</h2>
           <p><strong>${escHtml(dm.name)}</strong> is the DM.${ch.topic ? ' ' + escHtml(ch.topic) : ''} DMs: open <strong>Handbook</strong> for premade story seeds. Host or DM: tap <strong>End game</strong> when the session wraps.</p></div>`;
       } else {
-        html += `<div class="channel-intro"><div class="channel-intro-icon">${isDM ? '💬' : '#'}</div>
-        <h2>${isDM ? '' : '#'}${escHtml(ch.name)}</h2>
-        <p>${ch.topic ? escHtml(ch.topic) + '. ' : ''}This is the very beginning of ${isDM ? 'your conversation' : `the <strong>#${escHtml(ch.name)}</strong> channel`}.</p></div>`;
+        html += `<div class="channel-intro"><div class="channel-intro-icon">${isDM ? '💬' : '\u25C7'}</div>
+        <h2>${escHtml(ch.name)}</h2>
+        <p>${ch.topic ? escHtml(ch.topic) + '. ' : ''}This is the start of ${isDM ? 'your direct line' : `the <strong>${escHtml(ch.name)}</strong> room`}.</p></div>`;
       }
     }
 
@@ -2354,7 +2360,7 @@
       lastUserId = msg.userId; lastTs = msg.ts;
     });
 
-    if (!msgs.length && ch) html += `<div style="text-align:center;padding:40px 20px;color:var(--text-muted)">No messages yet. Be the first to say something!<div style="margin-top:12px;font-size:13px;line-height:1.45;color:var(--text-secondary)"><span aria-hidden="true">✨ </span>Celebrate with the team — try <kbd class="slackflow-inline-kbd">/party</kbd> plus your note, or toss in a 🎉.</div></div>`;
+    if (!msgs.length && ch) html += `<div style="text-align:center;padding:40px 20px;color:var(--text-muted)">No messages yet. Say hello and set the tone.<div style="margin-top:12px;font-size:13px;line-height:1.45;color:var(--text-secondary)"><span aria-hidden="true">✨ </span>Big moment? Try <kbd class="rally-kbd">/party</kbd> with your note, or drop a 🎉.</div></div>`;
     messagesListEl.innerHTML = html;
     scrollToBottom();
     const vBtn = $('#videoCallBtn');
@@ -2372,7 +2378,7 @@
     if (!pm) return;
     activeThreadMsgId = msgId;
     const ch = channels.find(c => c.id === activeChannelId);
-    threadChannel.textContent = ch ? `#${ch.name}` : '';
+    threadChannel.textContent = ch ? `${ch.name}` : '';
     const pu = resolveUser(pm.userId, pm.userName);
     const rootEditable = pu.id === currentUser.id && pu.id !== ROBOT_DM_ID;
     const rootEdited = pm.editedAt ? '<span class="msg-edited">(edited)</span>' : '';
@@ -2633,7 +2639,7 @@ function expandPolyhedralRollEasterEgg(rawTrimmed) {
   const sides = parseInt(m[1], 10);
   const allowed = new Set([2, 3, 4, 6, 8, 10, 12, 20, 100]);
   if (!allowed.has(sides)) {
-    return '🎒 That die isn’t in the SlackFlow pouch. Use /roll-d2, d3, d4, d6, d8, d10, d12, d20, or d100.';
+    return '🎒 That die isn’t in the Rally dice bag. Use /roll-d2, d3, d4, d6, d8, d10, d12, d20, or d100.';
   }
 
   if (sides === 2) {
@@ -2666,7 +2672,7 @@ function expandPolyhedralRollEasterEgg(rawTrimmed) {
       8: ' — Peak octahedron.',
       10: ' — Maximum single digit.',
       12: ' — The d12 actually mattered!',
-      20: ' — Natural twenty! SlackFlow nerds rejoice.',
+      20: ' — Natural twenty! Rally cheers.',
       100: ' — 💯 on the percentile. Legend.',
     };
     tag = high[sides] || '';
@@ -2675,8 +2681,9 @@ function expandPolyhedralRollEasterEgg(rawTrimmed) {
 }
 
 function chatNormalizeTyping() {
-  return typeof globalThis !== 'undefined' && typeof globalThis.slackflowChatNormalize === 'function'
-    ? globalThis.slackflowChatNormalize : null;
+  if (typeof globalThis !== 'undefined' && typeof globalThis.rallyChatNormalize === 'function') return globalThis.rallyChatNormalize;
+  if (typeof globalThis !== 'undefined' && typeof globalThis.slackflowChatNormalize === 'function') return globalThis.slackflowChatNormalize;
+  return null;
 }
 
 /** Map textarea caret indices after normalize(), assuming one contiguous edited region mid-string. */
@@ -2775,7 +2782,7 @@ function applyComposerNormalize(el, channelIdOpt) {
         return;
       }
       if (!activeChannelId) {
-        alert('No channel is selected.');
+        alert('No room is selected.');
         return;
       }
       if (isThread && threadParentMsgId) {
@@ -2798,7 +2805,7 @@ function applyComposerNormalize(el, channelIdOpt) {
           broadcast('thread_reply', { channelId: activeChannelId, parentMsgId: threadParentMsgId });
           renderThread(threadParentMsgId); renderMessages();
           scheduleLocalRobotDmReply(activeChannelId, outboundTrim);
-          maybeSlackFlowCelebrate(msg.text, activeChannelId);
+          maybeRallyBurst(msg.text, activeChannelId);
         }
       } else {
         lsAppendMessage(activeChannelId, msg);
@@ -2806,7 +2813,7 @@ function applyComposerNormalize(el, channelIdOpt) {
         broadcast('new_message', { channelId: activeChannelId, msgId: msg.id });
         renderMessages();
         scheduleLocalRobotDmReply(activeChannelId, outboundTrim);
-        maybeSlackFlowCelebrate(filteredText, activeChannelId);
+        maybeRallyBurst(filteredText, activeChannelId);
       }
     }
   }
@@ -2991,7 +2998,7 @@ function applyComposerNormalize(el, channelIdOpt) {
       const sq = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       searchResultsInner.innerHTML = results.map(r => {
         const u = resolveUser(r.msg.userId), hl = escHtml(r.msg.text).replace(new RegExp(`(${sq})`,'gi'), '<mark>$1</mark>');
-        return `<div class="search-result-item" data-channel="${r.channelId}"><div class="search-result-channel">#${escHtml(r.channel)} · ${escHtml(u.name)} · ${formatTime(r.msg.ts)}</div><div class="search-result-text">${hl}</div></div>`;
+        return `<div class="search-result-item" data-channel="${r.channelId}"><div class="search-result-channel">\u25C7 ${escHtml(r.channel)} · ${escHtml(u.name)} · ${formatTime(r.msg.ts)}</div><div class="search-result-text">${hl}</div></div>`;
       }).join('');
     }
     searchResults.classList.add('open');
@@ -3519,7 +3526,7 @@ function applyComposerNormalize(el, channelIdOpt) {
       const slug = name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
       if (!slug) return;
       const chs = lsGetChannels();
-      if (chs.find(c => c.name === slug)) { alert('Channel already exists!'); return; }
+      if (chs.find(c => c.name === slug)) { alert('A room with that name already exists.'); return; }
       const id = 'c_' + Date.now();
       const doc = {
         id, name: slug, topic: desc || '', createdBy: currentUser.id,
@@ -4833,7 +4840,7 @@ ${hatSvg}
   }
 
   function initSfEggSurprise() {
-    const mark = document.querySelector('.header-hash');
+    const mark = document.querySelector('.chat-header-glyph');
     if (!mark) return;
     const HOLD_MS = 820;
     let token = null;

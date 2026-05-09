@@ -1,7 +1,7 @@
 {
-  "name": "slackflow",
+  "name": "rally-messaging",
   "version": "1.0.0",
-  "description": "Slack-like team messaging app with Node.js backend",
+  "description": "Rally — self-hosted team chat (rooms, DMs, threads) with Node.js + MongoDB",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

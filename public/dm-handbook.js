@@ -1,5 +1,5 @@
 (function (g) {
-  g.slackflowDmHandbook = [
+  const rallyDmStories = [
     {
       id: 'sunken-payroll',
       title: 'The Sunken Payroll',
@@ -137,4 +137,6 @@
       loot: 'Tuning fork keyed to planar static, earmuffs filtering magical suggestion, powdered resonance salt spices thunder once.',
     },
   ];
+  g.rallyDmHandbook = rallyDmStories;
+  g.slackflowDmHandbook = rallyDmStories;
 })(typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : this);

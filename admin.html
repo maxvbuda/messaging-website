@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SlackFlow Admin</title>
+  <title>Rally Admin</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700;900&display=swap" rel="stylesheet">
   <style>
@@ -122,7 +122,7 @@
   <div class="login-card">
     <div class="login-logo">⚙️</div>
     <h1>Admin Panel</h1>
-    <p>SlackFlow administration</p>
+    <p>Rally administration</p>
     <div class="field">
       <label>Admin Password</label>
       <input type="password" id="adminPw" placeholder="Enter admin password">
@@ -136,7 +136,7 @@
 <!-- Admin App -->
 <div id="adminApp">
   <div class="admin-header">
-    <h1>⚙️ SlackFlow Admin</h1>
+    <h1>⚙️ Rally Admin</h1>
     <div style="display:flex;align-items:center;gap:12px">
       <span id="adminBadge"></span>
       <button class="btn-sm" id="adminLogoutBtn">Sign Out</button>
@@ -209,7 +209,7 @@
 
     <!-- Feature Lab -->
     <div class="tab-pane" id="tab-featureLab">
-      <p style="font-size:12px;color:var(--muted);margin:-4px 0 14px;max-width:720px;line-height:1.45">Private collaboration threads unlocked in-app for signed-in SlackFlow accounts. Reply here—the user receives updates via live sync when Feature Lab is open.</p>
+      <p style="font-size:12px;color:var(--muted);margin:-4px 0 14px;max-width:720px;line-height:1.45">Private collaboration threads unlocked in-app for signed-in Rally accounts. Reply here—the user receives updates via live sync when Feature Lab is open.</p>
       <div id="featureLabAdminList"><div class="empty">Open this tab to load threads.</div></div>
     </div>
   </div>
@@ -314,7 +314,7 @@
       }
       adminToken = d.token;
       if (!adminToken) {
-        err.textContent = 'No token in response. Is BACKEND pointing to this SlackFlow server?';
+        err.textContent = 'No token in response. Is BACKEND pointing to this Rally server?';
         err.classList.add('show');
         return;
       }

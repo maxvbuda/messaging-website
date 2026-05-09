@@ -2,7 +2,7 @@
  * Shared typo + slang normalization for normal channels. The server skips this
  * step in D&D (`ddGame`) channels so “DM” / tabletop phrasing is not rewritten.
  * Does not expand "dm" / "dms" (still used when normalizing non-D&D text).
- * Exposed globally as `slackflowChatNormalize(text)` when loaded via <script>; also `require`-able by Node.
+ * Exposed globally as `rallyChatNormalize(text)` (legacy: `slackflowChatNormalize`).
  */
 (function (factory) {
   const api = factory();
@@ -10,6 +10,7 @@
     module.exports = api;
   }
   try {
+    if (typeof globalThis !== 'undefined') globalThis.rallyChatNormalize = api.normalizeChatText;
     if (typeof globalThis !== 'undefined') globalThis.slackflowChatNormalize = api.normalizeChatText;
   } catch (_) { /* noop */ }
 })(function chatNormalizeModule() {

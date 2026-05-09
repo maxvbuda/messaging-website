@@ -1,4 +1,4 @@
-// SlackFlow Server — MongoDB persistence
+// Rally server — MongoDB persistence for team chat
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -42,7 +42,7 @@ const io = new Server(server, {
 
 const PORT = process.env.PORT || 3000;
 const MONGODB_URI = process.env.MONGODB_URI;
-/** Database name in the cluster (override with MONGODB_DB or MONGODB_DB_NAME). Defaults to slackflow. */
+/** Database name in the cluster (override with MONGODB_DB or MONGODB_DB_NAME). Defaults to `slackflow` for backward compatibility. */
 const MONGODB_DB_NAME = (process.env.MONGODB_DB || process.env.MONGODB_DB_NAME || 'slackflow').trim() || 'slackflow';
 
 // ── Middleware ──
@@ -2151,7 +2151,7 @@ io.on('connection', (socket) => {
     try {
       const slug = name.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
       if (!slug) return;
-      if (await findChannel({ name: slug })) { socket.emit('error_msg', 'Channel already exists'); return; }
+      if (await findChannel({ name: slug })) { socket.emit('error_msg', 'That room name is already taken'); return; }
 
       const isPrivate = visibility === 'private';
       let mids = [];
@@ -2564,7 +2564,7 @@ function expandPolyhedralRollEasterEgg(rawTrimmed) {
   const sides = parseInt(m[1], 10);
   const allowed = new Set([2, 3, 4, 6, 8, 10, 12, 20, 100]);
   if (!allowed.has(sides)) {
-    return '🎒 That die isn’t in the SlackFlow pouch. Use /roll-d2, d3, d4, d6, d8, d10, d12, d20, or d100.';
+    return '🎒 That die isn’t in the Rally dice bag. Use /roll-d2, d3, d4, d6, d8, d10, d12, d20, or d100.';
   }
 
   if (sides === 2) {
@@ -2597,7 +2597,7 @@ function expandPolyhedralRollEasterEgg(rawTrimmed) {
       8: ' — Peak octahedron.',
       10: ' — Maximum single digit.',
       12: ' — The d12 actually mattered!',
-      20: ' — Natural twenty! SlackFlow nerds rejoice.',
+      20: ' — Natural twenty! Rally cheers.',
       100: ' — 💯 on the percentile. Legend.',
     };
     tag = high[sides] || '';
@@ -2762,13 +2762,13 @@ connectDB().then(async () => {
   await loadBlockedIps();
   await cleanupOrphanedMessages();
   server.listen(PORT, () => {
-    console.log(`SlackFlow server running on http://localhost:${PORT}`);
+    console.log(`Rally server listening on http://localhost:${PORT}`);
     console.log(`[http] Client IP: TRUST_PROXY=${TRUST_PROXY ? 'on (edge headers)' : 'off (socket peer only; set TRUST_PROXY=1 behind your own reverse proxy)'}`);
   });
 }).catch(err => {
   console.error('Failed to connect to MongoDB:', err.message);
   server.listen(PORT, () => {
-    console.log(`SlackFlow server running on http://localhost:${PORT} (in-memory mode)`);
+    console.log(`Rally server listening on http://localhost:${PORT} (in-memory mode)`);
     console.log(`[http] Client IP: TRUST_PROXY=${TRUST_PROXY ? 'on (edge headers)' : 'off (socket peer only; set TRUST_PROXY=1 behind your own reverse proxy)'}`);
   });
 });
