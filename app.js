@@ -15,7 +15,7 @@
 
   function applyTheme(theme) {
     if (!THEMES.includes(theme)) theme = 'dark';
-    document.documentElement.setAttribute('data-theme', theme === 'dark' ? '' : theme);
+    document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('sf_theme', theme);
     document.querySelectorAll('.theme-swatch').forEach(s => {
       s.classList.toggle('active', s.dataset.theme === theme);

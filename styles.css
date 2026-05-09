@@ -42,10 +42,10 @@
 
   --font-display: 'Syne', var(--font-sans-fallback);
   --font: 'DM Sans', var(--font-sans-fallback);
+  --font-sans-fallback: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 
-/* ========================================
-   Themes (override :root variables)
-   ======================================== */
+  color-scheme: dark;
+}
 
 [data-theme="midnight"] {
   --bg-darkest: #060d1a;
@@ -104,6 +104,7 @@
 }
 
 [data-theme="light"] {
+  color-scheme: light;
   --bg-darkest: #e8eef5;
   --bg-dark: #ffffff;
   --bg-medium: #f1f6fa;
