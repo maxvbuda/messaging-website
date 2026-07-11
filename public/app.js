@@ -15,7 +15,7 @@
 
   function applyTheme(theme) {
     if (!THEMES.includes(theme)) theme = 'dark';
-    document.documentElement.setAttribute('data-theme', theme === 'dark' ? '' : theme);
+    document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('sf_theme', theme);
     document.querySelectorAll('.theme-swatch').forEach(s => {
       s.classList.toggle('active', s.dataset.theme === theme);
@@ -164,6 +164,8 @@
   let channels = [];
   let messages = {};
   let activeChannelId = 'c_general';
+  /** Per-channel unread message counts (session-scoped; cleared when the channel is opened). */
+  const unreadCounts = Object.create(null);
   let activeThreadMsgId = null;
   /** True when AI draft modal was opened from the thread composer. */
   let aiDraftFromThread = false;
@@ -2084,6 +2086,10 @@
         });
       }
       if (channelId === activeChannelId) renderMessages();
+      else if (currentUser && message.userId !== currentUser.id) {
+        unreadCounts[channelId] = (unreadCounts[channelId] || 0) + 1;
+        renderChannelList(); renderDMList();
+      }
       if (message.text) maybeRallyBurst(message.text, channelId);
     });
     socket.on('thread_reply', ({ channelId, parentMsgId, reply }) => {
@@ -2256,9 +2262,10 @@
       } else {
         inner = `<span>${escHtml(ch.name)}</span>`;
       }
+      const unread = unreadCounts[ch.id] || 0;
       return `
-      <li class="${ch.id === activeChannelId ? 'active' : ''}${ch.ddGame ? ' channel-dd-game' : ''}" data-channel="${ch.id}">
-        <span class="channel-room-glyph">\u25C7</span>${inner}
+      <li class="${ch.id === activeChannelId ? 'active' : ''}${ch.ddGame ? ' channel-dd-game' : ''}${unread ? ' has-unread' : ''}" data-channel="${ch.id}">
+        <span class="channel-room-glyph">\u25C7</span>${inner}${unread ? `<span class="unread-badge">${unread > 99 ? '99+' : unread}</span>` : ''}
       </li>`;
     }).join('');
   }
@@ -2266,12 +2273,17 @@
   function renderDMList() {
     const others = users.filter(u => u.id !== currentUser.id && u.id !== ROBOT_DM_ID);
     if (!others.length) { dmListEl.innerHTML = '<li style="color:var(--text-muted);font-size:12px;cursor:default;padding-left:26px">No other users yet</li>'; return; }
-    dmListEl.innerHTML = others.map(u => `
-      <li data-user="${u.id}">
+    dmListEl.innerHTML = others.map(u => {
+      const dmId = currentUser ? 'dm_' + [currentUser.id, u.id].sort().join('_') : '';
+      const unread = (dmId && unreadCounts[dmId]) || 0;
+      return `
+      <li data-user="${u.id}"${unread ? ' class="has-unread"' : ''}>
         ${avatarEl(u, 'dm-avatar')}
         <span>${escHtml(u.name)}</span>
+        ${unread ? `<span class="unread-badge">${unread > 99 ? '99+' : unread}</span>` : ''}
         <span class="dm-status ${u.status === 'online' ? 'online' : 'offline'}"></span>
-      </li>`).join('');
+      </li>`;
+    }).join('');
   }
 
   function formatTime(ts) { return new Date(ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }
@@ -2284,8 +2296,21 @@
   }
   function formatText(text) {
     return escHtml(text).replace(/`([^`]+)`/g, '<code>$1</code>')
-      .replace(/(https?:\/\/[^\s]+)/g, '<a href="$1" target="_blank">$1</a>')
+      .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/(^|[\s(])\*(\S(?:[^*\n]*\S)?)\*(?=$|[\s).,!?:;])/g, '$1<em>$2</em>')
+      .replace(/~~([^~\n]+)~~/g, '<del>$1</del>')
+      .replace(/(https?:\/\/[^\s]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>')
       .replace(/@(\w[\w\s]*\w)/g, '<span class="mention">@$1</span>');
+  }
+  /** Emoji-only messages (up to 6) render extra large. */
+  function isJumboEmoji(text) {
+    const t = (text || '').trim();
+    if (!t || t.length > 24) return false;
+    try {
+      if (t.replace(/\p{Extended_Pictographic}|\p{Emoji_Presentation}|[‍️\u{1F3FB}-\u{1F3FF}\s]/gu, '')) return false;
+      const n = (t.match(/\p{Extended_Pictographic}/gu) || []).length;
+      return n > 0 && n <= 6;
+    } catch { return false; }
   }
   function resolveUser(uid, snapshotName) {
     return users.find(u => u.id === uid) || { id: uid, name: snapshotName || 'Deleted User', status: 'offline' };
@@ -2349,7 +2374,7 @@
         ${avatarEl(user, 'message-avatar')}
         <div class="message-body">
           <div class="message-meta"><span class="message-author">${escHtml(user.name)}</span><span class="message-time">${formatTime(msg.ts)}${editedMk ? ` ${editedMk}` : ''}</span></div>
-          ${msg.text ? `<div class="message-text">${formatText(msg.text)}</div>` : ''}${renderFileAttachment(msg.file)}${reactionsHtml}${threadHtml}
+          ${msg.text ? `<div class="message-text${isJumboEmoji(msg.text) ? ' jumbo-emoji' : ''}">${formatText(msg.text)}</div>` : ''}${renderFileAttachment(msg.file)}${reactionsHtml}${threadHtml}
         </div>
         <div class="message-actions">
           <button class="btn-icon" title="React" data-action="react" data-msg="${msg.id}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg></button>
@@ -2384,7 +2409,7 @@
     const rootEdited = pm.editedAt ? '<span class="msg-edited">(edited)</span>' : '';
     let html = `<div class="message" data-msg="${pm.id}">${avatarEl(pu, 'message-avatar')}
       <div class="message-body"><div class="message-meta"><span class="message-author">${escHtml(pu.name)}</span><span class="message-time">${formatTime(pm.ts)}${rootEdited ? ` ${rootEdited}` : ''}</span></div>
-      ${pm.text ? `<div class="message-text">${formatText(pm.text)}</div>` : ''}${renderFileAttachment(pm.file)}</div>
+      ${pm.text ? `<div class="message-text${isJumboEmoji(pm.text) ? ' jumbo-emoji' : ''}">${formatText(pm.text)}</div>` : ''}${renderFileAttachment(pm.file)}</div>
       ${rootEditable ? `<div class="message-actions">
         <button class="btn-icon" title="Edit" data-action="edit-thread-root" data-msg="${pm.id}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
       </div>` : ''}</div>
@@ -2395,7 +2420,7 @@
       const rEdited = r.editedAt ? '<span class="msg-edited">(edited)</span>' : '';
       html += `<div class="message" data-msg="${r.id}">${avatarEl(u, 'message-avatar')}
         <div class="message-body"><div class="message-meta"><span class="message-author">${escHtml(u.name)}</span><span class="message-time">${formatTime(r.ts)}${rEdited ? ` ${rEdited}` : ''}</span></div>
-        ${r.text ? `<div class="message-text">${formatText(r.text)}</div>` : ''}${renderFileAttachment(r.file)}</div>
+        ${r.text ? `<div class="message-text${isJumboEmoji(r.text) ? ' jumbo-emoji' : ''}">${formatText(r.text)}</div>` : ''}${renderFileAttachment(r.file)}</div>
         ${rEditable ? `<div class="message-actions">
           <button class="btn-icon" title="Edit" data-action="edit-thread-reply" data-parent="${msgId}" data-reply="${r.id}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
         </div>` : ''}</div>`;
@@ -2977,9 +3002,10 @@ function applyComposerNormalize(el, channelIdOpt) {
     if (currentUser && !isDmTarget && targetCh && !userCanSeeChannelLocal(targetCh, currentUser.id)) return;
     if (inServerMode() && socket) { socket.emit('leave_channel', activeChannelId); }
     activeChannelId = chId;
+    delete unreadCounts[chId];
     if (inServerMode() && socket) { socket.emit('join_channel', chId); }
     threadPanel.classList.remove('open'); activeThreadMsgId = null;
-    renderChannelList(); renderMessages(); closeMobileSidebar();
+    renderChannelList(); renderDMList(); renderMessages(); closeMobileSidebar();
   }
 
   function performSearch(query) {
@@ -3003,6 +3029,77 @@ function applyComposerNormalize(el, channelIdOpt) {
     }
     searchResults.classList.add('open');
   }
+
+  // ── Quick switcher (Cmd/Ctrl+K) ──
+  let qsEl = null, qsItems = [], qsIndex = 0;
+  function qsBuild() {
+    if (qsEl) return;
+    qsEl = document.createElement('div');
+    qsEl.id = 'quickSwitcher';
+    qsEl.innerHTML = '<div class="qs-backdrop"></div><div class="qs-panel"><input id="qsInput" type="text" placeholder="Jump to a room or person…" autocomplete="off"><ul id="qsList"></ul><div class="qs-hint"><kbd class="rally-kbd">↑↓</kbd> navigate · <kbd class="rally-kbd">↵</kbd> open · <kbd class="rally-kbd">esc</kbd> close</div></div>';
+    document.body.appendChild(qsEl);
+    qsEl.querySelector('.qs-backdrop').addEventListener('click', qsClose);
+    const input = qsEl.querySelector('#qsInput');
+    input.addEventListener('input', () => qsRender(input.value));
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown') { e.preventDefault(); qsIndex = Math.min(qsIndex + 1, qsItems.length - 1); qsHighlight(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); qsIndex = Math.max(qsIndex - 1, 0); qsHighlight(); }
+      else if (e.key === 'Enter') { e.preventDefault(); qsPick(qsIndex); }
+      else if (e.key === 'Escape') { e.preventDefault(); qsClose(); }
+    });
+    qsEl.querySelector('#qsList').addEventListener('click', (e) => {
+      const li = e.target.closest('li'); if (li) qsPick(Number(li.dataset.idx));
+    });
+  }
+  function qsCandidates(q) {
+    const query = q.trim().toLowerCase();
+    const rooms = visibleNonDmChannels().map((ch) => ({ kind: 'channel', id: ch.id, label: ch.name, sub: ch.topic || '' }));
+    const people = users.filter(u => currentUser && u.id !== currentUser.id && u.id !== ROBOT_DM_ID).map((u) => ({ kind: 'dm', id: u.id, label: u.name, sub: u.status === 'online' ? 'online' : 'offline' }));
+    const all = [...rooms, ...people];
+    if (!query) return all.slice(0, 12);
+    const starts = [], contains = [];
+    all.forEach((c) => {
+      const l = c.label.toLowerCase();
+      if (l.startsWith(query)) starts.push(c);
+      else if (l.includes(query)) contains.push(c);
+    });
+    return [...starts, ...contains].slice(0, 12);
+  }
+  function qsRender(q) {
+    qsItems = qsCandidates(q || '');
+    qsIndex = 0;
+    const list = qsEl.querySelector('#qsList');
+    list.innerHTML = qsItems.length
+      ? qsItems.map((c, i) => `<li data-idx="${i}" class="${i === 0 ? 'selected' : ''}"><span class="qs-glyph">${c.kind === 'channel' ? '◇' : '@'}</span><span class="qs-label">${escHtml(c.label)}</span>${c.sub ? `<span class="qs-sub">${escHtml(c.sub)}</span>` : ''}${unreadCounts[c.kind === 'channel' ? c.id : (currentUser ? 'dm_' + [currentUser.id, c.id].sort().join('_') : '')] ? '<span class="unread-badge qs-unread">new</span>' : ''}</li>`).join('')
+      : '<li class="qs-empty">No matches</li>';
+  }
+  function qsHighlight() {
+    qsEl.querySelectorAll('#qsList li').forEach((li, i) => li.classList.toggle('selected', i === qsIndex));
+    const sel = qsEl.querySelector('#qsList li.selected');
+    if (sel) sel.scrollIntoView({ block: 'nearest' });
+  }
+  function qsPick(i) {
+    const c = qsItems[i]; if (!c) return;
+    qsClose();
+    if (c.kind === 'channel') switchChannel(c.id);
+    else openDmWithUser(c.id);
+  }
+  function qsOpen() {
+    if (!currentUser) return;
+    qsBuild();
+    qsEl.classList.add('open');
+    const input = qsEl.querySelector('#qsInput');
+    input.value = '';
+    qsRender('');
+    requestAnimationFrame(() => input.focus());
+  }
+  function qsClose() { if (qsEl) qsEl.classList.remove('open'); }
+  document.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && String(e.key).toLowerCase() === 'k') {
+      e.preventDefault();
+      if (qsEl && qsEl.classList.contains('open')) qsClose(); else qsOpen();
+    }
+  });
 
   // ── UI helpers ──
   function openMobileSidebar() { sidebarEl.classList.add('mobile-open'); sidebarOverlay.classList.add('visible'); }
@@ -3253,9 +3350,7 @@ function applyComposerNormalize(el, channelIdOpt) {
 
   channelListEl.addEventListener('click', (e) => { const li = e.target.closest('li'); if (li && li.dataset.channel) switchChannel(li.dataset.channel); });
 
-  dmListEl.addEventListener('click', (e) => {
-    const li = e.target.closest('li'); if (!li || !li.dataset.user) return;
-    const userId = li.dataset.user;
+  function openDmWithUser(userId) {
     if (inServerMode() && socket) {
       socket.emit('open_dm', { targetUserId: userId });
     } else {
@@ -3265,6 +3360,11 @@ function applyComposerNormalize(el, channelIdOpt) {
       if (!chs.find(c => c.id === dmId)) { chs.push({ id: dmId, name: user.name, topic: `Direct message with ${user.name}`, createdBy: currentUser.id }); lsSaveChannels(chs); channels = chs; }
       switchChannel(dmId);
     }
+  }
+
+  dmListEl.addEventListener('click', (e) => {
+    const li = e.target.closest('li'); if (!li || !li.dataset.user) return;
+    openDmWithUser(li.dataset.user);
   });
 
   function onAttachmentDownloadClick(e) {

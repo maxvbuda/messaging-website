@@ -1034,6 +1034,87 @@ li.channel-dd-game {
   font-weight: 700;
   cursor: pointer;
 }
+.message-text strong { font-weight: 700; }
+.message-text em { font-style: italic; }
+.message-text del { opacity: 0.65; }
+.message-text.jumbo-emoji { font-size: 34px; line-height: 1.25; }
+
+/* Unread badges (channel + DM lists) */
+.unread-badge {
+  margin-left: auto;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 3px 7px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+.channel-list li.has-unread > span:not(.unread-badge),
+.dm-list li.has-unread > span:not(.unread-badge):not(.dm-status) {
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+/* Quick switcher (Cmd/Ctrl+K) */
+#quickSwitcher { display: none; }
+#quickSwitcher.open { display: block; }
+#quickSwitcher .qs-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 300;
+}
+#quickSwitcher .qs-panel {
+  position: fixed;
+  top: 16vh; left: 50%;
+  transform: translateX(-50%);
+  width: min(560px, calc(100vw - 32px));
+  background: var(--bg-panel, var(--bg-dark));
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+  z-index: 301;
+  overflow: hidden;
+}
+#quickSwitcher #qsInput {
+  width: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 16px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border);
+}
+#quickSwitcher #qsList {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+#quickSwitcher #qsList li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+#quickSwitcher #qsList li.selected { background: var(--accent-muted); color: var(--text-primary); }
+#quickSwitcher #qsList li.qs-empty { cursor: default; color: var(--text-muted); justify-content: center; }
+#quickSwitcher .qs-glyph { width: 18px; text-align: center; color: var(--text-muted); flex-shrink: 0; }
+#quickSwitcher .qs-label { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#quickSwitcher .qs-sub { margin-left: auto; font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 45%; }
+#quickSwitcher .qs-unread { margin-left: 8px; }
+#quickSwitcher .qs-hint {
+  padding: 8px 14px;
+  border-top: 1px solid var(--border);
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
 
 /* Reactions */
 .reactions {
