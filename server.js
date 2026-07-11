@@ -8,6 +8,7 @@ const path = require('path');
 const { MongoClient } = require('mongodb');
 const multer = require('multer');
 const crypto = require('crypto');
+const compression = require('compression');
 const { normalizeChatText } = require('./public/chatNormalize.js');
 
 const app = express();
@@ -46,6 +47,7 @@ const MONGODB_URI = process.env.MONGODB_URI;
 const MONGODB_DB_NAME = (process.env.MONGODB_DB || process.env.MONGODB_DB_NAME || 'slackflow').trim() || 'slackflow';
 
 // ── Middleware ──
+app.use(compression());
 app.use(express.json());
 
 app.use((req, res, next) => {
@@ -59,7 +61,7 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), { maxAge: '5m' }));
 
 // ── MongoDB ──
 const upload = multer({
@@ -117,6 +119,21 @@ async function connectDB() {
   } catch (e) { /* index may exist */ }
   // Auto-expire sessions after 30 days
   await sessionsCol.createIndex({ createdAt: 1 }, { expireAfterSeconds: 60 * 60 * 24 * 30 });
+  // Hot-path lookup indexes — without these, every request forces a full collection scan
+  const hotIndexes = [
+    [sessionsCol, { token: 1 }, {}],
+    [usersCol, { id: 1 }, { unique: true }],
+    [usersCol, { username: 1 }, { unique: true, sparse: true }],
+    [usersCol, { email: 1 }, { unique: true, sparse: true }],
+    [channelsCol, { id: 1 }, { unique: true }],
+    [channelsCol, { name: 1 }, { unique: true, sparse: true }],
+    [messagesCol, { channelId: 1 }, { unique: true }],
+    [filesCol, { id: 1 }, { unique: true }],
+    [joinRequestsCol, { id: 1 }, { unique: true }],
+  ];
+  for (const [col, spec, opts] of hotIndexes) {
+    try { await col.createIndex(spec, opts); } catch (e) { console.warn('Index creation warning:', e.message); }
+  }
 
   // Seed default channels if none exist
   const count = await channelsCol.countDocuments();
@@ -208,14 +225,16 @@ async function getMessages(channelId) {
   return memData.messages[channelId] || [];
 }
 
-async function getAllMessages() {
+async function getMessagesForChannels(channelIds) {
   if (db) {
-    const docs = await messagesCol.find().toArray();
+    const docs = await messagesCol.find({ channelId: { $in: channelIds } }).toArray();
     const result = {};
     docs.forEach(d => { result[d.channelId] = d.messages; });
     return result;
   }
-  return memData.messages;
+  const result = {};
+  channelIds.forEach((cid) => { if (memData.messages[cid]) result[cid] = memData.messages[cid]; });
+  return result;
 }
 
 async function appendMessage(channelId, msg) {
@@ -576,15 +595,11 @@ app.get('/api/data', async (req, res) => {
     return res.status(403).json({ error: 'This account has been suspended.' });
   }
 
-  const [usersRaw, rawChannels, allMessages] = await Promise.all([getUsers(), getChannels(), getAllMessages()]);
+  const [usersRaw, rawChannels] = await Promise.all([getUsers(), getChannels()]);
   const users = withRobotDmUserList(usersRaw);
 
   const channels = rawChannels.filter((ch) => userCanSeeChannel(user.id, ch));
-  const visibleIds = new Set(channels.map((c) => c.id));
-  const messages = {};
-  visibleIds.forEach((cid) => {
-    if (allMessages[cid]) messages[cid] = allMessages[cid];
-  });
+  const messages = await getMessagesForChannels(channels.map((c) => c.id));
 
   const liveUsers = users.map(u => {
     const pub = publicUser(u);
