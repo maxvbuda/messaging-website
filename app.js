@@ -3166,13 +3166,52 @@ function applyComposerNormalize(el, channelIdOpt) {
 
   /** Wraps the current selection (or inserts markers at the caret) with markdown formatting. */
   const FORMAT_MARKERS = { bold: '**', italic: '*', strike: '~~', code: '`' };
+  /** True if `str` ends with `marker` as its own token, not as the tail of a longer marker (e.g. '*' inside '**'). */
+  function endsWithMarker(str, marker) {
+    if (!str.endsWith(marker)) return false;
+    if (marker === '*' && str.endsWith('**')) return false;
+    return true;
+  }
+  function startsWithMarker(str, marker) {
+    if (!str.startsWith(marker)) return false;
+    if (marker === '*' && str.startsWith('**')) return false;
+    return true;
+  }
+  /** Toggle: wraps the selection with markdown markers, or strips them if already applied. */
   function applyFormat(textarea, type) {
     const marker = FORMAT_MARKERS[type];
     if (!marker) return;
     const start = textarea.selectionStart, end = textarea.selectionEnd;
     const val = textarea.value;
     const selected = val.slice(start, end);
-    textarea.value = val.slice(0, start) + marker + selected + marker + val.slice(end);
+    const before = val.slice(0, start);
+    const after = val.slice(end);
+
+    // Selection itself is wrapped, e.g. user selected "**bold**" — unwrap in place.
+    if (selected.length >= marker.length * 2 && startsWithMarker(selected, marker) && endsWithMarker(selected, marker)) {
+      const inner = selected.slice(marker.length, selected.length - marker.length);
+      textarea.value = before + inner + after;
+      textarea.selectionStart = start;
+      textarea.selectionEnd = start + inner.length;
+      textarea.focus();
+      autoResize(textarea);
+      return;
+    }
+
+    // Selection sits inside existing markers, e.g. text is "**bold**" and only "bold" is selected — strip from outside.
+    if (selected && endsWithMarker(before, marker) && startsWithMarker(after, marker)) {
+      const newBefore = before.slice(0, before.length - marker.length);
+      const newAfter = after.slice(marker.length);
+      textarea.value = newBefore + selected + newAfter;
+      textarea.selectionStart = newBefore.length;
+      textarea.selectionEnd = newBefore.length + selected.length;
+      textarea.focus();
+      autoResize(textarea);
+      return;
+    }
+
+    // Otherwise, wrap.
+    textarea.value = before + marker + selected + marker + after;
     const caretStart = start + marker.length;
     textarea.selectionStart = caretStart;
     textarea.selectionEnd = caretStart + selected.length;

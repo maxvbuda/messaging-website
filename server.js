@@ -3,6 +3,7 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const bcrypt = require('bcryptjs');
+const argon2 = require('argon2');
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
 const { MongoClient } = require('mongodb');
@@ -539,6 +540,25 @@ app.post('/api/register', (_req, res) => {
   });
 });
 
+/** New passwords are hashed with Argon2id. */
+async function hashPassword(password) {
+  return argon2.hash(password, { type: argon2.argon2id });
+}
+
+/** Verifies against Argon2id or legacy bcrypt hashes; bcrypt matches are transparently rehashed to Argon2id. */
+async function verifyPassword(user, password) {
+  const hash = user.passwordHash;
+  if (!hash) return false;
+  if (hash.startsWith('$argon2')) {
+    return argon2.verify(hash, password);
+  }
+  const ok = await bcrypt.compare(password, hash);
+  if (ok) {
+    hashPassword(password).then((newHash) => updateUser(user.id, { passwordHash: newHash })).catch(() => {});
+  }
+  return ok;
+}
+
 app.post('/api/login', async (req, res) => {
   const { username, password } = req.body;
   const ip = getClientIp(req);
@@ -555,7 +575,7 @@ app.post('/api/login', async (req, res) => {
   const user = await findUser({ username: uname });
   if (!user) { recordFailedAttempt(bruteKey); return res.status(401).json({ error: 'Invalid username or password.' }); }
 
-  const match = await bcrypt.compare(password, user.passwordHash);
+  const match = await verifyPassword(user, password);
   if (!match) { recordFailedAttempt(bruteKey); return res.status(401).json({ error: 'Invalid username or password.' }); }
 
   if (user.banned || isBlockedName(user.username, user.name)) {
@@ -1154,7 +1174,7 @@ app.post('/api/register-request', async (req, res) => {
     });
   }
 
-  const hash = await bcrypt.hash(password, 10);
+  const hash = await hashPassword(password);
   const id = 'jr_' + uuidv4().slice(0, 12);
   const pendingToken = uuidv4();
   const ts = Date.now();
