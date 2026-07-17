@@ -190,6 +190,11 @@
 
       <div class="message-input-area" id="messageInputArea">
         <div class="file-preview" id="filePreview"></div>
+        <div class="input-toolbar">
+          <button class="format-btn" type="button" data-format="bold" title="Bold (Ctrl+B)" aria-label="Bold"><b>B</b></button>
+          <button class="format-btn" type="button" data-format="italic" title="Italic (Ctrl+I)" aria-label="Italic"><i>i</i></button>
+          <button class="format-btn" type="button" data-format="strike" title="Strikethrough (Ctrl+Shift+X)" aria-label="Strikethrough"><s>S</s></button>
+        </div>
         <div class="input-wrapper">
           <textarea id="messageInput" placeholder="Message #general" rows="1"></textarea>
           <div class="input-actions">
@@ -221,6 +226,11 @@
         </button>
       </div>
       <div class="thread-messages" id="threadMessages"></div>
+      <div class="input-toolbar thread-toolbar">
+        <button class="format-btn" type="button" data-format="bold" data-target="thread" title="Bold (Ctrl+B)" aria-label="Bold"><b>B</b></button>
+        <button class="format-btn" type="button" data-format="italic" data-target="thread" title="Italic (Ctrl+I)" aria-label="Italic"><i>i</i></button>
+        <button class="format-btn" type="button" data-format="strike" data-target="thread" title="Strikethrough (Ctrl+Shift+X)" aria-label="Strikethrough"><s>S</s></button>
+      </div>
       <div class="thread-input-area">
         <textarea id="threadInput" placeholder="Reply..." rows="1"></textarea>
         <button class="btn-icon" id="threadAiDraftBtn" type="button" title="Draft reply with AI" style="display:none" aria-label="Draft thread reply with AI">

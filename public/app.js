@@ -3164,6 +3164,30 @@ function applyComposerNormalize(el, channelIdOpt) {
   function closeEmojiPicker() { emojiPicker.classList.remove('open'); emojiTargetMsgId = null; }
   function autoResize(el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 160) + 'px'; }
 
+  /** Wraps the current selection (or inserts markers at the caret) with markdown formatting. */
+  const FORMAT_MARKERS = { bold: '**', italic: '*', strike: '~~' };
+  function applyFormat(textarea, type) {
+    const marker = FORMAT_MARKERS[type];
+    if (!marker) return;
+    const start = textarea.selectionStart, end = textarea.selectionEnd;
+    const val = textarea.value;
+    const selected = val.slice(start, end);
+    textarea.value = val.slice(0, start) + marker + selected + marker + val.slice(end);
+    const caretStart = start + marker.length;
+    textarea.selectionStart = caretStart;
+    textarea.selectionEnd = caretStart + selected.length;
+    textarea.focus();
+    autoResize(textarea);
+  }
+  function handleFormatShortcut(e, textarea) {
+    if (!(e.metaKey || e.ctrlKey)) return false;
+    const key = e.key.toLowerCase();
+    if (key === 'b') { e.preventDefault(); applyFormat(textarea, 'bold'); return true; }
+    if (key === 'i') { e.preventDefault(); applyFormat(textarea, 'italic'); return true; }
+    if (key === 'x' && e.shiftKey) { e.preventDefault(); applyFormat(textarea, 'strike'); return true; }
+    return false;
+  }
+
   // ==============================
   //  EVENT LISTENERS
   // ==============================
@@ -3384,7 +3408,15 @@ function applyComposerNormalize(el, channelIdOpt) {
   threadMessagesEl.addEventListener('click', onAttachmentDownloadClick);
 
   $('#sendBtn').addEventListener('click', () => { sendMessage(messageInput.value); messageInput.value = ''; autoResize(messageInput); });
-  messageInput.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(messageInput.value); messageInput.value = ''; autoResize(messageInput); } });
+  messageInput.addEventListener('keydown', (e) => {
+    if (handleFormatShortcut(e, messageInput)) return;
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(messageInput.value); messageInput.value = ''; autoResize(messageInput); }
+  });
+
+  document.querySelectorAll('.format-btn').forEach((btn) => {
+    btn.addEventListener('mousedown', (e) => e.preventDefault());
+    btn.addEventListener('click', () => applyFormat(btn.dataset.target === 'thread' ? threadInput : messageInput, btn.dataset.format));
+  });
 
   $('#fileBtn').addEventListener('click', () => { $('#fileInput').click(); });
   $('#fileInput').addEventListener('change', (e) => {
@@ -3426,7 +3458,10 @@ function applyComposerNormalize(el, channelIdOpt) {
   });
 
   $('#threadSendBtn').addEventListener('click', () => { sendMessage(threadInput.value, true); threadInput.value = ''; autoResize(threadInput); });
-  threadInput.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(threadInput.value, true); threadInput.value = ''; autoResize(threadInput); } });
+  threadInput.addEventListener('keydown', (e) => {
+    if (handleFormatShortcut(e, threadInput)) return;
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(threadInput.value, true); threadInput.value = ''; autoResize(threadInput); }
+  });
   threadInput.addEventListener('input', () => {
     applyComposerNormalize(threadInput);
     autoResize(threadInput);

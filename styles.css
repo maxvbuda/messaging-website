@@ -1386,6 +1386,30 @@ li.channel-dd-game {
   padding: 0 4px 4px;
 }
 
+.format-btn {
+  width: 26px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.format-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.format-btn:active { transform: scale(0.94); }
+.format-btn b, .format-btn i, .format-btn s { pointer-events: none; }
+
+.thread-toolbar {
+  padding: 10px 16px 0;
+  border-top: 1px solid var(--border);
+}
+
 .input-wrapper {
   display: flex;
   align-items: flex-end;
@@ -1525,8 +1549,7 @@ li.channel-dd-game {
   display: flex;
   align-items: flex-end;
   gap: 6px;
-  padding: 12px 16px;
-  border-top: 1px solid var(--border);
+  padding: 8px 16px 12px;
 }
 .thread-input-area textarea {
   flex: 1;
