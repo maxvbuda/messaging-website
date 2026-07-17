@@ -3165,7 +3165,7 @@ function applyComposerNormalize(el, channelIdOpt) {
   function autoResize(el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 160) + 'px'; }
 
   /** Wraps the current selection (or inserts markers at the caret) with markdown formatting. */
-  const FORMAT_MARKERS = { bold: '**', italic: '*', strike: '~~' };
+  const FORMAT_MARKERS = { bold: '**', italic: '*', strike: '~~', code: '`' };
   function applyFormat(textarea, type) {
     const marker = FORMAT_MARKERS[type];
     if (!marker) return;
@@ -3185,6 +3185,7 @@ function applyComposerNormalize(el, channelIdOpt) {
     if (key === 'b') { e.preventDefault(); applyFormat(textarea, 'bold'); return true; }
     if (key === 'i') { e.preventDefault(); applyFormat(textarea, 'italic'); return true; }
     if (key === 'x' && e.shiftKey) { e.preventDefault(); applyFormat(textarea, 'strike'); return true; }
+    if (key === 'e') { e.preventDefault(); applyFormat(textarea, 'code'); return true; }
     return false;
   }
 

@@ -1404,6 +1404,8 @@ li.channel-dd-game {
 .format-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
 .format-btn:active { transform: scale(0.94); }
 .format-btn b, .format-btn i, .format-btn s { pointer-events: none; }
+.format-btn-code { width: 32px; }
+.format-btn-code code { background: none; padding: 0; font-size: 11px; font-family: var(--font-mono, monospace); pointer-events: none; }
 
 .thread-toolbar {
   padding: 10px 16px 0;
