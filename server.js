@@ -71,12 +71,25 @@ const upload = multer({
 });
 
 let db;
-let usersCol, channelsCol, messagesCol, sessionsCol, filesCol, joinRequestsCol, featureLabCol;
+let usersCol, channelsCol, messagesCol, sessionsCol, filesCol, joinRequestsCol, featureLabCol, workspacesCol;
 
 const DEFAULT_CHANNELS = [
   { id: 'c_general', name: 'general', topic: 'Company-wide announcements and work-based matters', createdBy: 'system' },
   { id: 'c_random', name: 'random', topic: 'Non-work banter and water cooler conversation', createdBy: 'system' },
 ];
+
+/** Fresh per-workspace copies of the default channels (fresh ids so they don't collide with other workspaces). */
+function buildDefaultChannelsForWorkspace(workspaceId) {
+  return DEFAULT_CHANNELS.map((dc) => ({
+    id: 'c_' + uuidv4().slice(0, 8),
+    name: dc.name,
+    topic: dc.topic,
+    createdBy: 'system',
+    visibility: 'workspace',
+    memberIds: [],
+    workspaceId,
+  }));
+}
 
 /** Synthetic Dungeon Master participant (not persisted in Mongo). */
 const ROBOT_DM_ID = 'u_sf_robot_dm';
@@ -103,6 +116,17 @@ function withRobotDmUserList(users) {
 async function connectDB() {
   if (!MONGODB_URI) {
     console.warn('No MONGODB_URI set — data will not persist across restarts.');
+    memData.channels.forEach((c) => { c.workspaceId = 'ws_dev_main'; });
+    memData.workspaces.push({
+      id: 'ws_dev_main',
+      name: 'Main',
+      nameLower: 'main',
+      passwordHash: await hashPassword(process.env.MAIN_WORKSPACE_PASSWORD || 'dev-workspace'),
+      createdBy: 'system',
+      ownerIds: [],
+      memberIds: [],
+      createdAt: Date.now(),
+    });
     return false;
   }
   const client = new MongoClient(MONGODB_URI);
@@ -115,26 +139,12 @@ async function connectDB() {
   filesCol = db.collection('files');
   joinRequestsCol = db.collection('joinRequests');
   featureLabCol = db.collection('featureLab');
+  workspacesCol = db.collection('workspaces');
   try {
     await featureLabCol.createIndex({ userId: 1 }, { unique: true });
   } catch (e) { /* index may exist */ }
   // Auto-expire sessions after 30 days
   await sessionsCol.createIndex({ createdAt: 1 }, { expireAfterSeconds: 60 * 60 * 24 * 30 });
-  // Hot-path lookup indexes — without these, every request forces a full collection scan
-  const hotIndexes = [
-    [sessionsCol, { token: 1 }, {}],
-    [usersCol, { id: 1 }, { unique: true }],
-    [usersCol, { username: 1 }, { unique: true, sparse: true }],
-    [usersCol, { email: 1 }, { unique: true, sparse: true }],
-    [channelsCol, { id: 1 }, { unique: true }],
-    [channelsCol, { name: 1 }, { unique: true, sparse: true }],
-    [messagesCol, { channelId: 1 }, { unique: true }],
-    [filesCol, { id: 1 }, { unique: true }],
-    [joinRequestsCol, { id: 1 }, { unique: true }],
-  ];
-  for (const [col, spec, opts] of hotIndexes) {
-    try { await col.createIndex(spec, opts); } catch (e) { console.warn('Index creation warning:', e.message); }
-  }
 
   // Seed default channels if none exist
   const count = await channelsCol.countDocuments();
@@ -142,8 +152,67 @@ async function connectDB() {
     await channelsCol.insertMany(DEFAULT_CHANNELS);
   }
 
+  await migrateToWorkspaces();
+
+  // Hot-path lookup indexes — without these, every request forces a full collection scan
+  // Channel name uniqueness must be per-workspace now, so drop the old global unique index first.
+  try { await channelsCol.dropIndex('name_1'); } catch (e) { /* didn't exist */ }
+  const hotIndexes = [
+    [sessionsCol, { token: 1 }, {}],
+    [usersCol, { id: 1 }, { unique: true }],
+    [usersCol, { username: 1 }, { unique: true, sparse: true }],
+    [usersCol, { email: 1 }, { unique: true, sparse: true }],
+    [channelsCol, { id: 1 }, { unique: true }],
+    [channelsCol, { workspaceId: 1, name: 1 }, { unique: true, sparse: true }],
+    [messagesCol, { channelId: 1 }, { unique: true }],
+    [filesCol, { id: 1 }, { unique: true }],
+    [joinRequestsCol, { id: 1 }, { unique: true }],
+    [workspacesCol, { id: 1 }, { unique: true }],
+    [workspacesCol, { nameLower: 1 }, { unique: true }],
+    [workspacesCol, { memberIds: 1 }, {}],
+  ];
+  for (const [col, spec, opts] of hotIndexes) {
+    try { await col.createIndex(spec, opts); } catch (e) { console.warn('Index creation warning:', e.message); }
+  }
+
   console.log(`Connected to MongoDB (database: ${MONGODB_DB_NAME})`);
   return true;
+}
+
+/**
+ * One-time migration: creates a "Main" workspace, tags all pre-existing channels with it,
+ * and adds every existing user as a member so nobody loses access on deploy day.
+ * Requires MAIN_WORKSPACE_PASSWORD — refuses to invent a default (unlike ADMIN_PASSWORD).
+ */
+async function migrateToWorkspaces() {
+  const existing = await workspacesCol.countDocuments();
+  if (existing > 0) return;
+
+  const password = process.env.MAIN_WORKSPACE_PASSWORD;
+  if (!password) {
+    console.warn(
+      'MAIN_WORKSPACE_PASSWORD is not set — skipping creation of the "Main" workspace. ' +
+      'Existing channels will be inaccessible via /api/data (which now requires a workspaceId) until you set this env var and restart.'
+    );
+    return;
+  }
+
+  const passwordHash = await hashPassword(password);
+  const memberIds = (await usersCol.find({}, { projection: { id: 1 } }).toArray()).map((u) => u.id);
+
+  const workspace = {
+    id: 'ws_' + uuidv4().slice(0, 10),
+    name: 'Main',
+    nameLower: 'main',
+    passwordHash,
+    createdBy: 'system',
+    ownerIds: [],
+    memberIds,
+    createdAt: Date.now(),
+  };
+  await workspacesCol.insertOne(workspace);
+  await channelsCol.updateMany({ workspaceId: { $exists: false } }, { $set: { workspaceId: workspace.id } });
+  console.log(`Created "Main" workspace (${memberIds.length} existing members migrated).`);
 }
 
 // ── In-memory fallback (no MongoDB) ──
@@ -153,6 +222,7 @@ let memData = {
   messages: {},
   /** @type {Record<string, object>} userId -> feature lab doc */
   featureLabThreads: {},
+  workspaces: [],
 };
 
 // ── Data helpers (work with both Mongo and memory) ──
@@ -181,16 +251,36 @@ async function updateUser(id, updates) {
   if (u) Object.assign(u, updates);
 }
 
-async function getChannels() {
-  if (db) return channelsCol.find().toArray();
-  return memData.channels;
+async function getChannels(workspaceId) {
+  const q = workspaceId ? { workspaceId } : {};
+  if (db) return channelsCol.find(q).toArray();
+  return workspaceId ? memData.channels.filter((c) => c.workspaceId === workspaceId) : memData.channels;
 }
 
 async function findChannel(query) {
   if (db) return channelsCol.findOne(query);
-  if (query.id) return memData.channels.find(c => c.id === query.id) || null;
-  if (query.name) return memData.channels.find(c => c.name === query.name) || null;
-  return null;
+  return memData.channels.find((c) => Object.keys(query).every((k) => c[k] === query[k])) || null;
+}
+
+async function getWorkspaces() {
+  if (db) return workspacesCol.find().toArray();
+  return memData.workspaces;
+}
+
+async function findWorkspace(query) {
+  if (db) return workspacesCol.findOne(query);
+  return memData.workspaces.find((w) => Object.keys(query).every((k) => w[k] === query[k])) || null;
+}
+
+async function insertWorkspace(workspace) {
+  if (db) { await workspacesCol.insertOne(workspace); return; }
+  memData.workspaces.push(workspace);
+}
+
+async function addWorkspaceMember(workspaceId, userId) {
+  if (db) { await workspacesCol.updateOne({ id: workspaceId }, { $addToSet: { memberIds: userId } }); return; }
+  const w = memData.workspaces.find((x) => x.id === workspaceId);
+  if (w && !w.memberIds.includes(userId)) w.memberIds.push(userId);
 }
 
 async function insertChannel(channel) {
@@ -559,6 +649,11 @@ async function verifyPassword(user, password) {
   return ok;
 }
 
+async function verifyWorkspacePassword(workspace, password) {
+  if (!workspace || !workspace.passwordHash) return false;
+  return argon2.verify(workspace.passwordHash, password).catch(() => false);
+}
+
 app.post('/api/login', async (req, res) => {
   const { username, password } = req.body;
   const ip = getClientIp(req);
@@ -602,6 +697,78 @@ app.post('/api/login', async (req, res) => {
   res.json({ token, user: publicUser({ ...user, status: 'online' }) });
 });
 
+// ── REST: Workspaces ──
+
+app.post('/api/workspaces', async (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  const user = await getUserByToken(token);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+  const { name, password } = req.body || {};
+  if (!name || !name.trim()) return res.status(400).json({ error: 'Workspace name is required.' });
+  if (!password || password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+
+  const nameLower = name.trim().toLowerCase();
+  if (await findWorkspace({ nameLower })) {
+    return res.status(409).json({ error: 'A workspace with that name already exists.' });
+  }
+
+  const workspace = {
+    id: 'ws_' + uuidv4().slice(0, 10),
+    name: name.trim(),
+    nameLower,
+    passwordHash: await hashPassword(password),
+    createdBy: user.id,
+    ownerIds: [user.id],
+    memberIds: [user.id],
+    createdAt: Date.now(),
+  };
+  await insertWorkspace(workspace);
+  for (const ch of buildDefaultChannelsForWorkspace(workspace.id)) {
+    await insertChannel(ch);
+  }
+
+  res.json({ workspace: { id: workspace.id, name: workspace.name, isAdmin: true } });
+});
+
+app.post('/api/workspaces/join', async (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  const user = await getUserByToken(token);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+  const { name, password } = req.body || {};
+  const nameLower = String(name || '').trim().toLowerCase();
+  if (!nameLower || !password) return res.status(400).json({ error: 'Workspace name and password are required.' });
+
+  const ip = getClientIp(req);
+  const bruteKey = `wsjoin:${ip || 'unknown'}:${nameLower}`;
+  const lockMsg = checkBruteForce(bruteKey);
+  if (lockMsg) return res.status(429).json({ error: lockMsg });
+
+  const genericErr = { error: 'Workspace not found or incorrect password.' };
+  const workspace = await findWorkspace({ nameLower });
+  if (!workspace || !(await verifyWorkspacePassword(workspace, password))) {
+    recordFailedAttempt(bruteKey);
+    return res.status(404).json(genericErr);
+  }
+
+  clearAttempts(bruteKey);
+  await addWorkspaceMember(workspace.id, user.id);
+  res.json({ workspace: { id: workspace.id, name: workspace.name, isAdmin: (workspace.ownerIds || []).includes(user.id) } });
+});
+
+app.get('/api/workspaces/mine', async (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  const user = await getUserByToken(token);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+  const all = await getWorkspaces();
+  const mine = all.filter((w) => Array.isArray(w.memberIds) && w.memberIds.includes(user.id));
+  res.json({
+    workspaces: mine.map((w) => ({ id: w.id, name: w.name, isAdmin: (w.ownerIds || []).includes(user.id) })),
+  });
+});
+
 // ── REST: Data bootstrap ──
 
 app.get('/api/data', async (req, res) => {
@@ -615,8 +782,16 @@ app.get('/api/data', async (req, res) => {
     return res.status(403).json({ error: 'This account has been suspended.' });
   }
 
-  const [usersRaw, rawChannels] = await Promise.all([getUsers(), getChannels()]);
-  const users = withRobotDmUserList(usersRaw);
+  const workspaceId = req.query.workspaceId;
+  if (!workspaceId) return res.status(400).json({ error: 'workspaceId is required.' });
+  const workspace = await findWorkspace({ id: workspaceId });
+  if (!workspace || !(workspace.memberIds || []).includes(user.id)) {
+    return res.status(403).json({ error: 'You are not a member of this workspace.' });
+  }
+
+  const [usersRaw, rawChannels] = await Promise.all([getUsers(), getChannels(workspaceId)]);
+  const memberSet = new Set(workspace.memberIds);
+  const users = withRobotDmUserList(usersRaw.filter((u) => memberSet.has(u.id)));
 
   const channels = rawChannels.filter((ch) => userCanSeeChannel(user.id, ch));
   const messages = await getMessagesForChannels(channels.map((c) => c.id));
@@ -1848,10 +2023,15 @@ function userCanSeeChannel(userId, channel) {
   return viewers.has(userId);
 }
 
+async function workspaceMemberIdSet(workspaceId) {
+  const workspace = workspaceId ? await findWorkspace({ id: workspaceId }) : null;
+  return new Set(workspace ? workspace.memberIds : []);
+}
+
 async function enumerateUserIdsPreviouslyCouldSee(nonDmChannelDoc) {
   if (!nonDmChannelDoc || nonDmChannelDoc.isDM) return new Set();
   const viewers = channelViewerIds(nonDmChannelDoc);
-  if (!viewers) return new Set((await getUsers()).map((u) => u.id));
+  if (!viewers) return workspaceMemberIdSet(nonDmChannelDoc.workspaceId);
   return viewers;
 }
 
@@ -1860,15 +2040,20 @@ async function userIdsLostChannelAccess(previousNonDmDoc, updatedChannelDoc) {
   const now = updatedChannelDoc && !updatedChannelDoc.isDM
     ? channelViewerIds(updatedChannelDoc)
     : null;
-  const nowSet = now || new Set((await getUsers()).map((u) => u.id));
+  const nowSet = now || await workspaceMemberIdSet(updatedChannelDoc && updatedChannelDoc.workspaceId);
   return [...had].filter((id) => !nowSet.has(id));
 }
 
-function broadcastChannelCreated(io, channel) {
+/** viewers=null (public channel) broadcasts to the whole workspace, not the whole server. */
+async function broadcastChannelCreated(io, channel) {
   const payload = { channel };
   const viewers = channelViewerIds(channel);
-  if (!viewers) io.emit('channel_created', payload);
-  else [...viewers].forEach((uid) => io.to('uid_' + uid).emit('channel_created', payload));
+  if (viewers) {
+    [...viewers].forEach((uid) => io.to('uid_' + uid).emit('channel_created', payload));
+    return;
+  }
+  const members = await workspaceMemberIdSet(channel.workspaceId);
+  [...members].forEach((uid) => io.to('uid_' + uid).emit('channel_created', payload));
 }
 
 /**
@@ -1895,16 +2080,17 @@ async function emitNewMessagePayload(io, channelId, payload, channelDocMaybe) {
   }
 }
 
-async function ensureChannelParticipantAccess(channelId, userId) {
+/** workspaceId is optional (REST routes without socket context skip the workspace-match check). */
+async function ensureChannelParticipantAccess(channelId, userId, workspaceId) {
   if (!channelId || !userId) return false;
-  if (channelId.startsWith('dm_')) {
-    const dmCh = await findChannel({ id: channelId });
-    if (!dmCh) return false;
-    if (Array.isArray(dmCh.participants) && !dmCh.participants.includes(userId)) return false;
+  const ch = await findChannel({ id: channelId });
+  if (!ch) return false;
+  if (workspaceId && ch.workspaceId && ch.workspaceId !== workspaceId) return false;
+  if (ch.isDM) {
+    if (Array.isArray(ch.participants) && !ch.participants.includes(userId)) return false;
     return true;
   }
-  const ch = await findChannel({ id: channelId });
-  return !!(ch && userCanSeeChannel(userId, ch));
+  return userCanSeeChannel(userId, ch);
 }
 
 // ── Socket.IO ──
@@ -1944,7 +2130,10 @@ async function assertWebRtcRelay(channelId, fromUserId, toUserId) {
 io.on('connection', (socket) => {
   let currentUser = null;
 
-  socket.on('authenticate', async (token) => {
+  socket.on('authenticate', async (payload) => {
+    const token = typeof payload === 'string' ? payload : payload && payload.token;
+    const workspaceId = payload && typeof payload === 'object' ? payload.workspaceId : null;
+
     currentUser = await getUserByToken(token);
     if (!currentUser) { socket.emit('auth_error', 'Invalid token'); return; }
     if (currentUser.banned || isBlockedName(currentUser.username, currentUser.name)) {
@@ -1956,6 +2145,15 @@ io.on('connection', (socket) => {
       return;
     }
 
+    if (!workspaceId) { socket.emit('auth_error', 'No workspace selected'); currentUser = null; return; }
+    const workspace = await findWorkspace({ id: workspaceId });
+    if (!workspace || !(workspace.memberIds || []).includes(currentUser.id)) {
+      socket.emit('auth_error', 'You are not a member of this workspace');
+      currentUser = null;
+      return;
+    }
+    socket.sfWorkspaceId = workspaceId;
+
     const uid = currentUser.id;
     const prevSockets = activeSocketByUser.get(uid) || 0;
     activeSocketByUser.set(uid, prevSockets + 1);
@@ -1965,9 +2163,9 @@ io.on('connection', (socket) => {
 
     socket.join('uid_' + uid);
 
-    // Join channel rooms user is allowed to read (respects private channels).
+    // Join channel rooms user is allowed to read (respects private channels), scoped to this workspace.
     try {
-      const allChannels = await getChannels();
+      const allChannels = await getChannels(workspaceId);
       const ok = allChannels.filter((ch) => userCanSeeChannel(uid, ch));
       await Promise.all(ok.map((ch) => socket.join(ch.id)));
     } catch (e) { /* non-fatal */ }
@@ -1983,7 +2181,7 @@ io.on('connection', (socket) => {
   socket.on('join_channel', async (channelId) => {
     if (!currentUser || !channelId) return;
     try {
-      if (!(await ensureChannelParticipantAccess(channelId, currentUser.id))) return;
+      if (!(await ensureChannelParticipantAccess(channelId, currentUser.id, socket.sfWorkspaceId))) return;
     } catch (e) { return; }
     try {
       await socket.join(channelId);
@@ -1997,7 +2195,7 @@ io.on('connection', (socket) => {
     if (!currentUser || (!text?.trim() && !file) || !channelId) return;
 
     try {
-      if (!(await ensureChannelParticipantAccess(channelId, currentUser.id))) return;
+      if (!(await ensureChannelParticipantAccess(channelId, currentUser.id, socket.sfWorkspaceId))) return;
     } catch (e) { console.error('DB error (send_message access):', e.message); return; }
 
     let skipChatNormalize = false;
@@ -2037,7 +2235,7 @@ io.on('connection', (socket) => {
     if (!currentUser || !text?.trim() || !channelId) return;
 
     try {
-      if (!(await ensureChannelParticipantAccess(channelId, currentUser.id))) return;
+      if (!(await ensureChannelParticipantAccess(channelId, currentUser.id, socket.sfWorkspaceId))) return;
 
       const msgs = await getMessages(channelId);
       const parent = msgs.find(m => m.id === parentMsgId);
@@ -2076,7 +2274,7 @@ io.on('connection', (socket) => {
     if (!currentUser || !channelId) return;
 
     try {
-      if (!(await ensureChannelParticipantAccess(channelId, currentUser.id))) return;
+      if (!(await ensureChannelParticipantAccess(channelId, currentUser.id, socket.sfWorkspaceId))) return;
 
       const msgs = await getMessages(channelId);
       const msg = msgs.find(m => m.id === msgId);
@@ -2102,7 +2300,7 @@ io.on('connection', (socket) => {
     if (!currentUser || !channelId) return;
 
     try {
-      if (!(await ensureChannelParticipantAccess(channelId, currentUser.id))) return;
+      if (!(await ensureChannelParticipantAccess(channelId, currentUser.id, socket.sfWorkspaceId))) return;
 
       const msgs = await getMessages(channelId);
       const idx = msgs.findIndex(m => m.id === msgId && m.userId === currentUser.id);
@@ -2118,7 +2316,7 @@ io.on('connection', (socket) => {
     if (!currentUser || !channelId || !msgId) return;
 
     try {
-      if (!(await ensureChannelParticipantAccess(channelId, currentUser.id))) return;
+      if (!(await ensureChannelParticipantAccess(channelId, currentUser.id, socket.sfWorkspaceId))) return;
 
       let skipChatNormalize = false;
       try {
@@ -2149,7 +2347,7 @@ io.on('connection', (socket) => {
     if (!currentUser || !channelId || !parentMsgId || !replyId) return;
 
     try {
-      if (!(await ensureChannelParticipantAccess(channelId, currentUser.id))) return;
+      if (!(await ensureChannelParticipantAccess(channelId, currentUser.id, socket.sfWorkspaceId))) return;
 
       let skipChatNormalize = false;
       try {
@@ -2181,18 +2379,20 @@ io.on('connection', (socket) => {
   });
 
   socket.on('create_channel', async ({ name, topic, visibility, memberIds }) => {
-    if (!currentUser || !name?.trim()) return;
+    if (!currentUser || !socket.sfWorkspaceId || !name?.trim()) return;
+    const workspaceId = socket.sfWorkspaceId;
 
     try {
       const slug = name.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
       if (!slug) return;
-      if (await findChannel({ name: slug })) { socket.emit('error_msg', 'That room name is already taken'); return; }
+      if (await findChannel({ name: slug, workspaceId })) { socket.emit('error_msg', 'That room name is already taken'); return; }
 
+      const workspaceMembers = await workspaceMemberIdSet(workspaceId);
       const isPrivate = visibility === 'private';
       let mids = [];
       if (isPrivate) {
         const allU = withRobotDmUserList(await getUsers());
-        const ok = new Set(allU.map((u) => u.id));
+        const ok = new Set(allU.filter((u) => workspaceMembers.has(u.id) || u.id === ROBOT_DM_ID).map((u) => u.id));
         mids = (Array.isArray(memberIds) ? memberIds : []).filter((id) => typeof id === 'string' && ok.has(id));
         if (!mids.includes(currentUser.id)) mids.push(currentUser.id);
       }
@@ -2204,23 +2404,26 @@ io.on('connection', (socket) => {
         createdBy: currentUser.id,
         visibility: isPrivate ? 'private' : 'workspace',
         memberIds: isPrivate ? mids : [],
+        workspaceId,
       };
 
       await insertChannel(channel);
-      broadcastChannelCreated(io, channel);
+      await broadcastChannelCreated(io, channel);
     } catch (e) { console.error('DB error (create_channel):', e.message); }
   });
 
   socket.on('start_dd_session', async ({ dmUserId, adventurerIds }) => {
-    if (!currentUser || !dmUserId) return;
+    if (!currentUser || !socket.sfWorkspaceId || !dmUserId) return;
+    const workspaceId = socket.sfWorkspaceId;
     try {
       const dm = await findUser({ id: dmUserId });
       if (!dm) {
         socket.emit('error_msg', 'Could not find that DM.');
         return;
       }
+      const workspaceMembers = await workspaceMemberIdSet(workspaceId);
       const allU = withRobotDmUserList(await getUsers());
-      const validIds = new Set(allU.map((u) => u.id));
+      const validIds = new Set(allU.filter((u) => workspaceMembers.has(u.id) || u.id === ROBOT_DM_ID).map((u) => u.id));
 
       const members = new Set([currentUser.id, dmUserId]);
       const advList = Array.isArray(adventurerIds) ? adventurerIds : [];
@@ -2230,7 +2433,7 @@ io.on('connection', (socket) => {
 
       const slugBase = uuidv4().replace(/-/g, '').slice(0, 10);
       const slug = `dungeons-dragons-${slugBase}`;
-      if (await findChannel({ name: slug })) return;
+      if (await findChannel({ name: slug, workspaceId })) return;
 
       const channel = {
         id: 'c_' + uuidv4().slice(0, 12),
@@ -2243,10 +2446,11 @@ io.on('connection', (socket) => {
         ddGame: true,
         ddDmUserId: dmUserId,
         ddStartedByUserId: currentUser.id,
+        workspaceId,
       };
 
       await insertChannel(channel);
-      broadcastChannelCreated(io, channel);
+      await broadcastChannelCreated(io, channel);
       if (dmUserId === ROBOT_DM_ID) {
         setTimeout(() => { void emitRobotDmWelcome(io, channel.id); }, 400);
       }
@@ -2284,16 +2488,18 @@ io.on('connection', (socket) => {
     try {
       const prev = await findChannel({ id: channelId });
       if (!prev || prev.isDM || prev.ddGame) return;
+      if (prev.workspaceId && prev.workspaceId !== socket.sfWorkspaceId) return;
       if (prev.createdBy !== currentUser.id) {
         socket.emit('error_msg', 'Only the channel creator can change visibility.');
         return;
       }
 
+      const workspaceMembers = await workspaceMemberIdSet(prev.workspaceId);
       const isPrivate = visibility === 'private';
       let mids = [];
       if (isPrivate) {
         const allU = withRobotDmUserList(await getUsers());
-        const ok = new Set(allU.map((u) => u.id));
+        const ok = new Set(allU.filter((u) => workspaceMembers.has(u.id) || u.id === ROBOT_DM_ID).map((u) => u.id));
         mids = (Array.isArray(memberIds) ? memberIds : []).filter((id) => typeof id === 'string' && ok.has(id));
         if (!mids.includes(currentUser.id)) mids.push(currentUser.id);
       }
@@ -2317,13 +2523,13 @@ io.on('connection', (socket) => {
       }
 
       const viewers = channelViewerIds(next);
-      if (!viewers) io.emit('channel_updated', { channel: next });
-      else [...viewers].forEach((uid2) => io.to('uid_' + uid2).emit('channel_updated', { channel: next }));
+      if (viewers) [...viewers].forEach((uid2) => io.to('uid_' + uid2).emit('channel_updated', { channel: next }));
+      else [...workspaceMembers].forEach((uid2) => io.to('uid_' + uid2).emit('channel_updated', { channel: next }));
     } catch (e) { console.error('DB error (update_channel_visibility):', e.message); }
   });
 
   socket.on('open_dm', async ({ targetUserId }) => {
-    if (!currentUser) return;
+    if (!currentUser || !socket.sfWorkspaceId) return;
     if (targetUserId === ROBOT_DM_ID) {
       socket.emit('error_msg', 'Robot DM is for D&D channels only, not direct messages.');
       return;
@@ -2332,9 +2538,11 @@ io.on('connection', (socket) => {
     try {
       const target = await findUser({ id: targetUserId });
       if (!target) return;
+      const workspaceId = socket.sfWorkspaceId;
 
       const ids = [currentUser.id, targetUserId].sort();
-      const dmChannelId = 'dm_' + ids.join('_');
+      // Workspace-scoped so the same two users get an independent DM thread per workspace.
+      const dmChannelId = 'dm_' + workspaceId + '_' + ids.join('_');
 
       if (!(await findChannel({ id: dmChannelId }))) {
         const channel = {
@@ -2344,6 +2552,7 @@ io.on('connection', (socket) => {
           createdBy: currentUser.id,
           isDM: true,
           participants: ids,
+          workspaceId,
         };
         await insertChannel(channel);
       }
@@ -2356,7 +2565,7 @@ io.on('connection', (socket) => {
   socket.on('typing', async ({ channelId }) => {
     if (!currentUser || !channelId) return;
     try {
-      if (!(await ensureChannelParticipantAccess(channelId, currentUser.id))) return;
+      if (!(await ensureChannelParticipantAccess(channelId, currentUser.id, socket.sfWorkspaceId))) return;
     } catch (e) { return; }
     socket.to(channelId).emit('user_typing', { channelId, userId: currentUser.id, userName: currentUser.name });
   });

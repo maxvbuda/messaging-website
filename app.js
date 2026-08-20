@@ -600,81 +600,41 @@
   function lsAppendMessage(chId, msg) { const a = lsGetAllMessages(); if (!a[chId]) a[chId] = []; a[chId].push(msg); lsSaveAllMessages(a); }
   function lsUpdateMessages(chId, msgs) { const a = lsGetAllMessages(); a[chId] = msgs; lsSaveAllMessages(a); }
 
-  // ── Multi-workspace (per-server URL + token) ──
-  const WORKSPACES_LS = 'sf_workspaces_v1';
-  const DEFAULT_SERVER_URL = 'https://messaging-website-6qqt.onrender.com';
+  // ── Multi-workspace (real server-side workspaces, all on this same origin/database) ──
+  const ACTIVE_WS_LS = 'sf_active_workspace_v1';
 
-  function normalizeServerUrl(str) {
-    return (str || '').trim().replace(/\/$/, '');
+  function backUrl() { return ''; }
+  function inServerMode() { return true; }
+
+  let authToken = localStorage.getItem('sf_token') || null;
+  let myWorkspaces = []; // [{id, name, isAdmin}]
+  let activeWorkspaceId = localStorage.getItem(ACTIVE_WS_LS) || null;
+
+  function saveActiveWorkspaceId() {
+    if (activeWorkspaceId) localStorage.setItem(ACTIVE_WS_LS, activeWorkspaceId);
+    else localStorage.removeItem(ACTIVE_WS_LS);
   }
-
-  function loadWorkspacesState() {
-    try {
-      const raw = localStorage.getItem(WORKSPACES_LS);
-      if (raw) {
-        const state = JSON.parse(raw);
-        if (state && Array.isArray(state.list) && state.list.length) {
-          state.list.forEach(w => {
-            w.url = typeof w.url === 'string' ? normalizeServerUrl(w.url) : '';
-            if (!('token' in w)) w.token = null;
-          });
-          if (state.list.length === 1 && (state.list[0].label === 'SlackFlow 2' || state.list[0].label === 'SlackFlow HQ')) {
-            state.list[0].label = RALLY_DEFAULT_WORKSPACE;
-            localStorage.setItem(WORKSPACES_LS, JSON.stringify(state));
-          } else {
-            let touched = false;
-            state.list.forEach(w => {
-              if (w.label === 'SlackFlow 2' || w.label === 'SlackFlow HQ') { w.label = RALLY_DEFAULT_WORKSPACE; touched = true; }
-              if (w.label === 'SlackFlow') { w.label = RALLY_PRODUCT; touched = true; }
-            });
-            if (touched) localStorage.setItem(WORKSPACES_LS, JSON.stringify(state));
-          }
-          return state;
-        }
-      }
-    } catch { /* ignore */ }
-    const legacyTok = localStorage.getItem('sf_token');
-    const id = 'ws_default';
-    const baseUrl = normalizeServerUrl(DEFAULT_SERVER_URL);
-    const state = {
-      list: [{ id, label: RALLY_DEFAULT_WORKSPACE, url: baseUrl, token: baseUrl ? (legacyTok || null) : null }],
-      activeId: id,
-    };
-    localStorage.setItem(WORKSPACES_LS, JSON.stringify(state));
-    return state;
-  }
-
-  let wsState = loadWorkspacesState();
 
   function activeWorkspace() {
-    let w = wsState.list.find(x => x.id === wsState.activeId);
-    if (!w && wsState.list[0]) {
-      wsState.activeId = wsState.list[0].id;
-      w = wsState.list[0];
-    }
-    return w || null;
+    return myWorkspaces.find(w => w.id === activeWorkspaceId) || null;
   }
 
-  function backUrl() {
-    const w = activeWorkspace();
-    return w && w.url ? w.url : '';
+  /** DM channel ids are scoped per workspace so the same two users get an independent thread in each. */
+  function dmChannelIdFor(otherUserId) {
+    if (!currentUser || !otherUserId) return '';
+    const ids = [currentUser.id, otherUserId].sort();
+    return 'dm_' + activeWorkspaceId + '_' + ids.join('_');
   }
 
-  function inServerMode() {
-    return !!backUrl();
+  async function fetchMyWorkspaces() {
+    const res = await fetch(backUrl() + '/api/workspaces/mine', {
+      headers: { Authorization: 'Bearer ' + authToken },
+    });
+    if (!res.ok) throw new Error('Failed to load workspaces');
+    const d = await res.json();
+    myWorkspaces = d.workspaces || [];
+    return myWorkspaces;
   }
-
-  let authToken = null;
-
-  function saveWsState() {
-    localStorage.setItem(WORKSPACES_LS, JSON.stringify(wsState));
-    const w = activeWorkspace();
-    if (w && w.token) localStorage.setItem('sf_token', w.token);
-    else localStorage.removeItem('sf_token');
-    authToken = w && w.token ? w.token : null;
-  }
-
-  saveWsState();
 
   function workspaceIconLetters(label) {
     const s = (label || 'WS').trim();
@@ -684,74 +644,25 @@
     return s.slice(0, 2).toUpperCase();
   }
 
-  function removeWorkspaceFromDevice(wsId) {
-    if (wsState.list.length < 2) return;
-    const w = wsState.list.find(x => x.id === wsId);
-    if (!w) return;
-    const label = w.label || 'This workspace';
-    if (!confirm(`Remove "${label}" from this browser? Its saved sign-in on this device will be cleared.`)) return;
-    const wasActive = wsState.activeId === wsId;
-    wsState.list = wsState.list.filter(x => x.id !== wsId);
-    if (wasActive) {
-      wsState.activeId = wsState.list[0].id;
-      saveWsState();
-      endVideoCall(true);
-      if (socket) { socket.disconnect(); socket = null; }
-      currentUser = null;
-      users = []; channels = []; messages = {};
-      activeChannelId = 'c_general';
-      activeThreadMsgId = null;
-      threadPanel.classList.remove('open');
-      appWrapper.style.display = 'none';
-      const nw = activeWorkspace();
-      renderWorkspaceRail();
-      renderSidebarWorkspaceTitle();
-      if (nw && nw.token) {
-        enterApp();
-      } else {
-        const p = $('#pendingRegScreen');
-        if (p) p.style.display = 'none';
-        authScreen.style.display = '';
-        setAuthSignInOnly();
-        hideAuthError();
-        authUsername.value = '';
-        authPassword.value = '';
-        renderRailAvatar();
-      }
-    } else {
-      saveWsState();
-      renderWorkspaceRail();
-    }
-  }
-
   function renderWorkspaceRail() {
     const wrap = $('#workspaceRailIcons');
     const aside = $('#workspaceRailAside');
     if (!wrap || !aside) return;
-    if (!inServerMode()) {
+    if (!currentUser) {
       aside.style.display = 'none';
       wrap.innerHTML = '';
       return;
     }
     aside.style.display = '';
-    const activeId = wsState.activeId;
-    const canRemove = wsState.list.length > 1;
-    const removeHint = canRemove ? ' — Right-click to remove from this device' : '';
-    const icons = wsState.list.map(w => {
-      const active = w.id === activeId ? 'active' : '';
-      const letters = workspaceIconLetters(w.label);
-      const t = escHtml(w.label) + escHtml(removeHint);
-      return `<div class="workspace-icon ${active}" data-ws-id="${escHtml(w.id)}" title="${t}">${escHtml(letters)}</div>`;
+    const icons = myWorkspaces.map(w => {
+      const active = w.id === activeWorkspaceId ? 'active' : '';
+      const letters = workspaceIconLetters(w.name);
+      return `<div class="workspace-icon ${active}" data-ws-id="${escHtml(w.id)}" title="${escHtml(w.name)}">${escHtml(letters)}</div>`;
     }).join('');
-    wrap.innerHTML = icons + '<div class="workspace-icon workspace-add" title="Add workspace">+</div>';
+    wrap.innerHTML = icons + '<div class="workspace-icon workspace-add" title="Create or join a workspace">+</div>';
     wrap.querySelectorAll('[data-ws-id]').forEach(el => {
       const id = el.getAttribute('data-ws-id');
       el.addEventListener('click', () => { switchWorkspace(id); });
-      el.addEventListener('contextmenu', (ev) => {
-        if (!canRemove) return;
-        ev.preventDefault();
-        removeWorkspaceFromDevice(id);
-      });
     });
     const addBtn = wrap.querySelector('.workspace-add');
     if (addBtn) addBtn.addEventListener('click', openAddWorkspaceModal);
@@ -761,17 +672,15 @@
     const el = $('#sidebarWorkspaceTitle');
     if (!el) return;
     const w = activeWorkspace();
-    el.textContent = w ? w.label : RALLY_PRODUCT;
+    el.textContent = w ? w.name : RALLY_PRODUCT;
   }
 
-  function switchWorkspace(wsId) {
-    const w = wsState.list.find(x => x.id === wsId);
-    if (!w || w.id === wsState.activeId) return;
+  async function switchWorkspace(wsId) {
+    if (wsId === activeWorkspaceId) return;
     endVideoCall(true);
     if (socket) { socket.disconnect(); socket = null; }
-    wsState.activeId = w.id;
-    saveWsState();
-    currentUser = null;
+    activeWorkspaceId = wsId;
+    saveActiveWorkspaceId();
     users = []; channels = []; messages = {};
     activeChannelId = 'c_general';
     activeThreadMsgId = null;
@@ -779,86 +688,56 @@
     appWrapper.style.display = 'none';
     renderWorkspaceRail();
     renderSidebarWorkspaceTitle();
-    if (w.token) {
-      enterApp();
-    } else {
-      const p = $('#pendingRegScreen');
-      if (p) p.style.display = 'none';
-      authScreen.style.display = '';
-      setAuthSignInOnly();
-      hideAuthError();
-      authUsername.value = '';
-      authPassword.value = '';
-      renderRailAvatar();
-    }
+    await enterApp();
   }
 
-  function sameServerDefaultUrl() {
-    const u = backUrl();
-    if (u) return u;
-    return normalizeServerUrl(DEFAULT_SERVER_URL);
+  let addWorkspaceMode = 'create';
+  function setAddWorkspaceMode(mode) {
+    addWorkspaceMode = mode;
+    const createTab = $('#addWorkspaceCreateTab');
+    const joinTab = $('#addWorkspaceJoinTab');
+    const submitBtn = $('#confirmAddWorkspaceBtn');
+    if (createTab) createTab.classList.toggle('active', mode === 'create');
+    if (joinTab) joinTab.classList.toggle('active', mode === 'join');
+    if (submitBtn) submitBtn.textContent = mode === 'create' ? 'Create workspace' : 'Join workspace';
   }
 
   function openAddWorkspaceModal() {
-    const lab = $('#newWorkspaceLabel');
-    const u = $('#newWorkspaceUrl');
+    const nameEl = $('#newWorkspaceName');
+    const pwEl = $('#newWorkspacePassword');
     const err = $('#addWorkspaceErr');
-    const defUrl = normalizeServerUrl(sameServerDefaultUrl());
-    if (lab) {
-      const alreadyHasThisServer = wsState.list.some(w => normalizeServerUrl(w.url) === defUrl && defUrl);
-      lab.value = alreadyHasThisServer ? RALLY_PRODUCT : '';
-    }
-    if (u) u.value = sameServerDefaultUrl();
+    if (nameEl) nameEl.value = '';
+    if (pwEl) pwEl.value = '';
     if (err) { err.textContent = ''; err.classList.remove('visible'); }
+    setAddWorkspaceMode('create');
     openModal('addWorkspaceModal');
   }
 
-  function confirmAddWorkspace() {
-    const labIn = ($('#newWorkspaceLabel') && $('#newWorkspaceLabel').value.trim()) || '';
-    let urlIn = ($('#newWorkspaceUrl') && $('#newWorkspaceUrl').value.trim()) || '';
+  async function confirmAddWorkspace() {
+    const name = ($('#newWorkspaceName') && $('#newWorkspaceName').value.trim()) || '';
+    const password = ($('#newWorkspacePassword') && $('#newWorkspacePassword').value) || '';
     const err = $('#addWorkspaceErr');
-    if (!urlIn) urlIn = sameServerDefaultUrl();
-    if (!urlIn) {
-      if (err) { err.textContent = 'Enter a server URL (no default server is configured).'; err.classList.add('visible'); }
-      return;
-    }
-    if (!/^https?:\/\//i.test(urlIn)) urlIn = 'https://' + urlIn;
-    let parsed;
-    try { parsed = new URL(urlIn); } catch {
-      if (err) { err.textContent = 'That URL does not look valid.'; err.classList.add('visible'); }
-      return;
-    }
-    if (!['http:', 'https:'].includes(parsed.protocol)) {
-      if (err) { err.textContent = 'Only http and https URLs are allowed.'; err.classList.add('visible'); }
-      return;
-    }
-    let base = normalizeServerUrl(parsed.origin + (parsed.pathname === '/' ? '' : parsed.pathname.replace(/\/$/, '')));
-    if (!base) base = parsed.origin;
-    const alreadySameServer = wsState.list.some(w => normalizeServerUrl(w.url) === base);
-    const label = labIn || (alreadySameServer ? RALLY_PRODUCT : (parsed.hostname.replace(/^www\./, '') || 'Workspace'));
-    const id = 'ws_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
-    wsState.list.push({ id, label, url: base, token: null });
-    wsState.activeId = id;
-    saveWsState();
-    endVideoCall(true);
-    if (socket) { socket.disconnect(); socket = null; }
-    currentUser = null;
-    users = []; channels = []; messages = {};
-    activeChannelId = 'c_general';
-    activeThreadMsgId = null;
-    threadPanel.classList.remove('open');
-    appWrapper.style.display = 'none';
-    const p = $('#pendingRegScreen');
-    if (p) p.style.display = 'none';
-    authScreen.style.display = '';
-    setAuthSignInOnly();
-    hideAuthError();
-    authUsername.value = '';
-    authPassword.value = '';
-    renderWorkspaceRail();
-    renderSidebarWorkspaceTitle();
-    renderRailAvatar();
-    closeModal('addWorkspaceModal');
+    const showErr = (msg) => { if (err) { err.textContent = msg; err.classList.add('visible'); } };
+    if (!name) { showErr('Enter a workspace name.'); return; }
+    if (!password) { showErr('Enter a password.'); return; }
+
+    const path = addWorkspaceMode === 'join' ? '/api/workspaces/join' : '/api/workspaces';
+    try {
+      const res = await fetch(backUrl() + path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + authToken },
+        body: JSON.stringify({ name, password }),
+      });
+      const d = await res.json();
+      if (!res.ok) { showErr(d.error || 'Something went wrong.'); return; }
+      if (!myWorkspaces.some(w => w.id === d.workspace.id)) myWorkspaces.push(d.workspace);
+      closeModal('addWorkspaceModal');
+      activeWorkspaceId = d.workspace.id;
+      saveActiveWorkspaceId();
+      renderWorkspaceRail();
+      renderSidebarWorkspaceTitle();
+      await enterApp();
+    } catch { showErr('Could not reach the server.'); }
   }
 
   // ── DOM refs ──
@@ -1354,9 +1233,8 @@
         const d = await res.json();
         if (!res.ok) { showAuthError(d.error || 'Something went wrong.'); return; }
         authToken = d.token;
+        localStorage.setItem('sf_token', authToken);
         currentUser = d.user;
-        const aw = activeWorkspace();
-        if (aw) { aw.token = d.token; saveWsState(); }
         localStorage.removeItem('sf_pending_reg_id');
         localStorage.removeItem('sf_pending_reg_token');
         localStorage.removeItem('sf_pending_reg_username');
@@ -1379,9 +1257,8 @@
     if (inServerMode()) {
       if (socket) socket.disconnect();
       socket = null;
-      const w = activeWorkspace();
-      if (w) w.token = null;
-      saveWsState();
+      authToken = null;
+      localStorage.removeItem('sf_token');
     } else {
       if (currentUser) {
         const u2 = lsGetUsers(), u = u2.find(x => x.id === currentUser.id);
@@ -1390,7 +1267,8 @@
       }
       localStorage.removeItem('sf_session');
     }
-    currentUser = null; authToken = null;
+    currentUser = null;
+    myWorkspaces = [];
     users = []; channels = []; messages = {};
     appWrapper.style.display = 'none';
     $('#pendingRegScreen').style.display = 'none';
@@ -1398,6 +1276,7 @@
     setAuthSignInOnly();
     authUsername.value = ''; authPassword.value = '';
     hideAuthError();
+    renderWorkspaceRail();
   }
 
   // ==============================
@@ -1409,10 +1288,33 @@
     if (pendingEl) pendingEl.style.display = 'none';
 
     if (inServerMode()) {
+      try {
+        await fetchMyWorkspaces();
+      } catch {
+        authScreen.style.display = '';
+        appWrapper.style.display = 'none';
+        showAuthError('Could not reach the server. You are still signed in — try again when you are online or reload.');
+        return;
+      }
+      renderWorkspaceRail();
+
+      if (!myWorkspaces.length) {
+        // No workspace yet — send them straight to Create/Join instead of an empty chat screen.
+        authScreen.style.display = 'none';
+        appWrapper.style.display = 'none';
+        openAddWorkspaceModal();
+        return;
+      }
+      if (!activeWorkspaceId || !myWorkspaces.some(w => w.id === activeWorkspaceId)) {
+        activeWorkspaceId = myWorkspaces[0].id;
+        saveActiveWorkspaceId();
+      }
+      renderSidebarWorkspaceTitle();
+
       let d = null;
       for (let attempt = 1; attempt <= 5; attempt++) {
         try {
-          const res = await fetch(backUrl() + '/api/data', {
+          const res = await fetch(backUrl() + '/api/data?workspaceId=' + encodeURIComponent(activeWorkspaceId), {
             headers: { 'Authorization': 'Bearer ' + authToken },
           });
           if (res.status === 401) {
@@ -2058,9 +1960,9 @@
     if (!inServerMode()) return;
     if (socket && socket.connected) endVideoCall(true);
     if (socket) socket.disconnect();
-    socket = io(backUrl());
+    socket = backUrl() ? io(backUrl()) : io();
 
-    socket.on('connect', () => { socket.emit('authenticate', authToken); });
+    socket.on('connect', () => { socket.emit('authenticate', { token: authToken, workspaceId: activeWorkspaceId }); });
     socket.on('authenticated', () => {
       ensureActiveChannelAccessible();
       socket.emit('join_channel', activeChannelId);
@@ -2274,7 +2176,7 @@
     const others = users.filter(u => u.id !== currentUser.id && u.id !== ROBOT_DM_ID);
     if (!others.length) { dmListEl.innerHTML = '<li style="color:var(--text-muted);font-size:12px;cursor:default;padding-left:26px">No other users yet</li>'; return; }
     dmListEl.innerHTML = others.map(u => {
-      const dmId = currentUser ? 'dm_' + [currentUser.id, u.id].sort().join('_') : '';
+      const dmId = dmChannelIdFor(u.id);
       const unread = (dmId && unreadCounts[dmId]) || 0;
       return `
       <li data-user="${u.id}"${unread ? ' class="has-unread"' : ''}>
@@ -3070,7 +2972,7 @@ function applyComposerNormalize(el, channelIdOpt) {
     qsIndex = 0;
     const list = qsEl.querySelector('#qsList');
     list.innerHTML = qsItems.length
-      ? qsItems.map((c, i) => `<li data-idx="${i}" class="${i === 0 ? 'selected' : ''}"><span class="qs-glyph">${c.kind === 'channel' ? '◇' : '@'}</span><span class="qs-label">${escHtml(c.label)}</span>${c.sub ? `<span class="qs-sub">${escHtml(c.sub)}</span>` : ''}${unreadCounts[c.kind === 'channel' ? c.id : (currentUser ? 'dm_' + [currentUser.id, c.id].sort().join('_') : '')] ? '<span class="unread-badge qs-unread">new</span>' : ''}</li>`).join('')
+      ? qsItems.map((c, i) => `<li data-idx="${i}" class="${i === 0 ? 'selected' : ''}"><span class="qs-glyph">${c.kind === 'channel' ? '◇' : '@'}</span><span class="qs-label">${escHtml(c.label)}</span>${c.sub ? `<span class="qs-sub">${escHtml(c.sub)}</span>` : ''}${unreadCounts[c.kind === 'channel' ? c.id : dmChannelIdFor(c.id)] ? '<span class="unread-badge qs-unread">new</span>' : ''}</li>`).join('')
       : '<li class="qs-empty">No matches</li>';
   }
   function qsHighlight() {
@@ -3299,7 +3201,7 @@ function applyComposerNormalize(el, channelIdOpt) {
     }
 
     async function pollStatus() {
-      if (!regId || !pendingToken || !backUrl()) return;
+      if (!regId || !pendingToken || !inServerMode()) return;
       try {
         const res = await fetch(backUrl() + '/api/register-pending/' + encodeURIComponent(regId) + '/status?pendingToken=' + encodeURIComponent(pendingToken));
         if (!res.ok) return;
@@ -3308,9 +3210,8 @@ function applyComposerNormalize(el, channelIdOpt) {
           stopPoll();
           clearPendingLs();
           authToken = d.token;
+          localStorage.setItem('sf_token', authToken);
           currentUser = d.user;
-          const aw = activeWorkspace();
-          if (aw) { aw.token = d.token; saveWsState(); }
           screen.style.display = 'none';
           enterApp();
           return;
@@ -3345,7 +3246,7 @@ function applyComposerNormalize(el, channelIdOpt) {
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       hideFormErr();
-      if (!backUrl()) { showFormErr('Server is not configured.'); return; }
+      if (!inServerMode()) { showFormErr('Server is not configured.'); return; }
 
       const name = nameEl.value.trim();
       const email = emailEl ? emailEl.value.trim() : '';
@@ -3404,7 +3305,7 @@ function applyComposerNormalize(el, channelIdOpt) {
       showFormUI();
     });
 
-    if (regId && pendingToken && backUrl()) {
+    if (regId && pendingToken && inServerMode()) {
       screen.style.display = '';
       authScreen.style.display = 'none';
       showWaitingUI();
@@ -3673,6 +3574,8 @@ function applyComposerNormalize(el, channelIdOpt) {
   document.addEventListener('click', (e) => { if (searchResults.classList.contains('open') && !searchResults.contains(e.target) && !e.target.closest('.sidebar-search')) searchResults.classList.remove('open'); });
 
   $('#confirmAddWorkspaceBtn').addEventListener('click', confirmAddWorkspace);
+  $('#addWorkspaceCreateTab')?.addEventListener('click', () => setAddWorkspaceMode('create'));
+  $('#addWorkspaceJoinTab')?.addEventListener('click', () => setAddWorkspaceMode('join'));
   $('#addChannelBtn').addEventListener('click', (e) => {
     e.stopPropagation();
     const w = $('input[name="createChVis"][value="workspace"]');

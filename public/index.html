@@ -313,22 +313,26 @@
     <div class="modal-overlay" id="addWorkspaceModal">
       <div class="modal">
         <div class="modal-header">
-          <h3>Add a workspace</h3>
+          <h3>Create or join a workspace</h3>
           <button type="button" class="btn-icon modal-close" data-modal="addWorkspaceModal">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
         </div>
         <div class="modal-body">
-          <p class="modal-hint" style="margin:0 0 14px;font-size:13px;color:var(--text-muted);text-align:left">Connect another workspace on this same server. If you leave the name blank, we’ll show <strong>Rally</strong> in the rail for that profile (rename anytime). The URL is prefilled unless you need a different host.</p>
-          <label class="form-label">Display name</label>
-          <input type="text" id="newWorkspaceLabel" class="form-input" placeholder="e.g. Client team or Personal">
-          <label class="form-label">Server URL <span class="optional">(optional)</span></label>
-          <input type="url" id="newWorkspaceUrl" class="form-input" placeholder="Same as current server if left blank">
+          <div class="segmented-tabs" style="display:flex;gap:8px;margin-bottom:14px">
+            <button type="button" class="btn-secondary active" id="addWorkspaceCreateTab" style="flex:1">Create new</button>
+            <button type="button" class="btn-secondary" id="addWorkspaceJoinTab" style="flex:1">Join existing</button>
+          </div>
+          <p class="modal-hint" style="margin:0 0 14px;font-size:13px;color:var(--text-muted);text-align:left">Workspaces live on this same server. Name a new one and set a password for others to join with, or join one you already know the name and password for.</p>
+          <label class="form-label">Workspace name</label>
+          <input type="text" id="newWorkspaceName" class="form-input" placeholder="e.g. Acme Team">
+          <label class="form-label">Password</label>
+          <input type="password" id="newWorkspacePassword" class="form-input" placeholder="Workspace password">
           <div class="auth-error" id="addWorkspaceErr" style="margin-top:10px"></div>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn-secondary" data-modal="addWorkspaceModal">Cancel</button>
-          <button type="button" class="btn-primary" id="confirmAddWorkspaceBtn">Continue</button>
+          <button type="button" class="btn-primary" id="confirmAddWorkspaceBtn">Create workspace</button>
         </div>
       </div>
     </div>

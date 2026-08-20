@@ -1508,6 +1508,7 @@ li.channel-dd-game {
   transition: background 0.12s, color 0.12s;
 }
 .btn-secondary:hover { background: var(--bg-hover); color: var(--text-primary); }
+.segmented-tabs .btn-secondary.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 
 /* ========================================
    Thread Panel
