@@ -267,6 +267,11 @@ async function addWorkspaceMember(workspaceId, userId) {
   if (w && !w.memberIds.includes(userId)) w.memberIds.push(userId);
 }
 
+async function removeWorkspace(workspaceId) {
+  if (db) { await workspacesCol.deleteOne({ id: workspaceId }); return; }
+  memData.workspaces = memData.workspaces.filter((w) => w.id !== workspaceId);
+}
+
 async function insertChannel(channel) {
   if (db) { await channelsCol.insertOne(channel); return; }
   memData.channels.push(channel);
@@ -712,6 +717,39 @@ app.get('/api/workspaces/mine', async (req, res) => {
   res.json({
     workspaces: mine.map((w) => ({ id: w.id, name: w.name, isAdmin: (w.ownerIds || []).includes(user.id) })),
   });
+});
+
+/** Owner-only, permanent: removes the workspace plus all its channels/messages and notifies members live. */
+app.delete('/api/workspaces/:id', async (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  const user = await getUserByToken(token);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+  const workspace = await findWorkspace({ id: req.params.id });
+  if (!workspace) return res.status(404).json({ error: 'Workspace not found.' });
+  if (!(workspace.ownerIds || []).includes(user.id)) {
+    return res.status(403).json({ error: 'Only the workspace owner can delete it.' });
+  }
+
+  const channelsInWs = await getChannels(workspace.id);
+  for (const ch of channelsInWs) {
+    await removeChannel(ch.id);
+  }
+  await removeWorkspace(workspace.id);
+
+  for (const uid of (workspace.memberIds || [])) {
+    io.to('uid_' + uid).emit('workspace_deleted', { workspaceId: workspace.id });
+  }
+  // Detach any sockets currently scoped to this workspace so they stop receiving its channel events.
+  for (const [, sock] of io.sockets.sockets) {
+    if (sock.sfWorkspaceId !== workspace.id) continue;
+    for (const room of [...sock.rooms]) {
+      if (room !== sock.id && room !== 'uid_' + sock.sfUserId) sock.leave(room);
+    }
+    sock.sfWorkspaceId = null;
+  }
+
+  res.json({ ok: true });
 });
 
 /** Any current member can invite others directly by user id — no password/link involved. */

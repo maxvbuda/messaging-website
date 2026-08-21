@@ -657,15 +657,31 @@
     const icons = myWorkspaces.map(w => {
       const active = w.id === activeWorkspaceId ? 'active' : '';
       const letters = workspaceIconLetters(w.name);
-      return `<div class="workspace-icon ${active}" data-ws-id="${escHtml(w.id)}" title="${escHtml(w.name)}">${escHtml(letters)}</div>`;
+      const hint = w.isAdmin ? ' — Right-click to delete' : '';
+      return `<div class="workspace-icon ${active}" data-ws-id="${escHtml(w.id)}" title="${escHtml(w.name)}${escHtml(hint)}">${escHtml(letters)}</div>`;
     }).join('');
     wrap.innerHTML = icons + '<div class="workspace-icon workspace-add" title="Create a workspace">+</div>';
     wrap.querySelectorAll('[data-ws-id]').forEach(el => {
       const id = el.getAttribute('data-ws-id');
       el.addEventListener('click', () => { switchWorkspace(id); });
+      el.addEventListener('contextmenu', (ev) => { ev.preventDefault(); deleteWorkspacePrompt(id); });
     });
     const addBtn = wrap.querySelector('.workspace-add');
     if (addBtn) addBtn.addEventListener('click', openAddWorkspaceModal);
+  }
+
+  async function deleteWorkspacePrompt(wsId) {
+    const w = myWorkspaces.find(x => x.id === wsId);
+    if (!w) return;
+    if (!w.isAdmin) { alert('Only the workspace owner can delete it.'); return; }
+    if (!confirm(`Delete "${w.name}" for everyone? This permanently removes all its rooms and messages and cannot be undone.`)) return;
+    try {
+      const res = await fetch(backUrl() + '/api/workspaces/' + encodeURIComponent(wsId), {
+        method: 'DELETE',
+        headers: { Authorization: 'Bearer ' + authToken },
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); alert(d.error || 'Something went wrong.'); }
+    } catch { alert('Could not reach the server.'); }
   }
 
   function renderSidebarWorkspaceTitle() {
@@ -2024,6 +2040,24 @@
         closeModal('addWorkspaceModal');
         switchWorkspace(workspace.id);
       }
+    });
+    socket.on('workspace_deleted', ({ workspaceId }) => {
+      const wasActive = workspaceId === activeWorkspaceId;
+      myWorkspaces = myWorkspaces.filter(w => w.id !== workspaceId);
+      renderWorkspaceRail();
+      if (!wasActive) return;
+      activeWorkspaceId = null;
+      if (myWorkspaces.length) {
+        switchWorkspace(myWorkspaces[0].id);
+        return;
+      }
+      saveActiveWorkspaceId();
+      if (socket) { socket.disconnect(); socket = null; }
+      users = []; channels = []; messages = {};
+      appWrapper.style.display = 'none';
+      renderSidebarWorkspaceTitle();
+      openAddWorkspaceModal();
+      connectSocket();
     });
 
     socket.on('new_message', ({ channelId, message }) => {
