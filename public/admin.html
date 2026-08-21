@@ -6,6 +6,7 @@
   <title>Rally Admin</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700;900&display=swap" rel="stylesheet">
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
   <style>
     :root {
       --bg: #0f0f13; --bg2: #1a1a24; --bg3: #22222e; --bg4: #2c2c3a;
@@ -127,6 +128,7 @@
       <label>Admin Password</label>
       <input type="password" id="adminPw" placeholder="Enter admin password">
     </div>
+    <div id="adminTurnstile" style="margin:10px 0"></div>
     <button class="btn-full" id="adminLoginBtn">Sign In</button>
     <div class="err" id="loginErr"></div>
     <p id="adminBackendHint" style="font-size:11px;color:var(--muted);margin-top:12px;line-height:1.4"></p>
@@ -245,6 +247,34 @@
   let adminToken = sessionStorage.getItem('sf_admin_token') || null;
   let requestsPollTimer = null;
 
+  // ── CAPTCHA (Cloudflare Turnstile) — no-op if the server hasn't configured a site key ──
+  let adminTurnstileWidgetId = null;
+  (async function initAdminCaptcha() {
+    let siteKey = null;
+    try {
+      const res = await fetch(BACKEND + '/api/config');
+      const d = await res.json();
+      siteKey = d.turnstileSiteKey || null;
+    } catch (_) { siteKey = null; }
+    if (!siteKey) return;
+    (function waitForTurnstile(attempts) {
+      if (window.turnstile) {
+        const el = document.getElementById('adminTurnstile');
+        if (el) adminTurnstileWidgetId = window.turnstile.render(el, { sitekey: siteKey });
+        return;
+      }
+      if ((attempts || 0) > 100) return;
+      setTimeout(() => waitForTurnstile((attempts || 0) + 1), 100);
+    })();
+  })();
+  function getAdminTurnstileToken() {
+    if (!window.turnstile || adminTurnstileWidgetId == null) return '';
+    return window.turnstile.getResponse(adminTurnstileWidgetId) || '';
+  }
+  function resetAdminTurnstile() {
+    if (window.turnstile && adminTurnstileWidgetId != null) window.turnstile.reset(adminTurnstileWidgetId);
+  }
+
   const COLORS = ['#6c5ce7','#00b894','#e17055','#0984e3','#d63031','#e84393','#fdcb6e','#00cec9'];
   function colorFor(name) {
     let h = 0;
@@ -302,8 +332,9 @@
       const res = await fetch(BACKEND + '/api/admin/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: pw }),
+        body: JSON.stringify({ password: pw, turnstileToken: getAdminTurnstileToken() }),
       });
+      resetAdminTurnstile();
       const txt = await res.text().catch(() => '');
       let d = {};
       try { d = txt ? JSON.parse(txt) : {}; } catch { /* non-JSON e.g. HTML error page */ }

@@ -12,6 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400..700;1,9..40,400..700&family=Syne:wght@600;700;800&display=swap" rel="stylesheet">
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 </head>
 <body>
 
@@ -41,6 +42,7 @@
           <label for="authPassword">Password</label>
           <input type="password" id="authPassword" placeholder="Your password" autocomplete="off">
         </div>
+        <div id="authTurnstile" style="margin:10px 0"></div>
         <button type="submit" class="auth-btn" id="authSubmitBtn">Sign In</button>
       </form>
 
@@ -79,6 +81,7 @@
         <div class="auth-field auth-check-row">
           <label class="auth-check"><input type="checkbox" id="pendingRegMarketingOptIn" autocomplete="off"> <span>Send me occasional product updates and tips by email</span></label>
         </div>
+        <div id="pendingRegTurnstile" style="margin:10px 0"></div>
         <button type="submit" class="auth-btn" id="pendingRegSubmitBtn">Submit request</button>
       </form>
 

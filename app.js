@@ -797,6 +797,41 @@
     closeModal('inviteToWorkspaceModal');
   }
 
+  // ── CAPTCHA (Cloudflare Turnstile) — no-op everywhere below if the server hasn't configured a site key ──
+  let turnstileSiteKey = null;
+  let authTurnstileWidgetId = null;
+  let pendingRegTurnstileWidgetId = null;
+
+  function waitForTurnstileApi(cb, attempts) {
+    if (window.turnstile) { cb(); return; }
+    if ((attempts || 0) > 100) return; // ~10s of polling, then give up quietly
+    setTimeout(() => waitForTurnstileApi(cb, (attempts || 0) + 1), 100);
+  }
+
+  async function initCaptcha() {
+    try {
+      const res = await fetch(backUrl() + '/api/config');
+      const d = await res.json();
+      turnstileSiteKey = d.turnstileSiteKey || null;
+    } catch { turnstileSiteKey = null; }
+    if (!turnstileSiteKey) return;
+    waitForTurnstileApi(() => {
+      const authEl = $('#authTurnstile');
+      const regEl = $('#pendingRegTurnstile');
+      if (authEl) authTurnstileWidgetId = window.turnstile.render(authEl, { sitekey: turnstileSiteKey });
+      if (regEl) pendingRegTurnstileWidgetId = window.turnstile.render(regEl, { sitekey: turnstileSiteKey });
+    });
+  }
+
+  function getTurnstileToken(widgetId) {
+    if (!turnstileSiteKey || !window.turnstile || widgetId == null) return '';
+    return window.turnstile.getResponse(widgetId) || '';
+  }
+
+  function resetTurnstile(widgetId) {
+    if (window.turnstile && widgetId != null) window.turnstile.reset(widgetId);
+  }
+
   // ── DOM refs ──
   const $ = s => document.querySelector(s);
   const $$ = s => document.querySelectorAll(s);
@@ -1285,9 +1320,10 @@
         const res = await fetch(backUrl() + '/api/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username, password }),
+          body: JSON.stringify({ username, password, turnstileToken: getTurnstileToken(authTurnstileWidgetId) }),
         });
         const d = await res.json();
+        resetTurnstile(authTurnstileWidgetId);
         if (!res.ok) { showAuthError(d.error || 'Something went wrong.'); return; }
         authToken = d.token;
         localStorage.setItem('sf_token', authToken);
@@ -3352,9 +3388,10 @@ function applyComposerNormalize(el, channelIdOpt) {
         const res = await fetch(backUrl() + '/api/register-request', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, username, password, email, marketingEmails }),
+          body: JSON.stringify({ name, username, password, email, marketingEmails, turnstileToken: getTurnstileToken(pendingRegTurnstileWidgetId) }),
         });
         const d = await res.json();
+        resetTurnstile(pendingRegTurnstileWidgetId);
         if (!res.ok) { showFormErr(d.error || 'Something went wrong.'); return; }
         regId = d.id;
         pendingToken = d.pendingToken;
@@ -5188,6 +5225,7 @@ ${hatSvg}
   // ==============================
 
   bindNotificationAudioUnlock();
+  initCaptcha();
   renderWorkspaceRail();
   initSfEggSurprise();
 

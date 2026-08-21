@@ -47,6 +47,38 @@ const MONGODB_URI = process.env.MONGODB_URI;
 /** Database name in the cluster (override with MONGODB_DB or MONGODB_DB_NAME). Defaults to `slackflow` for backward compatibility. */
 const MONGODB_DB_NAME = (process.env.MONGODB_DB || process.env.MONGODB_DB_NAME || 'slackflow').trim() || 'slackflow';
 
+// ── Cloudflare Turnstile (CAPTCHA) — dormant until both env vars are set ──
+const TURNSTILE_SITE_KEY = process.env.TURNSTILE_SITE_KEY || null;
+const TURNSTILE_SECRET_KEY = process.env.TURNSTILE_SECRET_KEY || null;
+if (!TURNSTILE_SITE_KEY || !TURNSTILE_SECRET_KEY) {
+  console.warn('TURNSTILE_SITE_KEY / TURNSTILE_SECRET_KEY not set — CAPTCHA is disabled until both are configured.');
+}
+
+async function verifyTurnstile(token, ip) {
+  if (!TURNSTILE_SECRET_KEY) return true; // feature not configured — no-op
+  if (!token || typeof token !== 'string') return false;
+  try {
+    const res = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ secret: TURNSTILE_SECRET_KEY, response: token, remoteip: ip || undefined }),
+    });
+    const data = await res.json();
+    return !!data.success;
+  } catch (e) {
+    console.error('Turnstile verification error:', e.message);
+    return false;
+  }
+}
+
+/** Route middleware: no-op when Turnstile isn't configured, otherwise requires a valid turnstileToken in the body. */
+async function requireTurnstile(req, res, next) {
+  if (!TURNSTILE_SECRET_KEY) return next();
+  const ok = await verifyTurnstile(req.body && req.body.turnstileToken, getClientIp(req));
+  if (!ok) return res.status(400).json({ error: 'CAPTCHA verification failed. Please try again.' });
+  next();
+}
+
 // ── Middleware ──
 app.use(compression());
 app.use(express.json());
@@ -59,6 +91,30 @@ app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.sendStatus(200);
+  next();
+});
+
+// Baseline security headers. script-src allows 'unsafe-inline' because admin.html has an inline
+// <script> block — tightening that would require pulling it into an external file first.
+const CSP = [
+  "default-src 'self'",
+  "frame-ancestors 'none'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "img-src 'self' data: blob:",
+  "script-src 'self' 'unsafe-inline' https://cdn.socket.io https://challenges.cloudflare.com",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' https://fonts.gstatic.com",
+  "connect-src 'self' https://challenges.cloudflare.com",
+  "frame-src https://challenges.cloudflare.com",
+].join('; ');
+
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Content-Security-Policy', CSP);
+  if (TRUST_PROXY) res.setHeader('Strict-Transport-Security', 'max-age=63072000; includeSubDomains');
   next();
 });
 
@@ -210,13 +266,34 @@ let memData = {
 };
 
 // ── Data helpers (work with both Mongo and memory) ──
+
+/**
+ * Blocks NoSQL-operator injection: rejects any query whose values aren't plain scalars.
+ * Every lookup here is meant to match a single string field (id/username/email/...) — a
+ * request that sneaks in an object (e.g. `?workspaceId[$ne]=` or a JSON body `{"userId":{"$ne":null}}`)
+ * would otherwise be handed straight to Mongo as a query operator. Returns null to fail closed.
+ */
+function safeQuery(query) {
+  if (!query || typeof query !== 'object' || Array.isArray(query)) return null;
+  for (const v of Object.values(query)) {
+    if (v !== null && typeof v === 'object') return null;
+  }
+  return query;
+}
+
+function isSafeId(id) {
+  return typeof id === 'string' && id.length > 0;
+}
+
 async function getUsers() {
   if (db) return usersCol.find().toArray();
   return memData.users;
 }
 
-async function findUser(query) {
-  if (query && query.id === ROBOT_DM_ID) return getRobotDmDocument();
+async function findUser(rawQuery) {
+  const query = safeQuery(rawQuery);
+  if (!query) return null;
+  if (query.id === ROBOT_DM_ID) return getRobotDmDocument();
   if (db) return usersCol.findOne(query);
   if (query.username) return memData.users.find(u => u.username === query.username) || null;
   if (query.id) return memData.users.find(u => u.id === query.id) || null;
@@ -230,6 +307,7 @@ async function insertUser(user) {
 }
 
 async function updateUser(id, updates) {
+  if (!isSafeId(id)) return;
   if (db) { await usersCol.updateOne({ id }, { $set: updates }); return; }
   const u = memData.users.find(x => x.id === id);
   if (u) Object.assign(u, updates);
@@ -241,7 +319,9 @@ async function getChannels(workspaceId) {
   return workspaceId ? memData.channels.filter((c) => c.workspaceId === workspaceId) : memData.channels;
 }
 
-async function findChannel(query) {
+async function findChannel(rawQuery) {
+  const query = safeQuery(rawQuery);
+  if (!query) return null;
   if (db) return channelsCol.findOne(query);
   return memData.channels.find((c) => Object.keys(query).every((k) => c[k] === query[k])) || null;
 }
@@ -251,7 +331,9 @@ async function getWorkspaces() {
   return memData.workspaces;
 }
 
-async function findWorkspace(query) {
+async function findWorkspace(rawQuery) {
+  const query = safeQuery(rawQuery);
+  if (!query) return null;
   if (db) return workspacesCol.findOne(query);
   return memData.workspaces.find((w) => Object.keys(query).every((k) => w[k] === query[k])) || null;
 }
@@ -262,12 +344,14 @@ async function insertWorkspace(workspace) {
 }
 
 async function addWorkspaceMember(workspaceId, userId) {
+  if (!isSafeId(workspaceId) || !isSafeId(userId)) return;
   if (db) { await workspacesCol.updateOne({ id: workspaceId }, { $addToSet: { memberIds: userId } }); return; }
   const w = memData.workspaces.find((x) => x.id === workspaceId);
   if (w && !w.memberIds.includes(userId)) w.memberIds.push(userId);
 }
 
 async function removeWorkspace(workspaceId) {
+  if (!isSafeId(workspaceId)) return;
   if (db) { await workspacesCol.deleteOne({ id: workspaceId }); return; }
   memData.workspaces = memData.workspaces.filter((w) => w.id !== workspaceId);
 }
@@ -278,6 +362,7 @@ async function insertChannel(channel) {
 }
 
 async function patchChannel(channelId, updates) {
+  if (!isSafeId(channelId)) return;
   if (db) {
     await channelsCol.updateOne({ id: channelId }, { $set: updates });
     return;
@@ -287,7 +372,7 @@ async function patchChannel(channelId, updates) {
 }
 
 async function removeChannel(channelId) {
-  if (!channelId) return;
+  if (!isSafeId(channelId)) return;
   if (db) {
     await messagesCol.deleteOne({ channelId });
     await channelsCol.deleteOne({ id: channelId });
@@ -619,6 +704,11 @@ app.post('/api/register', (_req, res) => {
   });
 });
 
+/** Public, unauthenticated: lets the client know whether to render a CAPTCHA widget. */
+app.get('/api/config', (_req, res) => {
+  res.json({ turnstileSiteKey: TURNSTILE_SITE_KEY });
+});
+
 /** New passwords are hashed with Argon2id. */
 async function hashPassword(password) {
   return argon2.hash(password, { type: argon2.argon2id });
@@ -638,7 +728,7 @@ async function verifyPassword(user, password) {
   return ok;
 }
 
-app.post('/api/login', async (req, res) => {
+app.post('/api/login', requireTurnstile, async (req, res) => {
   const { username, password } = req.body;
   const ip = getClientIp(req);
 
@@ -1246,8 +1336,24 @@ app.get('/api/ice', async (req, res) => {
 });
 
 // ── Admin auth (signed Bearer tokens — no server memory; works across restarts / instances) ──
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'slackflow-admin';
-const ADMIN_SIGNING_SECRET = process.env.ADMIN_SESSION_SECRET || ADMIN_PASSWORD;
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || null;
+if (!ADMIN_PASSWORD) {
+  console.warn('ADMIN_PASSWORD is not set — /api/admin/login is disabled until you set it. (No default password is used.)');
+}
+// Independent from ADMIN_PASSWORD so a leaked password can't also forge session tokens.
+// Without ADMIN_SESSION_SECRET set, a random one is generated per process — admin sessions
+// won't survive a restart, which is a safe tradeoff versus a predictable/derived secret.
+const ADMIN_SIGNING_SECRET = process.env.ADMIN_SESSION_SECRET || crypto.randomBytes(32).toString('hex');
+if (!process.env.ADMIN_SESSION_SECRET) {
+  console.warn('ADMIN_SESSION_SECRET is not set — using a random secret for this process; admin sessions will not survive a restart.');
+}
+
+/** Constant-time string comparison (fixed-length digests, so length itself doesn't leak either). */
+function timingSafeStringEqual(a, b) {
+  const ha = crypto.createHash('sha256').update(String(a)).digest();
+  const hb = crypto.createHash('sha256').update(String(b)).digest();
+  return crypto.timingSafeEqual(ha, hb);
+}
 
 function createAdminBearerToken() {
   const exp = Math.floor(Date.now() / 1000) + 86400 * 7;
@@ -1283,14 +1389,16 @@ function verifyAdminBearerToken(raw) {
   return true;
 }
 
-app.post('/api/admin/login', (req, res) => {
+app.post('/api/admin/login', requireTurnstile, (req, res) => {
+  if (!ADMIN_PASSWORD) return res.status(503).json({ error: 'Admin login is not configured on this server.' });
+
   const ip = getClientIp(req);
   const adminKey = adminBruteKey(ip);
   const lockMsg = checkBruteForce(adminKey);
   if (lockMsg) return res.status(429).json({ error: lockMsg });
 
   const { password } = req.body;
-  if (password !== ADMIN_PASSWORD) {
+  if (typeof password !== 'string' || !timingSafeStringEqual(password, ADMIN_PASSWORD)) {
     recordFailedAttempt(adminKey);
     return res.status(401).json({ error: 'Invalid admin password.' });
   }
@@ -1335,7 +1443,7 @@ function rateLimitCheck(map, bucketKey, max, windowMs) {
 const pendingRegPerIpEmail = new Map();
 const pendingRegPerIpCap = new Map();
 
-app.post('/api/register-request', async (req, res) => {
+app.post('/api/register-request', requireTurnstile, async (req, res) => {
   const ip = getClientIp(req);
 
   const { name, username, password, email } = req.body;
