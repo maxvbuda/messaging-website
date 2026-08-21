@@ -120,8 +120,6 @@ async function connectDB() {
     memData.workspaces.push({
       id: 'ws_dev_main',
       name: 'Main',
-      nameLower: 'main',
-      passwordHash: await hashPassword(process.env.MAIN_WORKSPACE_PASSWORD || 'dev-workspace'),
       createdBy: 'system',
       ownerIds: [],
       memberIds: [],
@@ -168,7 +166,6 @@ async function connectDB() {
     [filesCol, { id: 1 }, { unique: true }],
     [joinRequestsCol, { id: 1 }, { unique: true }],
     [workspacesCol, { id: 1 }, { unique: true }],
-    [workspacesCol, { nameLower: 1 }, { unique: true }],
     [workspacesCol, { memberIds: 1 }, {}],
   ];
   for (const [col, spec, opts] of hotIndexes) {
@@ -182,29 +179,16 @@ async function connectDB() {
 /**
  * One-time migration: creates a "Main" workspace, tags all pre-existing channels with it,
  * and adds every existing user as a member so nobody loses access on deploy day.
- * Requires MAIN_WORKSPACE_PASSWORD — refuses to invent a default (unlike ADMIN_PASSWORD).
  */
 async function migrateToWorkspaces() {
   const existing = await workspacesCol.countDocuments();
   if (existing > 0) return;
 
-  const password = process.env.MAIN_WORKSPACE_PASSWORD;
-  if (!password) {
-    console.warn(
-      'MAIN_WORKSPACE_PASSWORD is not set — skipping creation of the "Main" workspace. ' +
-      'Existing channels will be inaccessible via /api/data (which now requires a workspaceId) until you set this env var and restart.'
-    );
-    return;
-  }
-
-  const passwordHash = await hashPassword(password);
   const memberIds = (await usersCol.find({}, { projection: { id: 1 } }).toArray()).map((u) => u.id);
 
   const workspace = {
     id: 'ws_' + uuidv4().slice(0, 10),
     name: 'Main',
-    nameLower: 'main',
-    passwordHash,
     createdBy: 'system',
     ownerIds: [],
     memberIds,
@@ -649,11 +633,6 @@ async function verifyPassword(user, password) {
   return ok;
 }
 
-async function verifyWorkspacePassword(workspace, password) {
-  if (!workspace || !workspace.passwordHash) return false;
-  return argon2.verify(workspace.passwordHash, password).catch(() => false);
-}
-
 app.post('/api/login', async (req, res) => {
   const { username, password } = req.body;
   const ip = getClientIp(req);
@@ -704,20 +683,12 @@ app.post('/api/workspaces', async (req, res) => {
   const user = await getUserByToken(token);
   if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
-  const { name, password } = req.body || {};
+  const { name } = req.body || {};
   if (!name || !name.trim()) return res.status(400).json({ error: 'Workspace name is required.' });
-  if (!password || password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters.' });
-
-  const nameLower = name.trim().toLowerCase();
-  if (await findWorkspace({ nameLower })) {
-    return res.status(409).json({ error: 'A workspace with that name already exists.' });
-  }
 
   const workspace = {
     id: 'ws_' + uuidv4().slice(0, 10),
     name: name.trim(),
-    nameLower,
-    passwordHash: await hashPassword(password),
     createdBy: user.id,
     ownerIds: [user.id],
     memberIds: [user.id],
@@ -731,32 +702,6 @@ app.post('/api/workspaces', async (req, res) => {
   res.json({ workspace: { id: workspace.id, name: workspace.name, isAdmin: true } });
 });
 
-app.post('/api/workspaces/join', async (req, res) => {
-  const token = req.headers.authorization?.replace('Bearer ', '');
-  const user = await getUserByToken(token);
-  if (!user) return res.status(401).json({ error: 'Unauthorized' });
-
-  const { name, password } = req.body || {};
-  const nameLower = String(name || '').trim().toLowerCase();
-  if (!nameLower || !password) return res.status(400).json({ error: 'Workspace name and password are required.' });
-
-  const ip = getClientIp(req);
-  const bruteKey = `wsjoin:${ip || 'unknown'}:${nameLower}`;
-  const lockMsg = checkBruteForce(bruteKey);
-  if (lockMsg) return res.status(429).json({ error: lockMsg });
-
-  const genericErr = { error: 'Workspace not found or incorrect password.' };
-  const workspace = await findWorkspace({ nameLower });
-  if (!workspace || !(await verifyWorkspacePassword(workspace, password))) {
-    recordFailedAttempt(bruteKey);
-    return res.status(404).json(genericErr);
-  }
-
-  clearAttempts(bruteKey);
-  await addWorkspaceMember(workspace.id, user.id);
-  res.json({ workspace: { id: workspace.id, name: workspace.name, isAdmin: (workspace.ownerIds || []).includes(user.id) } });
-});
-
 app.get('/api/workspaces/mine', async (req, res) => {
   const token = req.headers.authorization?.replace('Bearer ', '');
   const user = await getUserByToken(token);
@@ -766,6 +711,48 @@ app.get('/api/workspaces/mine', async (req, res) => {
   const mine = all.filter((w) => Array.isArray(w.memberIds) && w.memberIds.includes(user.id));
   res.json({
     workspaces: mine.map((w) => ({ id: w.id, name: w.name, isAdmin: (w.ownerIds || []).includes(user.id) })),
+  });
+});
+
+/** Any current member can invite others directly by user id — no password/link involved. */
+app.post('/api/workspaces/:id/invite', async (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  const user = await getUserByToken(token);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+  const workspace = await findWorkspace({ id: req.params.id });
+  if (!workspace || !(workspace.memberIds || []).includes(user.id)) {
+    return res.status(403).json({ error: 'You are not a member of this workspace.' });
+  }
+
+  const targetUserId = req.body && req.body.userId;
+  if (!targetUserId) return res.status(400).json({ error: 'userId is required.' });
+  const target = await findUser({ id: targetUserId });
+  if (!target || targetUserId === ROBOT_DM_ID) return res.status(404).json({ error: 'User not found.' });
+  if ((workspace.memberIds || []).includes(targetUserId)) {
+    return res.status(409).json({ error: `${target.name} is already in this workspace.` });
+  }
+
+  await addWorkspaceMember(workspace.id, targetUserId);
+  const isAdmin = (workspace.ownerIds || []).includes(targetUserId);
+  io.to('uid_' + targetUserId).emit('workspace_invited', {
+    workspace: { id: workspace.id, name: workspace.name, isAdmin },
+  });
+
+  res.json({ ok: true });
+});
+
+/** Site-wide user directory (id/name/username only) for picking who to invite into a workspace. */
+app.get('/api/users/directory', async (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  const user = await getUserByToken(token);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+  const all = await getUsers();
+  res.json({
+    users: all
+      .filter((u) => u.id !== ROBOT_DM_ID && !u.banned)
+      .map((u) => ({ id: u.id, name: u.name, username: u.username })),
   });
 });
 
@@ -1466,7 +1453,6 @@ app.post('/api/admin/requests/:id/approve', requireAdmin, async (req, res) => {
     const token = generateToken();
     tokens.set(token, user.id);
     if (db) await sessionsCol.insertOne({ token, userId: user.id, createdAt: new Date() });
-    io.emit('user_joined', { user: publicUser(user) });
 
     if (db) {
       await joinRequestsCol.updateOne(
@@ -2145,14 +2131,17 @@ io.on('connection', (socket) => {
       return;
     }
 
-    if (!workspaceId) { socket.emit('auth_error', 'No workspace selected'); currentUser = null; return; }
-    const workspace = await findWorkspace({ id: workspaceId });
-    if (!workspace || !(workspace.memberIds || []).includes(currentUser.id)) {
-      socket.emit('auth_error', 'You are not a member of this workspace');
-      currentUser = null;
-      return;
+    // A workspaceId is optional: a user with zero workspaces still connects (uid_* room only)
+    // so a live "you've been invited" push can reach them before they've picked a workspace.
+    if (workspaceId) {
+      const workspace = await findWorkspace({ id: workspaceId });
+      if (!workspace || !(workspace.memberIds || []).includes(currentUser.id)) {
+        socket.emit('auth_error', 'You are not a member of this workspace');
+        currentUser = null;
+        return;
+      }
     }
-    socket.sfWorkspaceId = workspaceId;
+    socket.sfWorkspaceId = workspaceId || null;
 
     const uid = currentUser.id;
     const prevSockets = activeSocketByUser.get(uid) || 0;
@@ -2164,11 +2153,13 @@ io.on('connection', (socket) => {
     socket.join('uid_' + uid);
 
     // Join channel rooms user is allowed to read (respects private channels), scoped to this workspace.
-    try {
-      const allChannels = await getChannels(workspaceId);
-      const ok = allChannels.filter((ch) => userCanSeeChannel(uid, ch));
-      await Promise.all(ok.map((ch) => socket.join(ch.id)));
-    } catch (e) { /* non-fatal */ }
+    if (workspaceId) {
+      try {
+        const allChannels = await getChannels(workspaceId);
+        const ok = allChannels.filter((ch) => userCanSeeChannel(uid, ch));
+        await Promise.all(ok.map((ch) => socket.join(ch.id)));
+      } catch (e) { /* non-fatal */ }
+    }
 
     socket.sfUserId = uid;
 

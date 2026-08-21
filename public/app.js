@@ -659,7 +659,7 @@
       const letters = workspaceIconLetters(w.name);
       return `<div class="workspace-icon ${active}" data-ws-id="${escHtml(w.id)}" title="${escHtml(w.name)}">${escHtml(letters)}</div>`;
     }).join('');
-    wrap.innerHTML = icons + '<div class="workspace-icon workspace-add" title="Create or join a workspace">+</div>';
+    wrap.innerHTML = icons + '<div class="workspace-icon workspace-add" title="Create a workspace">+</div>';
     wrap.querySelectorAll('[data-ws-id]').forEach(el => {
       const id = el.getAttribute('data-ws-id');
       el.addEventListener('click', () => { switchWorkspace(id); });
@@ -691,42 +691,25 @@
     await enterApp();
   }
 
-  let addWorkspaceMode = 'create';
-  function setAddWorkspaceMode(mode) {
-    addWorkspaceMode = mode;
-    const createTab = $('#addWorkspaceCreateTab');
-    const joinTab = $('#addWorkspaceJoinTab');
-    const submitBtn = $('#confirmAddWorkspaceBtn');
-    if (createTab) createTab.classList.toggle('active', mode === 'create');
-    if (joinTab) joinTab.classList.toggle('active', mode === 'join');
-    if (submitBtn) submitBtn.textContent = mode === 'create' ? 'Create workspace' : 'Join workspace';
-  }
-
   function openAddWorkspaceModal() {
     const nameEl = $('#newWorkspaceName');
-    const pwEl = $('#newWorkspacePassword');
     const err = $('#addWorkspaceErr');
     if (nameEl) nameEl.value = '';
-    if (pwEl) pwEl.value = '';
     if (err) { err.textContent = ''; err.classList.remove('visible'); }
-    setAddWorkspaceMode('create');
     openModal('addWorkspaceModal');
   }
 
   async function confirmAddWorkspace() {
     const name = ($('#newWorkspaceName') && $('#newWorkspaceName').value.trim()) || '';
-    const password = ($('#newWorkspacePassword') && $('#newWorkspacePassword').value) || '';
     const err = $('#addWorkspaceErr');
     const showErr = (msg) => { if (err) { err.textContent = msg; err.classList.add('visible'); } };
     if (!name) { showErr('Enter a workspace name.'); return; }
-    if (!password) { showErr('Enter a password.'); return; }
 
-    const path = addWorkspaceMode === 'join' ? '/api/workspaces/join' : '/api/workspaces';
     try {
-      const res = await fetch(backUrl() + path, {
+      const res = await fetch(backUrl() + '/api/workspaces', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + authToken },
-        body: JSON.stringify({ name, password }),
+        body: JSON.stringify({ name }),
       });
       const d = await res.json();
       if (!res.ok) { showErr(d.error || 'Something went wrong.'); return; }
@@ -738,6 +721,64 @@
       renderSidebarWorkspaceTitle();
       await enterApp();
     } catch { showErr('Could not reach the server.'); }
+  }
+
+  // ── Invite people directly into the active workspace (no password/link — just picks them) ──
+  let workspaceDirectory = [];
+
+  async function openInviteToWorkspaceModal() {
+    if (!activeWorkspaceId) return;
+    const listEl = $('#inviteToWorkspaceList');
+    const err = $('#inviteToWorkspaceErr');
+    if (err) { err.textContent = ''; err.classList.remove('visible'); }
+    if (listEl) listEl.innerHTML = '<p style="color:var(--text-muted);font-size:13px">Loading…</p>';
+    openModal('inviteToWorkspaceModal');
+    try {
+      const res = await fetch(backUrl() + '/api/users/directory', {
+        headers: { Authorization: 'Bearer ' + authToken },
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || 'Failed to load users');
+      workspaceDirectory = d.users || [];
+      renderInviteToWorkspaceList();
+    } catch {
+      if (listEl) listEl.innerHTML = '<p style="color:var(--text-muted);font-size:13px">Could not load users.</p>';
+    }
+  }
+
+  function renderInviteToWorkspaceList() {
+    const listEl = $('#inviteToWorkspaceList');
+    if (!listEl) return;
+    const memberIds = new Set(users.map(u => u.id));
+    const candidates = workspaceDirectory.filter(u => u.id !== currentUser.id && !memberIds.has(u.id));
+    if (!candidates.length) {
+      listEl.innerHTML = '<p style="color:var(--text-muted);font-size:13px">Everyone on this server is already in this workspace.</p>';
+      return;
+    }
+    listEl.innerHTML = candidates.map(u =>
+      `<label class="channel-invite-row"><input type="checkbox" data-invite-user="${escHtml(u.id)}"><span>${escHtml(u.name)} <span style="color:var(--text-muted)">@${escHtml(u.username)}</span></span></label>`
+    ).join('');
+  }
+
+  async function sendWorkspaceInvites() {
+    const listEl = $('#inviteToWorkspaceList');
+    const err = $('#inviteToWorkspaceErr');
+    const showErr = (msg) => { if (err) { err.textContent = msg; err.classList.add('visible'); } };
+    const ids = listEl ? [...listEl.querySelectorAll('input[data-invite-user]:checked')].map(el => el.getAttribute('data-invite-user')) : [];
+    if (!ids.length) { showErr('Pick at least one person to invite.'); return; }
+
+    for (const userId of ids) {
+      try {
+        const res = await fetch(backUrl() + '/api/workspaces/' + encodeURIComponent(activeWorkspaceId) + '/invite', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + authToken },
+          body: JSON.stringify({ userId }),
+        });
+        const d = await res.json();
+        if (!res.ok) showErr(d.error || 'Something went wrong.');
+      } catch { showErr('Could not reach the server.'); }
+    }
+    closeModal('inviteToWorkspaceModal');
   }
 
   // ── DOM refs ──
@@ -1299,10 +1340,12 @@
       renderWorkspaceRail();
 
       if (!myWorkspaces.length) {
-        // No workspace yet — send them straight to Create/Join instead of an empty chat screen.
+        // No workspace yet — send them straight to Create, but stay connected so a live
+        // invite can pull them straight in without needing to reload.
         authScreen.style.display = 'none';
         appWrapper.style.display = 'none';
         openAddWorkspaceModal();
+        connectSocket();
         return;
       }
       if (!activeWorkspaceId || !myWorkspaces.some(w => w.id === activeWorkspaceId)) {
@@ -1972,6 +2015,16 @@
     socket.on('disconnect', () => { syncAiComposerButtons(); });
     socket.on('auth_error', () => { logout(); showAuthError('Session expired.'); });
     socket.on('error_msg', (msg) => { alert(typeof msg === 'string' ? msg : String(msg || 'Something went wrong.')); });
+    socket.on('workspace_invited', ({ workspace }) => {
+      if (!workspace || myWorkspaces.some(w => w.id === workspace.id)) return;
+      const hadNone = !myWorkspaces.length;
+      myWorkspaces.push(workspace);
+      renderWorkspaceRail();
+      if (hadNone) {
+        closeModal('addWorkspaceModal');
+        switchWorkspace(workspace.id);
+      }
+    });
 
     socket.on('new_message', ({ channelId, message }) => {
       if (!messages[channelId]) messages[channelId] = [];
@@ -3574,8 +3627,8 @@ function applyComposerNormalize(el, channelIdOpt) {
   document.addEventListener('click', (e) => { if (searchResults.classList.contains('open') && !searchResults.contains(e.target) && !e.target.closest('.sidebar-search')) searchResults.classList.remove('open'); });
 
   $('#confirmAddWorkspaceBtn').addEventListener('click', confirmAddWorkspace);
-  $('#addWorkspaceCreateTab')?.addEventListener('click', () => setAddWorkspaceMode('create'));
-  $('#addWorkspaceJoinTab')?.addEventListener('click', () => setAddWorkspaceMode('join'));
+  $('#inviteToWorkspaceBtn')?.addEventListener('click', openInviteToWorkspaceModal);
+  $('#sendWorkspaceInvitesBtn')?.addEventListener('click', sendWorkspaceInvites);
   $('#addChannelBtn').addEventListener('click', (e) => {
     e.stopPropagation();
     const w = $('input[name="createChVis"][value="workspace"]');
