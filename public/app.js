@@ -1394,8 +1394,10 @@
       if (!myWorkspaces.length) {
         // No workspace yet — send them straight to Create, but stay connected so a live
         // invite can pull them straight in without needing to reload.
+        // appWrapper must stay visible (not 'none') because the modal is nested inside it —
+        // hiding the ancestor would hide the modal too and leave the screen blank.
         authScreen.style.display = 'none';
-        appWrapper.style.display = 'none';
+        appWrapper.style.display = 'flex';
         openAddWorkspaceModal();
         connectSocket();
         return;
@@ -2098,7 +2100,8 @@
       saveActiveWorkspaceId();
       if (socket) { socket.disconnect(); socket = null; }
       users = []; channels = []; messages = {};
-      appWrapper.style.display = 'none';
+      // appWrapper must stay visible (not 'none') because the modal is nested inside it.
+      appWrapper.style.display = 'flex';
       renderSidebarWorkspaceTitle();
       openAddWorkspaceModal();
       connectSocket();
