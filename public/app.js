@@ -2053,6 +2053,14 @@
 
   function connectSocket() {
     if (!inServerMode()) return;
+    if (typeof io === 'undefined') {
+      console.error('Socket.IO client failed to load — chat cannot connect.');
+      closeModal('addWorkspaceModal');
+      appWrapper.style.display = 'none';
+      authScreen.style.display = '';
+      showAuthError('Could not load the chat connection. Please reload the page.');
+      return;
+    }
     if (socket && socket.connected) endVideoCall(true);
     if (socket) socket.disconnect();
     socket = backUrl() ? io(backUrl()) : io();

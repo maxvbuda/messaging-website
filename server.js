@@ -102,7 +102,7 @@ const CSP = [
   "object-src 'none'",
   "base-uri 'self'",
   "img-src 'self' data: blob:",
-  "script-src 'self' 'unsafe-inline' https://cdn.socket.io https://challenges.cloudflare.com",
+  "script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com",
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src 'self' https://fonts.gstatic.com",
   "connect-src 'self' https://challenges.cloudflare.com",
