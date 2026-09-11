@@ -3343,11 +3343,11 @@ function applyComposerNormalize(el, channelIdOpt) {
         if (d.status === 'approved' && d.token && d.user) {
           stopPoll();
           clearPendingLs();
-          authToken = d.token;
-          localStorage.setItem('sf_token', authToken);
-          currentUser = d.user;
-          screen.style.display = 'none';
-          enterApp();
+          localStorage.setItem('sf_token', d.token);
+          // Full reload rather than continuing in-place: this tab may have been sitting open
+          // on the waiting screen since before the latest deploy, running old JS in memory.
+          // Reloading guarantees whatever's actually live runs the sign-in, not a stale copy.
+          location.reload();
           return;
         }
         if (d.status === 'denied') {
