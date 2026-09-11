@@ -5,7 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "build": "cleancss -o public/styles.css styles.css"
   },
   "dependencies": {
     "argon2": "^0.44.0",
@@ -16,5 +17,8 @@
     "multer": "^2.1.1",
     "socket.io": "^4.8.1",
     "uuid": "^11.1.0"
+  },
+  "devDependencies": {
+    "clean-css-cli": "^5.6.3"
   }
 }
