@@ -3,7 +3,7 @@ services:
     runtime: node
     name: slackflow
     plan: free
-    buildCommand: npm install && npm run build
+    buildCommand: npm install --include=dev && npm run build
     startCommand: node server.js
     envVars:
       - key: NODE_ENV
